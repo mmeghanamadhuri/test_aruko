@@ -1,0 +1,61 @@
+# ───────────────────────────────
+# Python
+# ───────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+*.so
+.venv/
+venv/
+env/
+
+# ───────────────────────────────
+# ROS2 / Colcon
+# ───────────────────────────────
+install/
+build/
+log/
+*.log
+
+# ───────────────────────────────
+# Jetson / Hardware
+# ───────────────────────────────
+*.bin
+*.img
+*.dtb
+*.ko        # kernel modules
+*.elf
+
+# ───────────────────────────────
+# Large / Binary Assets
+# ───────────────────────────────
+*.pt        # PyTorch models
+*.onnx      # ONNX models
+*.trt       # TensorRT engines
+*.engine
+*.caffemodel
+*.weights
+*.bag       # ROS bag files
+
+# ───────────────────────────────
+# Config — keep YAML, ignore secrets
+# ───────────────────────────────
+config/secrets.yaml
+*.env
+.env.*
+
+# ───────────────────────────────
+# OS & Editor
+# ───────────────────────────────
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+*.swo
+
+
