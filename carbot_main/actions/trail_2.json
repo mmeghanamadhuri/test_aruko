@@ -1,0 +1,478 @@
+[
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 2045
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1409
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1244
+      },
+      "7": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1090
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 8.0,
+    "speed": 300,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 2045
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1409
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "6": {
+        "type": "relative",
+        "diff": 1000,
+        "sign": "-",
+        "ref_pos": 1243
+      },
+      "7": {
+        "type": "relative",
+        "diff": 18989,
+        "sign": "+",
+        "ref_pos": 10079
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 3.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1818
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1409
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "6": {
+        "type": "relative",
+        "diff": 1000,
+        "sign": "+",
+        "ref_pos": 1242
+      },
+      "7": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 10079
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 3.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1818
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1932
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "6": {
+        "type": "relative",
+        "diff": 1,
+        "sign": "+",
+        "ref_pos": 1243
+      },
+      "7": {
+        "type": "relative",
+        "diff": 3996,
+        "sign": "+",
+        "ref_pos": 24075
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 2.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1932
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "6": {
+        "type": "relative",
+        "diff": 1,
+        "sign": "+",
+        "ref_pos": 1242
+      },
+      "7": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 24075
+      }
+    }
+  },
+  {
+    "delay": 2.0,
+    "duration": 3.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2273
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2443
+      },
+      "6": {
+        "type": "relative",
+        "diff": 7,
+        "sign": "+",
+        "ref_pos": 1249
+      },
+      "7": {
+        "type": "relative",
+        "diff": 1,
+        "sign": "+",
+        "ref_pos": 24076
+      }
+    }
+  },
+  {
+    "delay": 1.0,
+    "duration": 1.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 2614
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2273
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2443
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1249
+      },
+      "7": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 24076
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 2557
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2273
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2443
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1249
+      },
+      "7": {
+        "type": "relative",
+        "diff": 2,
+        "sign": "+",
+        "ref_pos": 24078
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "actuator": {
+      "action": "extend",
+      "distance_mm": 40
+    },
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2273
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2443
+      },
+      "6": {
+        "type": "relative",
+        "diff": 234,
+        "sign": "+",
+        "ref_pos": 1015
+      },
+      "7": {
+        "type": "relative",
+        "diff": 20482,
+        "sign": "+",
+        "ref_pos": 3596
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "actuator": {
+      "action": "retract",
+      "distance_mm": 40
+    },
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1648
+      },
+      "2": {
+        "type": "absolute",
+        "value": 2500
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2273
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2727
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2443
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1015
+      },
+      "7": {
+        "type": "relative",
+        "diff": 1,
+        "sign": "+",
+        "ref_pos": 3595
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1867
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1521
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2755
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2766
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2779
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1015
+      },
+      "7": {
+        "type": "relative",
+        "diff": 1,
+        "sign": "+",
+        "ref_pos": 3595
+      }
+    }
+  },
+  {
+    "delay": 0.5,
+    "duration": 1.0,
+    "speed": 100,
+    "servos": {
+      "1": {
+        "type": "absolute",
+        "value": 1867
+      },
+      "2": {
+        "type": "absolute",
+        "value": 1521
+      },
+      "3": {
+        "type": "absolute",
+        "value": 2755
+      },
+      "4": {
+        "type": "absolute",
+        "value": 2766
+      },
+      "5": {
+        "type": "absolute",
+        "value": 2779
+      },
+      "6": {
+        "type": "relative",
+        "diff": 0,
+        "sign": "+",
+        "ref_pos": 1015
+      },
+      "7": {
+        "type": "relative",
+        "diff": 22985,
+        "sign": "-",
+        "ref_pos": 3595
+      }
+    }
+  }
+]

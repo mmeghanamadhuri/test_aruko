@@ -1,0 +1,289 @@
+[
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 2025
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1355
+            },
+            "3": {
+                "type": "absolute",
+                "value": 2959
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2822
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2632
+            },
+            "6": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 30
+            },
+            "7": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 994
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 2029
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1363
+            },
+            "3": {
+                "type": "absolute",
+                "value": 2971
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2830
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2634
+            },
+            "6": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 30
+            },
+            "7": {
+                "type": "relative",
+                "diff": 21518,
+                "sign": "+",
+                "ref_pos": 22512
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 1469
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1362
+            },
+            "3": {
+                "type": "absolute",
+                "value": 2972
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2830
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2634
+            },
+            "6": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 30
+            },
+            "7": {
+                "type": "relative",
+                "diff": 1,
+                "sign": "+",
+                "ref_pos": 22513
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "actuator": {
+            "action": "extend",
+            "distance_mm": 40
+        },
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 1568
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1862
+            },
+            "3": {
+                "type": "absolute",
+                "value": 3207
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2554
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2516
+            },
+            "6": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 30
+            },
+            "7": {
+                "type": "relative",
+                "diff": 1,
+                "sign": "-",
+                "ref_pos": 22512
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "actuator": {
+            "action": "retract",
+            "distance_mm": 40
+        },
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 1973
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1154
+            },
+            "3": {
+                "type": "absolute",
+                "value": 3008
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2785
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2667
+            },
+            "6": {
+                "type": "relative",
+                "diff": 3,
+                "sign": "+",
+                "ref_pos": 33
+            },
+            "7": {
+                "type": "relative",
+                "diff": 1,
+                "sign": "+",
+                "ref_pos": 22513
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 1973
+            },
+            "2": {
+                "type": "absolute",
+                "value": 1153
+            },
+            "3": {
+                "type": "absolute",
+                "value": 3013
+            },
+            "4": {
+                "type": "absolute",
+                "value": 2790
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2667
+            },
+            "6": {
+                "type": "relative",
+                "diff": 1,
+                "sign": "-",
+                "ref_pos": 32
+            },
+            "7": {
+                "type": "relative",
+                "diff": 21534,
+                "sign": "-",
+                "ref_pos": 979
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {
+            "1": {
+                "type": "absolute",
+                "value": 1957
+            },
+            "2": {
+                "type": "absolute",
+                "value": 484
+            },
+            "3": {
+                "type": "absolute",
+                "value": 3296
+            },
+            "4": {
+                "type": "absolute",
+                "value": 3319
+            },
+            "5": {
+                "type": "absolute",
+                "value": 2636
+            },
+            "6": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 32
+            },
+            "7": {
+                "type": "relative",
+                "diff": 0,
+                "sign": "+",
+                "ref_pos": 979
+            }
+        }
+    },
+    {
+        "delay": 0.5,
+        "duration": 1.0,
+        "speed": 200,
+        "servos": {}
+    }
+]
