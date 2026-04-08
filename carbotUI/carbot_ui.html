@@ -772,6 +772,25 @@
           <input type="number" id="rec-speed" value="200" step="10" min="0" max="1023"/>
         </div>
       </div>
+      <div class="rec-params" style="margin-top:8px;">
+        <div class="param-group">
+          <div class="param-label">Actuator Action</div>
+          <select id="rec-act-action">
+            <option value="">None</option>
+            <option value="extend">Extend</option>
+            <option value="retract">Retract</option>
+            <option value="stop">Stop</option>
+          </select>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Distance (mm)</div>
+          <input type="number" id="rec-act-dist" placeholder="optional" step="5" min="0" max="100"/>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Actuator Dur (s)</div>
+          <input type="number" id="rec-act-dur" placeholder="optional" step="0.1" min="0"/>
+        </div>
+      </div>
       <div style="margin-top:8px;">
         <button class="btn-rec" onclick="cmdRecord()" style="width:100%;">⏺ Record Frame</button>
       </div>
@@ -874,6 +893,7 @@
     </div>
     <div class="log-toolbar">
       <input class="log-filter" type="text" placeholder="Filter logs…" id="log-filter" oninput="filterLogs()"/>
+      <button class="log-clear" onclick="exportLogs()">Export</button>
       <button class="log-clear" onclick="clearLogs()">✕ Clear</button>
     </div>
     <div class="log-area" id="log-area"></div>
@@ -907,17 +927,15 @@
   <div class="te-titlebar">
     <span class="te-title">⊞ Timeline Editor</span>
     <div class="te-toolbar">
-      <label title="Load a JSON file into the timeline editor">
-        <span class="btn-default" style="font-family:var(--mono);font-size:11px;padding:5px 10px;border-radius:2px;border:1px solid var(--border);cursor:pointer;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;">
-          ⬆ Load JSON
-        </span>
-        <input type="file" id="te-file-input" accept=".json" style="display:none;" onchange="teLoadFromFile(this)"/>
-      </label>
-      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teSaveJSON()" title="Download modified JSON">⬇ Save JSON</button>
-      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teDuplicateFrame()" title="Duplicate selected frame">⧉ Dupe</button>
-      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teAddFrameAfter()" title="Insert blank frame after selection">+ Insert</button>
-      <button class="btn-stop"    style="font-size:11px;padding:5px 10px;" onclick="teDeleteFrame()"   title="Delete selected frame">✕ Delete</button>
-      <button class="btn-default" style="font-size:11px;padding:5px 10px;color:var(--dim);" onclick="toggleTimeline()">✕ Close</button>
+      <select id="te-file-select" style="min-width:210px;" title="Select a JSON file available on the server"></select>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teRefreshServerFiles()" title="Refresh available JSON files">Refresh Files</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teLoadFromServer()" title="Load a JSON file from the server">Load from Jetson</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teSaveToServer()" title="Save modified JSON to the server">Save to Jetson</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teSaveJSON()" title="Download modified JSON">Download JSON</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teDuplicateFrame()" title="Duplicate selected frame">Dupe</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teAddFrameAfter()" title="Insert blank frame after selection">Insert</button>
+      <button class="btn-stop"    style="font-size:11px;padding:5px 10px;" onclick="teDeleteFrame()"   title="Delete selected frame">Delete</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;color:var(--dim);" onclick="toggleTimeline()">Close</button>
     </div>
   </div>
 
@@ -935,6 +953,8 @@
 
   <!-- Bottom action bar -->
   <div class="te-action-bar">
+    <button class="btn-play"    style="font-size:11px;" onclick="tePlaySelectedFrame(false)">Play Frame</button>
+    <button class="btn-loop"    style="font-size:11px;" onclick="tePlaySelectedFrame(true)">Loop Frame</button>
     <button class="btn-play"    style="font-size:11px;" onclick="teApplyAndPlay(false)">▶ Play This File</button>
     <button class="btn-loop"    style="font-size:11px;" onclick="teApplyAndPlay(true)">⟳ Loop This File</button>
     <button class="btn-neutral" style="font-size:11px;" onclick="teMoveFrameLeft()">◀ Move Left</button>
@@ -963,6 +983,8 @@ let actuatorPendingMm = null;
 let actuatorPendingDurationSec = 0;
 let logEntries     = [];
 let isPlaying      = false;
+let lastPlayingState = null;
+let playbackTrace = null;
 
 const ACTUATOR_MAX_MM = 100;
 const ACTUATOR_SPEED_MM_PER_SEC = 5;
@@ -984,6 +1006,7 @@ window.addEventListener('DOMContentLoaded', () => {
   connectWS();
   syncFile();
   document.getElementById('filename-input').addEventListener('input', syncFile);
+  teRefreshServerFiles();
 });
 
 function syncFile() {
@@ -1029,7 +1052,9 @@ function selectFile(f, el) {
   document.getElementById('filename-input').value = f;
   syncFile();
   document.querySelectorAll('.file-item').forEach(e => e.classList.remove('active'));
-  el.classList.add('active');
+  if (el) el.classList.add('active');
+  const teSelect = document.getElementById('te-file-select');
+  if (teSelect) teSelect.value = f;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1045,13 +1070,12 @@ function buildServoCards() {
     card.id = `servo-card-${id}`;
 
     card.innerHTML = `
-      <!-- Row 1: ID | position info | bar -->
       <div class="servo-row1">
         <div class="servo-id ${isRel ? 'rel' : ''}">${id}</div>
         <div class="servo-info">
-          <div class="servo-pos" id="spos-${id}">—</div>
-          <div class="servo-deg" id="sdeg-${id}">—</div>
-          <div class="servo-mode">${isRel ? 'relative · S6/S7' : 'absolute · S1-S5'}</div>
+          <div class="servo-pos" id="spos-${id}">-</div>
+          <div class="servo-deg" id="sdeg-${id}">-</div>
+          <div class="servo-mode">${isRel ? 'relative | S6/S7' : 'absolute | S1-S5'}</div>
         </div>
         <div class="servo-bar-wrap">
           <div class="servo-bar-bg">
@@ -1060,33 +1084,32 @@ function buildServoCards() {
         </div>
       </div>
 
-      <!-- Row 2: move inputs | separator | torque buttons -->
       <div class="servo-row2">
-
-        <!-- Move section -->
         <div class="servo-row2-move">
-          <span class="s-label">val</span>
+          <span class="s-label">raw</span>
           <input class="s-inp" type="number" id="sinput-${id}"
-                 placeholder="${isRel ? '±off' : 'raw'}"
-                 step="${isRel ? 10 : 50}" style="width:58px !important;"/>
+                 placeholder="${isRel ? '+/-off' : 'raw'}"
+                 step="${isRel ? 10 : 50}" style="width:58px !important;"
+                 oninput="syncServoInputs(${id}, 'raw')"/>
+          <span class="s-label">deg</span>
+          <input class="s-inp" type="number" id="sdeginput-${id}"
+                 placeholder="deg" step="0.1" style="width:58px !important;"
+                 oninput="syncServoInputs(${id}, 'deg')"/>
           <span class="s-label">spd</span>
           <input class="s-inp speed-inp" type="number" id="sspeed-${id}"
                  value="200" min="0" max="1023" step="10" style="width:48px !important;"/>
-          <button class="btn-default s-btn" onclick="cmdServoMove(${id})" title="Send move command">→ GO</button>
+          <button class="btn-default s-btn" onclick="cmdServoMove(${id})" title="Send move command">GO</button>
         </div>
 
-        <!-- Vertical separator -->
         <div class="servo-vsep"></div>
 
-        <!-- Per-servo torque section -->
         <div class="servo-row2-torque">
           <button class="btn-freeze s-btn" onclick="cmdServoFreeze(${id})"
-                  title="Enable torque on servo ${id} only">⚙ FRZ</button>
+                  title="Enable torque on servo ${id} only">FRZ</button>
           <button class="btn-neutral s-btn" onclick="cmdServoNeutral(${id})"
-                  title="Disable torque on servo ${id} only">⊘ NEU</button>
-          <span class="torque-chip" id="tchip-${id}">—</span>
+                  title="Disable torque on servo ${id} only">NEU</button>
+          <span class="torque-chip" id="tchip-${id}">-</span>
         </div>
-
       </div>
     `;
     grid.appendChild(card);
@@ -1097,10 +1120,31 @@ function _s16(v) {
   return v < 32768 ? v : v - 65536;
 }
 
+function servoRawToDeg(raw) {
+  return _s16(raw) * 0.088;
+}
+
+function servoDegToRaw(deg) {
+  return Math.round(deg / 0.088);
+}
+
+function syncServoInputs(id, source) {
+  const rawEl = document.getElementById(`sinput-${id}`);
+  const degEl = document.getElementById(`sdeginput-${id}`);
+  if (!rawEl || !degEl) return;
+
+  if (source === 'raw') {
+    const raw = parseInt(rawEl.value, 10);
+    degEl.value = Number.isFinite(raw) ? servoRawToDeg(raw).toFixed(1) : '';
+  } else {
+    const deg = parseFloat(degEl.value);
+    rawEl.value = Number.isFinite(deg) ? String(servoDegToRaw(deg)) : '';
+  }
+}
+
 function updateServoCard(id, rawVal) {
   servoPositions[id] = rawVal;
-  const s16  = _s16(rawVal);
-  const deg  = (s16 * 0.088).toFixed(1);
+  const deg  = servoRawToDeg(rawVal).toFixed(1);
   const sign = parseFloat(deg) >= 0 ? '+' : '';
 
   const posEl = document.getElementById(`spos-${id}`);
@@ -1108,9 +1152,13 @@ function updateServoCard(id, rawVal) {
   const barEl = document.getElementById(`sbar-${id}`);
 
   if (posEl) posEl.textContent = rawVal;
-  if (degEl) degEl.textContent = `${sign}${deg}°`;
+  if (degEl) degEl.textContent = `${sign}${deg}??`;
 
-  // Map 0–4095 (MX-28 range) → 0–100%
+  const rawInput = document.getElementById(`sinput-${id}`);
+  const degInput = document.getElementById(`sdeginput-${id}`);
+  if (rawInput && document.activeElement !== rawInput && rawInput.value === '') rawInput.value = String(rawVal);
+  if (degInput && document.activeElement !== degInput && degInput.value === '') degInput.value = Number(deg).toFixed(1);
+
   const pct = Math.max(0, Math.min(100, (rawVal / 4095) * 100));
   if (barEl) barEl.style.width = pct + '%';
 }
@@ -1188,6 +1236,14 @@ function applyStatus(data) {
   document.getElementById('stat-updates').textContent = updateCount;
 
   isPlaying = data.is_playing;
+  if (lastPlayingState !== null && lastPlayingState !== isPlaying) {
+    addLog('INFO', `Robot playback state -> ${isPlaying ? 'PLAYING' : 'IDLE'}`, {
+      source: 'status',
+      positions_count: data.positions ? Object.keys(data.positions).length : 0
+    });
+    if (!isPlaying) stopPlaybackTrace('robot reported idle');
+  }
+  lastPlayingState = isPlaying;
   const pill = document.getElementById('state-pill');
   pill.textContent = isPlaying ? 'PLAYING' : 'IDLE';
   pill.className   = 'state-pill' + (isPlaying ? ' playing' : '');
@@ -1213,7 +1269,7 @@ async function api(method, path, body) {
     document.getElementById('stat-target').textContent  = JETSON_IP_DISPLAY;
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      toast(err.error || `HTTP ${resp.status}`, 'err');
+      toast(err.error || err.detail || `HTTP ${resp.status}`, 'err');
       return null;
     }
     return await resp.json();
@@ -1239,14 +1295,23 @@ fetch(API_BASE + '/api/config')
 async function cmdPlay(loop) {
   const file = document.getElementById('filename-input').value.trim();
   if (!file) { toast('Enter a filename first', 'warn'); return; }
+  addLog('INFO', `Playback request -> ${file}`, { source: 'transport', mode: loop ? 'loop' : 'once', file });
   const resp = await api('POST', '/api/play', { file, loop });
-  if (resp?.status === 'started') toast(`▶ ${loop ? 'LOOP' : 'PLAY'} started`, 'ok');
+  if (resp?.status === 'started') {
+    toast(`▶ ${loop ? 'LOOP' : 'PLAY'} started`, 'ok');
+    addLog('INFO', `Playback started -> ${file}`, { source: 'transport', mode: loop ? 'loop' : 'once', response: resp });
+    void startPlaybackTraceForFile(file, loop);
+  }
   else if (resp?.error) toast(resp.error, 'err');
 }
 
 async function cmdStop(mode) {
   const resp = await api('POST', '/api/stop', { mode });
-  if (resp) toast(`■ Stopped (${mode})`, 'ok');
+  if (resp) {
+    stopPlaybackTrace(`stop requested (${mode})`);
+    addLog('WARN', `Playback stop requested (${mode})`, { source: 'transport', mode, response: resp });
+    toast(`■ Stopped (${mode})`, 'ok');
+  }
 }
 
 async function cmdStatus() {
@@ -1259,11 +1324,24 @@ async function cmdRecord() {
   const delay    = parseFloat(document.getElementById('rec-delay').value)    || 0.5;
   const duration = parseFloat(document.getElementById('rec-duration').value) || 1.0;
   const speed    = parseInt(document.getElementById('rec-speed').value)      || 200;
+  const actuator = readActuatorInputs('rec-act');
   if (!file) { toast('Enter a filename first', 'warn'); return; }
-  const resp = await api('POST', '/api/record', { file, delay, duration, speed });
+  const body = { file, delay, duration, speed };
+  if (actuator) body.actuator = actuator;
+  const resp = await api('POST', '/api/record', body);
   if (resp?.status === 'recorded') {
-    toast(`⏺ Frame #${resp.frame_count} recorded`, 'ok');
+    toast(`Frame #${resp.frame_count} recorded`, 'ok');
     document.getElementById('frame-count').textContent = `Total frames: ${resp.frame_count}`;
+    addLog('INFO', `Recorded frame to ${file}${actuator ? ` with actuator ${actuator.action}` : ''}`, {
+      source: 'record',
+      file,
+      frame_count: resp.frame_count,
+      delay,
+      duration,
+      speed,
+      actuator
+    });
+    await teReloadFromCurrentFile();
   } else if (resp?.error) toast(resp.error, 'err');
 }
 
@@ -1395,6 +1473,11 @@ async function cmdActuator(action) {
     actuatorPendingMm = null;
     actuatorPendingDurationSec = 0;
     const distLabel = body.distance_mm != null ? ` ${body.distance_mm}mm` : ' full';
+    addLog('INFO', `Actuator ${action.toUpperCase()}${action !== 'stop' ? distLabel : ''}`, {
+      source: 'actuator',
+      request: body,
+      target_mm: actuatorPendingMm ?? actuatorMm
+    });
     toast(`Actuator ${action.toUpperCase()}${action !== 'stop' ? distLabel : ''}`, 'ok');
   } else {
     if (action === 'stop') setActuatorEstimated(actuatorMm, 0);
@@ -1405,10 +1488,10 @@ async function cmdActuator(action) {
 // ═══════════════════════════════════════════════════════════
 // Log
 // ═══════════════════════════════════════════════════════════
-function addLog(level, msg) {
+function addLog(level, msg, details = null) {
   const now = new Date();
   const ts  = now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
-  const entry = { ts, level, msg };
+  const entry = { ts, level, msg, details };
   logEntries.push(entry);
   renderLogEntry(entry);
 }
@@ -1425,6 +1508,7 @@ function renderLogEntry(entry) {
   row.className     = 'log-entry';
   row.dataset.msg   = entry.msg;
   row.dataset.level = entry.level;
+  if (entry.details) row.title = JSON.stringify(entry.details, null, 2);
   row.innerHTML = `
     <span class="log-ts">${entry.ts}</span>
     <span class="log-lvl ${entry.level}">${entry.level}</span>
@@ -1446,6 +1530,23 @@ function filterLogs() { rebuildLogArea(); }
 function clearLogs() {
   logEntries = [];
   document.getElementById('log-area').innerHTML = '';
+}
+
+function exportLogs() {
+  const payload = {
+    exported_at: new Date().toISOString(),
+    target: JETSON_IP_DISPLAY,
+    count: logEntries.length,
+    logs: logEntries
+  };
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `carbot_logs_${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  addLog('INFO', `Exported ${logEntries.length} log entries`, { source: 'logs', filename: a.download });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1494,6 +1595,210 @@ function toast(msg, type = 'ok') {
   toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
 }
 
+function readActuatorInputs(prefix) {
+  const action = document.getElementById(`${prefix}-action`)?.value || '';
+  const distRaw = document.getElementById(`${prefix}-dist`)?.value ?? '';
+  const durRaw = document.getElementById(`${prefix}-dur`)?.value ?? '';
+  if (!action) return null;
+
+  const actuator = { action };
+  if (distRaw !== '') {
+    const distance = parseFloat(distRaw);
+    if (!Number.isFinite(distance) || distance < 0) {
+      toast('Actuator distance must be a non-negative number', 'warn');
+      return null;
+    }
+    actuator.distance_mm = distance;
+  }
+  if (durRaw !== '') {
+    const duration = parseFloat(durRaw);
+    if (!Number.isFinite(duration) || duration < 0) {
+      toast('Actuator duration must be a non-negative number', 'warn');
+      return null;
+    }
+    actuator.duration = duration;
+  }
+  return actuator;
+}
+
+async function refreshServerFileList(selectedPath = '') {
+  const resp = await api('GET', '/api/files');
+  if (!resp?.files) return [];
+
+  const select = document.getElementById('te-file-select');
+  const fileList = document.getElementById('file-list');
+  const currentSelection = selectedPath || document.getElementById('filename-input').value.trim() || teFilename;
+
+  if (select) {
+    select.innerHTML = '';
+    if (resp.files.length === 0) {
+      select.innerHTML = '<option value="">No JSON files found</option>';
+    } else {
+      resp.files.forEach(path => {
+        const opt = document.createElement('option');
+        opt.value = path;
+        opt.textContent = path;
+        select.appendChild(opt);
+      });
+      select.value = resp.files.includes(currentSelection) ? currentSelection : resp.files[0];
+    }
+  }
+
+  if (fileList) {
+    fileList.innerHTML = '';
+    resp.files.forEach(path => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      item.onclick = () => selectFile(path, item);
+      item.innerHTML = `<span class="file-icon">></span> ${path.split('/').pop()}`;
+      fileList.appendChild(item);
+      if (path === (select?.value || currentSelection)) item.classList.add('active');
+    });
+  }
+
+  if (select?.value) selectFile(select.value, fileList?.querySelector('.file-item.active') || null);
+  return resp.files;
+}
+
+async function teRefreshServerFiles() {
+  const files = await refreshServerFileList();
+  if (files.length) addLog('INFO', `Jetson file list refreshed (${files.length} files)`);
+}
+
+function summarizeServoTargets(frame) {
+  const servos = frame?.servos || {};
+  return SERVO_IDS.map((sid) => {
+    const servo = servos[sid];
+    if (!servo) return `S${sid}:n/a`;
+    if (servo.type === 'absolute') return `S${sid}:raw ${servo.value ?? 0}`;
+    const sign = servo.sign || '+';
+    return `S${sid}:diff ${sign}${servo.diff ?? 0}`;
+  }).join(', ');
+}
+
+function summarizeActuator(frame) {
+  if (!frame?.actuator) return 'none';
+  const actuator = frame.actuator;
+  const dist = actuator.distance_mm != null ? ` ${actuator.distance_mm}mm` : '';
+  const dur = actuator.duration != null ? ` ${actuator.duration}s` : '';
+  return `${actuator.action}${dist}${dur}`;
+}
+
+function stopPlaybackTrace(reason = '') {
+  if (!playbackTrace) return;
+  playbackTrace.timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+  if (reason) {
+    addLog('WARN', `Playback trace stopped: ${reason}`, {
+      source: 'playback_trace',
+      label: playbackTrace.label,
+      loop: playbackTrace.loop
+    });
+  }
+  playbackTrace = null;
+}
+
+function schedulePlaybackTraceCycle(trace, cycleNumber = 1) {
+  if (!playbackTrace || playbackTrace.token !== trace.token) return;
+  const frames = trace.frames || [];
+  let elapsedMs = 0;
+
+  frames.forEach((frame, idx) => {
+    const delayMs = Math.max(0, Math.round((parseFloat(frame.delay) || 0) * 1000));
+    const durationMs = Math.max(0, Math.round((parseFloat(frame.duration) || 0) * 1000));
+    const frameNumber = idx + 1;
+    const details = {
+      source: 'playback_trace',
+      label: trace.label,
+      cycle: cycleNumber,
+      frame: frameNumber,
+      total_frames: frames.length,
+      delay_ms: delayMs,
+      duration_ms: durationMs,
+      speed: frame.speed ?? null,
+      actuator: frame.actuator || null,
+      servo_targets: summarizeServoTargets(frame)
+    };
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} queued`, details);
+    }, elapsedMs));
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} start`, details);
+    }, elapsedMs + delayMs));
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} complete`, details);
+    }, elapsedMs + delayMs + durationMs));
+
+    elapsedMs += delayMs + durationMs;
+  });
+
+  trace.timeouts.push(setTimeout(() => {
+    if (!playbackTrace || playbackTrace.token !== trace.token) return;
+    if (trace.loop) {
+      addLog('INFO', `Playback cycle ${cycleNumber} complete, restarting`, {
+        source: 'playback_trace',
+        label: trace.label,
+        cycle: cycleNumber
+      });
+      schedulePlaybackTraceCycle(trace, cycleNumber + 1);
+    } else {
+      addLog('INFO', 'Playback trace complete', {
+        source: 'playback_trace',
+        label: trace.label,
+        cycles: cycleNumber,
+        total_frames: frames.length
+      });
+      playbackTrace = null;
+    }
+  }, elapsedMs));
+}
+
+function startPlaybackTrace(frames, label, loop = false) {
+  stopPlaybackTrace();
+  if (!Array.isArray(frames) || frames.length === 0) {
+    addLog('WARN', `Playback trace unavailable for ${label}`, { source: 'playback_trace', reason: 'no frames' });
+    return;
+  }
+
+  const trace = {
+    token: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    frames: JSON.parse(JSON.stringify(frames)),
+    label,
+    loop,
+    timeouts: []
+  };
+  playbackTrace = trace;
+  addLog('INFO', `Playback trace armed for ${label}`, {
+    source: 'playback_trace',
+    frame_count: frames.length,
+    loop
+  });
+  schedulePlaybackTraceCycle(trace, 1);
+}
+
+async function loadFramesForPlayback(file) {
+  if (teFilename === file && Array.isArray(teFrames) && teFrames.length > 0) {
+    return JSON.parse(JSON.stringify(teFrames));
+  }
+  const resp = await api('GET', `/api/file?path=${encodeURIComponent(file)}`);
+  if (!resp?.content || !Array.isArray(resp.content)) return null;
+  return resp.content;
+}
+
+async function startPlaybackTraceForFile(file, loop) {
+  const frames = await loadFramesForPlayback(file);
+  if (!frames) {
+    addLog('WARN', `Could not load frame trace for ${file}`, { source: 'playback_trace', file });
+    return;
+  }
+  startPlaybackTrace(frames, file, loop);
+}
+
 
 // ═══════════════════════════════════════════════════════════
 // TIMELINE EDITOR
@@ -1503,6 +1808,7 @@ function toast(msg, type = 'ok') {
 let teFrames       = [];   // array of frame objects (deep clones from JSON)
 let teSelected     = -1;   // index of selected frame
 let teFilename     = '';   // filename of loaded JSON
+let teDirtyLogged  = false;
 
 const TE_PX_PER_SEC = 36;  // pixels per second for duration blocks
 const TE_MIN_FRAME  = 48;  // min frame block width in px
@@ -1514,33 +1820,32 @@ function toggleTimeline() {
   drawer.classList.toggle('open');
 }
 
-// ── Load from file picker ──
-function teLoadFromFile(input) {
-  const file = input.files[0];
-  if (!file) return;
-  teFilename = file.name;
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    try {
-      const data = JSON.parse(e.target.result);
-      teLoadJSON(data, file.name);
-    } catch (err) {
-      toast('Invalid JSON file', 'err');
-    }
-  };
-  reader.readAsText(file);
-  input.value = '';
+// Timeline load from server
+async function teLoadFromServer(path) {
+  const selectedPath = path || document.getElementById('te-file-select').value || document.getElementById('filename-input').value.trim();
+  if (!selectedPath) { toast('Select a JSON file first', 'warn'); return; }
+  const resp = await api('GET', `/api/file?path=${encodeURIComponent(selectedPath)}`);
+  if (!resp?.content) return;
+  teLoadJSON(resp.content, resp.path || selectedPath);
+  selectFile(resp.path || selectedPath, null);
+  addLog('INFO', `Loaded timeline from Jetson: ${resp.path || selectedPath}`);
 }
 
-// ── Load JSON array into editor ──
+async function teReloadFromCurrentFile() {
+  const pathValue = teFilename || document.getElementById('filename-input').value.trim();
+  if (!pathValue) return;
+  await teLoadFromServer(pathValue);
+}
+
 function teLoadJSON(frames, fname) {
   if (!Array.isArray(frames)) { toast('JSON must be an array of frames', 'err'); return; }
-  teFrames   = JSON.parse(JSON.stringify(frames)); // deep clone
+  teFrames   = JSON.parse(JSON.stringify(frames));
   teSelected = teFrames.length > 0 ? 0 : -1;
   teFilename = fname || teFilename || 'timeline.json';
+  teDirtyLogged = false;
   teRenderStrip();
   teRenderEditor();
-  teSetStatus(`${teFrames.length} frames loaded — ${teFilename}`);
+  teSetStatus(`${teFrames.length} frames loaded - ${teFilename}`);
   toast(`Timeline: ${teFrames.length} frames loaded`, 'ok');
   document.getElementById('te-drawer').classList.add('open');
 }
@@ -1610,9 +1915,10 @@ function teSelectFrame(idx) {
   teSelected = idx;
   teRenderStrip();
   teRenderEditor();
+  teSetStatus(`Selected frame ${idx + 1}`);
 }
 
-// ── Render the frame editor pane ──
+// Timeline frame editor
 function teRenderEditor() {
   const area = document.getElementById('te-editor-area');
   if (teSelected < 0 || teSelected >= teFrames.length) {
@@ -1624,17 +1930,16 @@ function teRenderEditor() {
   const N   = teSelected + 1;
   const tot = teFrames.length;
 
-  // ── META column ──
   let actHtml = '';
   if (fr.actuator) {
     actHtml = `
       <div class="te-act-section">
-        <div class="te-act-title">⟲ Actuator</div>
+        <div class="te-act-title">Actuator</div>
         <div class="te-act-row">
           <select id="te-act-action" onchange="teMarkDirty()">
-            <option value="extend"  ${fr.actuator.action==='extend'  ? 'selected':''}>Extend</option>
-            <option value="retract" ${fr.actuator.action==='retract' ? 'selected':''}>Retract</option>
-            <option value="stop"    ${fr.actuator.action==='stop'    ? 'selected':''}>Stop</option>
+            <option value="extend" ${fr.actuator.action==='extend' ? 'selected' : ''}>Extend</option>
+            <option value="retract" ${fr.actuator.action==='retract' ? 'selected' : ''}>Retract</option>
+            <option value="stop" ${fr.actuator.action==='stop' ? 'selected' : ''}>Stop</option>
           </select>
         </div>
         <div class="te-act-row">
@@ -1647,7 +1952,7 @@ function teRenderEditor() {
           <input class="te-inp" type="number" id="te-act-dur" step="0.5" min="0"
             value="${fr.actuator.duration ?? ''}" placeholder="auto" onchange="teMarkDirty()"/>
         </div>
-        <button class="te-act-none-btn" onclick="teRemoveActuator()">✕ Remove Actuator</button>
+        <button class="te-act-none-btn" onclick="teRemoveActuator()">Remove Actuator</button>
       </div>
     `;
   } else {
@@ -1657,37 +1962,45 @@ function teRenderEditor() {
     `;
   }
 
-  // ── SERVO table ──
   const servos = fr.servos || {};
   let rowsHtml = '';
   [1,2,3,4,5,6,7].forEach(sid => {
-    const s      = servos[sid] || {};
-    const isAbs  = (s.type === 'absolute');
-    const isRel  = (s.type === 'relative');
-    const badge  = isRel ? 'rel' : 'abs';
+    const s = servos[sid] || {};
+    const isAbs = (s.type === 'absolute');
+    const isRel = (s.type === 'relative');
+    const badge = isRel ? 'rel' : 'abs';
     const typeLabel = isRel ? 'REL' : 'ABS';
 
     if (isAbs) {
+      const rawValue = s.value ?? 0;
+      const degValue = servoRawToDeg(rawValue).toFixed(1);
       rowsHtml += `
         <tr>
           <td class="te-sid"><span class="te-sid-badge ${badge}">${sid}</span></td>
           <td><span class="te-type-badge ${badge}">${typeLabel}</span></td>
           <td><input class="te-inp wide" type="number" id="te-s${sid}-val" step="50"
-                value="${s.value ?? 0}" onchange="teMarkDirty()" title="Absolute goal position (raw)"/></td>
-          <td colspan="2" style="color:var(--dim);font-size:9px;padding-left:6px;">—</td>
+                value="${rawValue}" onchange="teSyncServoEditor(${sid}, 'raw')" title="Absolute goal position (raw)"/></td>
+          <td><input class="te-inp" type="number" id="te-s${sid}-deg" step="0.1"
+                value="${degValue}" onchange="teSyncServoEditor(${sid}, 'deg')" title="Absolute goal position (degrees)"/></td>
+          <td style="color:var(--dim);font-size:9px;padding-left:6px;">DEG</td>
         </tr>`;
     } else if (isRel) {
+      const diffValue = s.diff ?? 0;
+      const signedDiff = (s.sign || '+') === '-' ? -Math.abs(diffValue) : Math.abs(diffValue);
+      const degValue = servoRawToDeg(signedDiff).toFixed(1);
       rowsHtml += `
         <tr>
           <td class="te-sid"><span class="te-sid-badge ${badge}">${sid}</span></td>
           <td><span class="te-type-badge ${badge}">${typeLabel}</span></td>
           <td><input class="te-inp" type="number" id="te-s${sid}-diff" step="10"
-                value="${s.diff ?? 0}" onchange="teMarkDirty()" title="Relative diff"/></td>
+                value="${diffValue}" onchange="teSyncServoEditor(${sid}, 'raw')" title="Relative diff"/></td>
           <td>
-            <select class="te-inp sign-inp" id="te-s${sid}-sign" onchange="teMarkDirty()">
-              <option value="+" ${(s.sign||'+')==='+' ? 'selected':''}>+</option>
-              <option value="-" ${(s.sign||'+')==='-' ? 'selected':''}>−</option>
+            <select class="te-inp sign-inp" id="te-s${sid}-sign" onchange="teSyncServoEditor(${sid}, 'raw')">
+              <option value="+" ${(s.sign||'+')==='+' ? 'selected' : ''}>+</option>
+              <option value="-" ${(s.sign||'+')==='-' ? 'selected' : ''}>-</option>
             </select>
+            <input class="te-inp" type="number" id="te-s${sid}-deg" step="0.1"
+                value="${degValue}" onchange="teSyncServoEditor(${sid}, 'deg')" title="Relative diff (degrees)"/>
           </td>
           <td><input class="te-inp" type="number" id="te-s${sid}-ref" step="10"
                 value="${s.ref_pos ?? 0}" onchange="teMarkDirty()" title="Reference position"/></td>
@@ -1697,13 +2010,12 @@ function teRenderEditor() {
         <tr>
           <td class="te-sid"><span class="te-sid-badge abs">${sid}</span></td>
           <td><span style="font-size:9px;color:var(--dim);">?</span></td>
-          <td colspan="3" style="color:var(--dim);font-size:10px;">—</td>
+          <td colspan="3" style="color:var(--dim);font-size:10px;">-</td>
         </tr>`;
     }
   });
 
   area.innerHTML = `
-    <!-- META column -->
     <div class="te-meta-col">
       <div class="te-meta-title">Frame ${N} / ${tot}</div>
 
@@ -1726,7 +2038,6 @@ function teRenderEditor() {
       ${actHtml}
     </div>
 
-    <!-- SERVO table column -->
     <div class="te-servo-col">
       <div class="te-meta-title" style="color:var(--accent);">Servo Targets</div>
       <table class="te-servo-table">
@@ -1734,9 +2045,9 @@ function teRenderEditor() {
           <tr>
             <th>ID</th>
             <th>TYPE</th>
-            <th>VALUE / DIFF</th>
-            <th>SIGN</th>
-            <th>REF POS</th>
+            <th>RAW / DIFF</th>
+            <th>SIGN / DEG</th>
+            <th>REF POS / META</th>
           </tr>
         </thead>
         <tbody>${rowsHtml}</tbody>
@@ -1798,12 +2109,53 @@ function teFlushEdits(idx) {
 let teDirty = false;
 function teMarkDirty() {
   teDirty = true;
+  if (!teDirtyLogged && teSelected >= 0) {
+    addLog('INFO', `Timeline edited: frame ${teSelected + 1}`);
+    teDirtyLogged = true;
+  }
+}
+
+function teSyncServoEditor(sid, source) {
+  const diffEl = document.getElementById(`te-s${sid}-diff`);
+  const signEl = document.getElementById(`te-s${sid}-sign`);
+  const valEl = document.getElementById(`te-s${sid}-val`);
+  const degEl = document.getElementById(`te-s${sid}-deg`);
+
+  if (!degEl) { teMarkDirty(); return; }
+
+  if (source === 'deg') {
+    const deg = parseFloat(degEl.value);
+    if (!Number.isFinite(deg)) {
+      if (valEl) valEl.value = '';
+      if (diffEl) diffEl.value = '';
+      teMarkDirty();
+      return;
+    }
+    const raw = servoDegToRaw(deg);
+    if (valEl) {
+      valEl.value = String(raw);
+    } else if (diffEl && signEl) {
+      signEl.value = raw < 0 ? '-' : '+';
+      diffEl.value = String(Math.abs(raw));
+    }
+  } else {
+    if (valEl) {
+      const raw = parseInt(valEl.value, 10);
+      degEl.value = Number.isFinite(raw) ? servoRawToDeg(raw).toFixed(1) : '';
+    } else if (diffEl && signEl) {
+      const diff = parseInt(diffEl.value, 10);
+      const signedRaw = (signEl.value === '-' ? -1 : 1) * (Number.isFinite(diff) ? Math.abs(diff) : 0);
+      degEl.value = Number.isFinite(diff) ? servoRawToDeg(signedRaw).toFixed(1) : '';
+    }
+  }
+  teMarkDirty();
 }
 
 // ── Save / flush before any action ──
 function teCommitCurrent() {
   if (teSelected >= 0) teFlushEdits(teSelected);
   teDirty = false;
+  teDirtyLogged = false;
 }
 
 // ── Save JSON ──
@@ -1816,13 +2168,28 @@ function teSaveJSON() {
   a.download = teFilename || 'timeline_edited.json';
   a.click();
   URL.revokeObjectURL(a.href);
+  addLog('INFO', `Downloaded timeline JSON: ${teFilename || 'timeline_edited.json'}`);
   toast('JSON saved!', 'ok');
 }
 
-// ── Add blank frame after selected ──
+async function teSaveToServer() {
+  teCommitCurrent();
+  if (teFrames.length === 0) { toast('No frames to save', 'warn'); return; }
+  const pathValue = teFilename || document.getElementById('te-file-select').value || document.getElementById('filename-input').value.trim();
+  if (!pathValue) { toast('Select a target JSON file first', 'warn'); return; }
+  const resp = await api('POST', '/api/file', { path: pathValue, content: teFrames });
+  if (!resp) return;
+  teFilename = resp.path || pathValue;
+  selectFile(teFilename, null);
+  await refreshServerFileList(teFilename);
+  addLog('INFO', `Saved timeline to Jetson: ${teFilename}`);
+  teSetStatus(`Saved ${teFrames.length} frames - ${teFilename}`);
+  toast('Timeline saved to Jetson', 'ok');
+}
+
+// Timeline editing actions
 function teAddFrameAfter() {
   teCommitCurrent();
-  // Clone current frame or make a blank one
   let newFrame;
   if (teSelected >= 0 && teSelected < teFrames.length) {
     newFrame = JSON.parse(JSON.stringify(teFrames[teSelected]));
@@ -1847,9 +2214,9 @@ function teAddFrameAfter() {
   teRenderStrip();
   teRenderEditor();
   teSetStatus(`Inserted frame at position ${insertAt + 1}`);
+  addLog('INFO', `Timeline: inserted frame ${insertAt + 1}`);
 }
 
-// ── Duplicate selected frame ──
 function teDuplicateFrame() {
   teCommitCurrent();
   if (teSelected < 0 || teSelected >= teFrames.length) { toast('Select a frame first', 'warn'); return; }
@@ -1858,11 +2225,11 @@ function teDuplicateFrame() {
   teSelected = teSelected + 1;
   teRenderStrip();
   teRenderEditor();
-  teSetStatus(`Duplicated frame → F${teSelected + 1}`);
+  teSetStatus(`Duplicated frame -> F${teSelected + 1}`);
+  addLog('INFO', `Timeline: duplicated frame ${teSelected + 1}`);
   toast('Frame duplicated', 'ok');
 }
 
-// ── Delete selected frame ──
 function teDeleteFrame() {
   if (teSelected < 0 || teSelected >= teFrames.length) { toast('No frame selected', 'warn'); return; }
   teFrames.splice(teSelected, 1);
@@ -1870,10 +2237,10 @@ function teDeleteFrame() {
   teRenderStrip();
   teRenderEditor();
   teSetStatus(`${teFrames.length} frames remaining`);
+  addLog('INFO', 'Timeline: deleted selected frame');
   toast('Frame deleted', 'ok');
 }
 
-// ── Move frame left/right ──
 function teMoveFrameLeft() {
   teCommitCurrent();
   if (teSelected <= 0) return;
@@ -1881,7 +2248,9 @@ function teMoveFrameLeft() {
   teSelected--;
   teRenderStrip();
   teRenderEditor();
+  addLog('INFO', `Timeline: moved frame to ${teSelected + 1}`);
 }
+
 function teMoveFrameRight() {
   teCommitCurrent();
   if (teSelected < 0 || teSelected >= teFrames.length - 1) return;
@@ -1889,31 +2258,52 @@ function teMoveFrameRight() {
   teSelected++;
   teRenderStrip();
   teRenderEditor();
+  addLog('INFO', `Timeline: moved frame to ${teSelected + 1}`);
 }
 
-// ── Add / remove actuator on selected frame ──
 function teAddActuator() {
   teFlushEdits(teSelected);
   if (teSelected < 0) return;
   teFrames[teSelected].actuator = { action: 'extend', distance_mm: 40 };
   teRenderStrip();
   teRenderEditor();
+  addLog('INFO', `Timeline: added actuator to frame ${teSelected + 1}`);
 }
+
 function teRemoveActuator() {
   teFlushEdits(teSelected);
   if (teSelected < 0) return;
   delete teFrames[teSelected].actuator;
   teRenderStrip();
   teRenderEditor();
+  addLog('INFO', `Timeline: removed actuator from frame ${teSelected + 1}`);
 }
 
-// ── Play current edited timeline ──
 async function teApplyAndPlay(loop) {
   teCommitCurrent();
   if (teFrames.length === 0) { toast('No frames in timeline', 'warn'); return; }
-  // Save to a temp file on the server side — not directly supported by the API.
-  // Instead: save JSON locally and tell user to upload, OR use the existing filename.
-  toast('Use ⬇ Save JSON, upload to robot, then press ▶ Play', 'warn');
+  await teSaveToServer();
+  const file = teFilename || document.getElementById('filename-input').value.trim();
+  if (!file) return;
+  const resp = await api('POST', '/api/play', { file, loop });
+  if (resp?.status === 'started') {
+    addLog('INFO', `Timeline playback ${loop ? 'loop' : 'once'}: ${file}`);
+    startPlaybackTrace(teFrames, file, loop);
+    toast(`${loop ? 'Loop' : 'Play'} started`, 'ok');
+  }
+}
+
+async function tePlaySelectedFrame(loop) {
+  teCommitCurrent();
+  if (teSelected < 0 || teSelected >= teFrames.length) { toast('Select a frame first', 'warn'); return; }
+  const frame = teFrames[teSelected];
+  const resp = await api('POST', '/api/play_frame', { frame, loop });
+  if (!resp) return;
+  if (!resp.error) {
+    addLog('INFO', `Frame playback: F${teSelected + 1} ${loop ? '(loop)' : '(once)'}`);
+    startPlaybackTrace([frame], `frame_${teSelected + 1}`, loop);
+    toast(`Frame ${teSelected + 1} ${loop ? 'looping' : 'playing'}`, 'ok');
+  }
 }
 
 // ── Keyboard nav in timeline ──

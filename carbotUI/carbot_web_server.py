@@ -7,7 +7,8 @@ to a local web UI over HTTP/WebSocket.
 
 Architecture:
   Browser  <──HTTP/WS──>  This FastAPI server (Windows/Mac/Linux)
-                                    │
+                      
+                                                  │
                               TCP socket (Ethernet)
                                     │
                           motion_server.py (Jetson, port 5000)
@@ -32,7 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -41,6 +42,7 @@ from pydantic import BaseModel
 JETSON_IP   = os.environ.get("CARBOT_IP",   "192.168.99.1")
 JETSON_PORT = int(os.environ.get("CARBOT_PORT", 5000))
 WEB_PORT    = int(os.environ.get("WEB_PORT",    8000))
+FILE_ROOT   = Path(os.environ.get("CARBOT_FILE_ROOT", Path(__file__).parent))
 
 SERVO_IDS = [1, 2, 3, 4, 5, 6, 7]
 ABS_IDS   = [1, 2, 3, 4, 5]
@@ -176,6 +178,7 @@ class RecordRequest(BaseModel):
     delay:    float = 0.5
     duration: float = 1.0
     speed:    int   = 200
+    actuator: Optional[dict] = None
 
 class ServoMoveRequest(BaseModel):
     servo_id: int
@@ -190,6 +193,44 @@ class ActuatorRequest(BaseModel):
     action:      str            # "extend" | "retract" | "stop"
     distance_mm: Optional[float] = None
     duration:    Optional[float] = None
+
+class FileSaveRequest(BaseModel):
+    path: str
+    content: Any
+
+class PlayFrameRequest(BaseModel):
+    frame: Dict[str, Any]
+    loop: bool = False
+
+
+def _safe_file_path(rel_path: str) -> Path:
+    if not rel_path or not rel_path.strip():
+        raise HTTPException(status_code=400, detail="path is required")
+
+    normalized = Path(rel_path.replace("\\", "/"))
+    if normalized.is_absolute():
+        raise HTTPException(status_code=400, detail="path must be relative")
+    if ".." in normalized.parts:
+        raise HTTPException(status_code=400, detail="path traversal is not allowed")
+    if normalized.suffix.lower() != ".json":
+        raise HTTPException(status_code=400, detail="only .json files are supported")
+
+    resolved = (FILE_ROOT / normalized).resolve()
+    root_resolved = FILE_ROOT.resolve()
+    if root_resolved not in resolved.parents and resolved != root_resolved:
+        raise HTTPException(status_code=400, detail="path is outside the allowed root")
+    return resolved
+
+
+def _list_json_files() -> List[str]:
+    if not FILE_ROOT.exists():
+        return []
+    files = []
+    for path in FILE_ROOT.rglob("*.json"):
+        if any(part.startswith(".") for part in path.relative_to(FILE_ROOT).parts):
+            continue
+        files.append(path.relative_to(FILE_ROOT).as_posix())
+    return sorted(files)
 
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
@@ -257,11 +298,16 @@ async def api_record(req: RecordRequest):
         "duration": req.duration,
         "speed":    req.speed,
     }
+    if req.actuator:
+        payload["actuator"] = req.actuator
     resp = await send_cmd(payload)
     if resp is None:
         return JSONResponse({"error": "No response"}, status_code=503)
     if resp.get("status") == "recorded":
-        append_log("INFO", f"⏺ Frame #{resp.get('frame_count')} → {req.file}")
+        actuator_note = ""
+        if req.actuator:
+            actuator_note = f" | actuator={req.actuator.get('action', 'unknown')}"
+        append_log("INFO", f"⏺ Frame #{resp.get('frame_count')} → {req.file}{actuator_note}")
     else:
         append_log("ERROR", f"Record failed: {resp.get('error','unknown')}")
     await ws_manager.broadcast({"type": "cmd", "cmd": "record", "resp": resp})
@@ -322,6 +368,53 @@ async def api_actuator(req: ActuatorRequest):
     append_log("INFO", f"ACTUATOR {req.action.upper()} dist={req.distance_mm} dur={req.duration}")
     await ws_manager.broadcast({"type": "cmd", "cmd": "actuator", "resp": resp})
     return resp
+
+
+@app.post("/api/play_frame")
+async def api_play_frame(req: PlayFrameRequest):
+    payload = {"cmd": "play_frame", "frame": req.frame, "loop": req.loop}
+    resp = await send_cmd(payload)
+    if resp is None:
+        return JSONResponse({"error": "No response"}, status_code=503)
+    if resp.get("error"):
+        append_log("ERROR", f"Play frame failed: {resp.get('error')}")
+    else:
+        append_log("INFO", f"FRAME PLAY {'LOOP' if req.loop else 'ONCE'}")
+    await ws_manager.broadcast({"type": "cmd", "cmd": "play_frame", "resp": resp})
+    return resp
+
+
+@app.get("/api/files")
+async def api_files():
+    files = _list_json_files()
+    append_log("INFO", f"FILES LIST → {len(files)} JSON file(s)")
+    return {"files": files}
+
+
+@app.get("/api/file")
+async def api_file_get(path: str = Query(..., description="Relative path to a JSON file")):
+    resolved = _safe_file_path(path)
+    if not resolved.exists():
+        append_log("ERROR", f"FILE LOAD failed: {path} not found")
+        raise HTTPException(status_code=404, detail="file not found")
+
+    try:
+        content = json.loads(resolved.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        append_log("ERROR", f"FILE LOAD failed: {path} invalid JSON")
+        raise HTTPException(status_code=400, detail=f"invalid JSON: {exc.msg}") from exc
+
+    append_log("INFO", f"FILE LOAD → {path}")
+    return {"path": path, "content": content}
+
+
+@app.post("/api/file")
+async def api_file_save(req: FileSaveRequest):
+    resolved = _safe_file_path(req.path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(json.dumps(req.content, indent=2) + "\n", encoding="utf-8")
+    append_log("INFO", f"FILE SAVE → {req.path}")
+    return {"status": "saved", "path": req.path}
 
 
 @app.get("/api/logs")

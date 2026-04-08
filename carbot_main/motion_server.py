@@ -48,6 +48,20 @@ class MotionPlayerWrapper:
             )
             self._thread.start()
 
+    def play_frame(self, frame: dict, loop: bool = False):
+        """Play a single in-memory frame (or loop it) without loading from disk."""
+        with self.lock:
+            if self.is_playing:
+                self.stop(mode="soft")
+                self.join()
+
+            self.is_playing = True
+            self._stop_flag.clear()
+            self._thread = threading.Thread(
+                target=self._play_loop, args=([frame], loop), daemon=True
+            )
+            self._thread.start()
+
     def join(self):
         if self._thread and self._thread.is_alive():
             self._thread.join()
@@ -219,6 +233,29 @@ class MotionServer:
 
         cmd = msg["cmd"]
 
+        def _normalize_frame(frame_dict: dict) -> dict:
+            """Normalize incoming frame payload to recorder/playback shape."""
+            servos_in = frame_dict.get("servos", {})
+            if not isinstance(servos_in, dict):
+                raise ValueError("frame.servos must be an object")
+
+            servos_out = {}
+            for sid_key, servo_cfg in servos_in.items():
+                sid_int = int(sid_key)
+                servos_out[sid_int] = servo_cfg
+
+            normalized = {
+                "delay": float(frame_dict.get("delay", 0.5)),
+                "duration": float(frame_dict.get("duration", 1.0)),
+                "speed": int(frame_dict.get("speed", 200)),
+                "servos": servos_out,
+            }
+            if "actuator" in frame_dict:
+                if not isinstance(frame_dict["actuator"], dict):
+                    raise ValueError("frame.actuator must be an object")
+                normalized["actuator"] = frame_dict["actuator"]
+            return normalized
+
         # ── play ──────────────────────────────────────────────────────────────
         if cmd == "play":
             if "file" not in msg:
@@ -246,6 +283,26 @@ class MotionServer:
             logging.info(f"Playing: {filepath} (loop={loop})")
             self.player.play(filepath, loop=loop)
             self.send_resp(client_sock, {"status": "started"})
+
+        # ── play_frame ────────────────────────────────────────────────────────
+        elif cmd == "play_frame":
+            frame = msg.get("frame")
+            loop = msg.get("loop", False)
+            if not isinstance(frame, dict):
+                self.send_resp(client_sock, {"status": "error", "error": "frame must be an object"})
+                return
+            if not isinstance(loop, bool):
+                self.send_resp(client_sock, {"status": "error", "error": "loop must be a boolean"})
+                return
+            try:
+                normalized_frame = _normalize_frame(frame)
+            except Exception as e:
+                self.send_resp(client_sock, {"status": "error", "error": f"Invalid frame payload: {e}"})
+                return
+
+            logging.info(f"Playing single frame (loop={loop})")
+            self.player.play_frame(normalized_frame, loop=loop)
+            self.send_resp(client_sock, {"status": "started", "mode": "play_frame"})
 
         # ── stop ──────────────────────────────────────────────────────────────
         elif cmd == "stop":
@@ -410,6 +467,21 @@ class MotionServer:
                 "speed":    msg.get("speed",    200),
                 "servos":   {},
             }
+            actuator = msg.get("actuator")
+            if actuator is not None:
+                if not isinstance(actuator, dict):
+                    self.send_resp(client_sock, {"status": "error", "error": "actuator must be an object"})
+                    return
+                action = actuator.get("action")
+                if action not in ("extend", "retract", "stop"):
+                    self.send_resp(client_sock, {"status": "error", "error": "actuator.action must be extend/retract/stop"})
+                    return
+                frame["actuator"] = {"action": action}
+                if "distance_mm" in actuator and actuator["distance_mm"] is not None:
+                    frame["actuator"]["distance_mm"] = float(actuator["distance_mm"])
+                if "duration" in actuator and actuator["duration"] is not None:
+                    frame["actuator"]["duration"] = float(actuator["duration"])
+
             for sid_str, val in positions.items():
                 sid = int(sid_str)
                 if sid in ABS_IDS:
@@ -496,4 +568,3 @@ if __name__ == "__main__":
     player = MotionPlayerWrapper(ser)
     server = MotionServer(player, arm=arm)
     server.start()
-
