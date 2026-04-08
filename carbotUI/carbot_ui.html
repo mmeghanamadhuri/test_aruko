@@ -333,6 +333,19 @@
   .file-item:hover { background: var(--bg3); border-color: var(--border); }
   .file-item.active { background: rgba(0,212,255,0.08); border-color: var(--accent); color: var(--accent); }
   .file-icon { color: var(--dim); font-size: 11px; }
+  #file-list {
+    max-height: 210px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.16);
+  }
+  #file-list::-webkit-scrollbar { width: 6px; }
+  #file-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 6px;
+  }
 
   .rec-params {
     display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
@@ -716,6 +729,7 @@
     .panel, .main-area { height: auto; min-height: 300px; }
     .panel { border-right: none; border-bottom: 1px solid var(--border); }
     .panel.right { border-left: none; border-top: 1px solid var(--border); }
+    #file-list { max-height: 170px; }
   }
 </style>
 </head>
@@ -1848,13 +1862,13 @@ function toggleTimeline() {
 }
 
 // Timeline load from server
-async function teLoadFromServer(path) {
+async function teLoadFromServer(path, autoOpen = true) {
   const typedPath = document.getElementById('filename-input').value.trim();
   const selectedPath = path || typedPath || document.getElementById('te-file-select').value;
   if (!selectedPath) { toast('Select a JSON file first', 'warn'); return; }
   const resp = await api('GET', `/api/file?path=${encodeURIComponent(selectedPath)}`);
   if (!resp?.content) return;
-  teLoadJSON(resp.content, resp.path || selectedPath);
+  teLoadJSON(resp.content, resp.path || selectedPath, autoOpen);
   selectFile(resp.path || selectedPath, null);
   addLog('INFO', `Loaded timeline from Jetson: ${resp.path || selectedPath}`);
 }
@@ -1862,10 +1876,10 @@ async function teLoadFromServer(path) {
 async function teReloadFromCurrentFile() {
   const pathValue = teFilename || document.getElementById('filename-input').value.trim();
   if (!pathValue) return;
-  await teLoadFromServer(pathValue);
+  await teLoadFromServer(pathValue, false);
 }
 
-function teLoadJSON(frames, fname) {
+function teLoadJSON(frames, fname, autoOpen = true) {
   const normalized = normalizeTimelinePayload(frames);
   if (!normalized) {
     toast('JSON must be an array or { frames: [] } payload', 'err');
@@ -1879,7 +1893,9 @@ function teLoadJSON(frames, fname) {
   teRenderEditor();
   teSetStatus(`${normalized.frameCount} frames loaded - ${teFilename}`);
   toast(`Timeline: ${normalized.frameCount} frames loaded`, 'ok');
-  document.getElementById('te-drawer').classList.add('open');
+  if (autoOpen) {
+    document.getElementById('te-drawer').classList.add('open');
+  }
 }
 
 // ── Status label ──
