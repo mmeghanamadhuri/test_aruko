@@ -2318,14 +2318,18 @@ document.addEventListener('keydown', (e) => {
 });
 
 document.addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT') return;
-  if (e.key === 'p') cmdPlay(false);
-  if (e.key === 'l') cmdPlay(true);
-  if (e.key === 's') cmdStop('soft');
-  if (e.key === 'S') cmdStop('hard');
-  if (e.key === 'r') cmdRecord();
-  if (e.key === 'n') cmdNeutralAll();
-  if (e.key === 'f') cmdFreezeAll();
+  // Never fire single-key robot shortcuts when Ctrl/Cmd/Alt combos are used.
+  // This prevents accidental record on Ctrl+R browser refresh.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+  if (e.key === 'p') { cmdPlay(false); e.preventDefault(); }
+  if (e.key === 'l') { cmdPlay(true);  e.preventDefault(); }
+  if (e.key === 's') { cmdStop('soft'); e.preventDefault(); }
+  if (e.key === 'S') { cmdStop('hard'); e.preventDefault(); }
+  if (e.key === 'r') { cmdRecord(); e.preventDefault(); }
+  if (e.key === 'n') { cmdNeutralAll(); e.preventDefault(); }
+  if (e.key === 'f') { cmdFreezeAll(); e.preventDefault(); }
 });
 </script>
 </body>
