@@ -1535,10 +1535,15 @@ function clearLogs() {
 }
 
 function exportLogs() {
+  const recordedFrameCount = logEntries.reduce((maxCount, entry) => {
+    const count = Number(entry?.details?.frame_count);
+    return Number.isFinite(count) ? Math.max(maxCount, count) : maxCount;
+  }, 0);
   const payload = {
     exported_at: new Date().toISOString(),
     target: JETSON_IP_DISPLAY,
     count: logEntries.length,
+    recorded_frame_count: recordedFrameCount,
     logs: logEntries
   };
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
@@ -1549,6 +1554,25 @@ function exportLogs() {
   a.click();
   URL.revokeObjectURL(a.href);
   addLog('INFO', `Exported ${logEntries.length} log entries`, { source: 'logs', filename: a.download });
+}
+
+function normalizeTimelinePayload(content) {
+  if (Array.isArray(content)) {
+    return { frames: content, frameCount: content.length };
+  }
+  if (content && typeof content === 'object' && Array.isArray(content.frames)) {
+    const parsedCount = Number(content.frame_count);
+    const frameCount = Number.isFinite(parsedCount) ? parsedCount : content.frames.length;
+    return { frames: content.frames, frameCount };
+  }
+  return null;
+}
+
+function buildTimelinePayload(frames) {
+  return {
+    frame_count: frames.length,
+    frames
+  };
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1788,8 +1812,9 @@ async function loadFramesForPlayback(file) {
     return JSON.parse(JSON.stringify(teFrames));
   }
   const resp = await api('GET', `/api/file?path=${encodeURIComponent(file)}`);
-  if (!resp?.content || !Array.isArray(resp.content)) return null;
-  return resp.content;
+  const normalized = normalizeTimelinePayload(resp?.content);
+  if (!normalized) return null;
+  return normalized.frames;
 }
 
 async function startPlaybackTraceForFile(file, loop) {
@@ -1841,15 +1866,19 @@ async function teReloadFromCurrentFile() {
 }
 
 function teLoadJSON(frames, fname) {
-  if (!Array.isArray(frames)) { toast('JSON must be an array of frames', 'err'); return; }
-  teFrames   = JSON.parse(JSON.stringify(frames));
+  const normalized = normalizeTimelinePayload(frames);
+  if (!normalized) {
+    toast('JSON must be an array or { frames: [] } payload', 'err');
+    return;
+  }
+  teFrames   = JSON.parse(JSON.stringify(normalized.frames));
   teSelected = teFrames.length > 0 ? 0 : -1;
   teFilename = fname || teFilename || 'timeline.json';
   teDirtyLogged = false;
   teRenderStrip();
   teRenderEditor();
-  teSetStatus(`${teFrames.length} frames loaded - ${teFilename}`);
-  toast(`Timeline: ${teFrames.length} frames loaded`, 'ok');
+  teSetStatus(`${normalized.frameCount} frames loaded - ${teFilename}`);
+  toast(`Timeline: ${normalized.frameCount} frames loaded`, 'ok');
   document.getElementById('te-drawer').classList.add('open');
 }
 
@@ -2165,7 +2194,8 @@ function teCommitCurrent() {
 function teSaveJSON() {
   teCommitCurrent();
   if (teFrames.length === 0) { toast('No frames to save', 'warn'); return; }
-  const blob = new Blob([JSON.stringify(teFrames, null, 2)], { type: 'application/json' });
+  const payload = buildTimelinePayload(teFrames);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
   const a    = document.createElement('a');
   a.href     = URL.createObjectURL(blob);
   a.download = teFilename || 'timeline_edited.json';
@@ -2181,7 +2211,8 @@ async function teSaveToServer() {
   const typedPath = document.getElementById('filename-input').value.trim();
   const pathValue = typedPath || teFilename || document.getElementById('te-file-select').value;
   if (!pathValue) { toast('Select a target JSON file first', 'warn'); return; }
-  const resp = await api('POST', '/api/file', { path: pathValue, content: teFrames });
+  const payload = buildTimelinePayload(teFrames);
+  const resp = await api('POST', '/api/file', { path: pathValue, content: payload });
   if (!resp) return;
   teFilename = resp.path || pathValue;
   selectFile(teFilename, null);

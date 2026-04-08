@@ -283,6 +283,19 @@ class MotionServer:
                 normalized["actuator"] = frame_dict["actuator"]
             return normalized
 
+        def _extract_frames(content) -> Optional[list]:
+            if isinstance(content, list):
+                return content
+            if isinstance(content, dict) and isinstance(content.get("frames"), list):
+                return content["frames"]
+            return None
+
+        def _timeline_payload(frames: list) -> dict:
+            return {
+                "frame_count": len(frames),
+                "frames": frames,
+            }
+
         # ── play ──────────────────────────────────────────────────────────────
         if cmd == "play":
             if "file" not in msg:
@@ -352,10 +365,14 @@ class MotionServer:
             if filepath is None:
                 self.send_resp(client_sock, {"status": "error", "error": "Invalid JSON path"})
                 return
+            frames = _extract_frames(content)
+            content_to_save = content
+            if frames is not None:
+                content_to_save = _timeline_payload(frames)
             try:
                 os.makedirs(os.path.dirname(filepath), exist_ok=True)
                 with open(filepath, "w", encoding="utf-8") as f:
-                    json.dump(content, f, indent=2)
+                    json.dump(content_to_save, f, indent=2)
                 self.send_resp(client_sock, {"status": "ok", "path": rel_path})
             except Exception as e:
                 self.send_resp(client_sock, {"status": "error", "error": f"Write failed: {e}"})
@@ -529,9 +546,12 @@ class MotionServer:
             frames = []
             if os.path.exists(filepath):
                 try:
-                    with open(filepath, "r") as f:
-                        frames = json.load(f)
-                        if not isinstance(frames, list):
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        existing = json.load(f)
+                        parsed = _extract_frames(existing)
+                        if isinstance(parsed, list):
+                            frames = parsed
+                        else:
                             frames = []
                 except Exception:
                     frames = []
@@ -589,8 +609,8 @@ class MotionServer:
 
             frames.append(frame)
             try:
-                with open(filepath, "w") as f:
-                    json.dump(frames, f, indent=4)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(_timeline_payload(frames), f, indent=2)
                 logging.info(f"Recorded frame to {filename}. Total: {len(frames)}")
                 self.send_resp(client_sock, {
                     "status":      "recorded",

@@ -1011,7 +1011,11 @@ def save_frames(frames: List[Dict]) -> None:
             if "actuator" in f:
                 frame_data["actuator"] = f["actuator"]
             serializable.append(frame_data)
-        Path(path_str).write_text(json.dumps(serializable, indent=2))
+        payload = {
+            "frame_count": len(serializable),
+            "frames": serializable,
+        }
+        Path(path_str).write_text(json.dumps(payload, indent=2))
         console.print(f"  [green]Saved {len(frames)} frame(s) → {path_str}[/green]")
     except Exception as e:
         console.print(f"  [red]Save failed: {e}[/red]")
@@ -1020,7 +1024,13 @@ def save_frames(frames: List[Dict]) -> None:
 def _load_from_path(path_str: str) -> Optional[List[Dict]]:
     """Parse a JSON recording file and return a list of frames, or None on error."""
     try:
-        data = json.loads(Path(path_str).read_text())
+        raw = json.loads(Path(path_str).read_text())
+        if isinstance(raw, list):
+            data = raw
+        elif isinstance(raw, dict) and isinstance(raw.get("frames"), list):
+            data = raw["frames"]
+        else:
+            raise ValueError("JSON must be an array of frames or an object with a 'frames' array")
         loaded = []
         for f in data:
             frame_data = {
