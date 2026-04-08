@@ -25,7 +25,9 @@ import json
 import logging
 import os
 import socket
+import threading
 import time
+import webbrowser
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -43,6 +45,7 @@ JETSON_IP   = os.environ.get("CARBOT_IP",   "192.168.99.1")
 JETSON_PORT = int(os.environ.get("CARBOT_PORT", 5000))
 WEB_PORT    = int(os.environ.get("WEB_PORT",    8000))
 FILE_ROOT   = Path(os.environ.get("CARBOT_FILE_ROOT", Path(__file__).parent))
+AUTO_OPEN_BROWSER = os.environ.get("CARBOT_AUTO_OPEN_BROWSER", "1").strip().lower() not in ("0", "false", "no")
 
 SERVO_IDS = [1, 2, 3, 4, 5, 6, 7]
 ABS_IDS   = [1, 2, 3, 4, 5]
@@ -473,14 +476,28 @@ async def root():
 
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
+    web_ui_url = f"http://localhost:{WEB_PORT}"
+
+    if AUTO_OPEN_BROWSER:
+        def _open_ui():
+            try:
+                webbrowser.open_new_tab(web_ui_url)
+                log.info(f"Opened browser: {web_ui_url}")
+            except Exception as e:
+                log.warning(f"Could not auto-open browser: {e}")
+
+        # Slight delay so the server has time to start listening.
+        threading.Timer(1.0, _open_ui).start()
+
     print(f"""
 ╔══════════════════════════════════════════════════╗
 ║          CarBot Web Server                       ║
 ║  Target  : {JETSON_IP}:{JETSON_PORT:<26}║
-║  Web UI  : http://localhost:{WEB_PORT:<20}║
+║  Web UI  : {web_ui_url:<36}║
 ║                                                  ║
 ║  Override env vars:                              ║
 ║    CARBOT_IP   CARBOT_PORT   WEB_PORT            ║
+║    CARBOT_AUTO_OPEN_BROWSER=0   (disable)        ║
 ╚══════════════════════════════════════════════════╝
 """)
     uvicorn.run(
