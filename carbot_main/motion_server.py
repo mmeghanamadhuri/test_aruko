@@ -29,6 +29,7 @@ class MotionPlayerWrapper:
         self.is_playing = False
         self._thread = None
         self.lock = threading.RLock()
+        self._last_feedback: Dict[str, int] = {}
 
     def play(self, filepath: str, loop: bool = False):
         with self.lock:
@@ -122,6 +123,10 @@ class MotionPlayerWrapper:
             return raw_val
 
     def get_feedback(self) -> Dict[str, int]:
+        # Avoid bus contention during active playback by returning cached values.
+        if self.is_playing:
+            return dict(self._last_feedback)
+
         positions = {}
         with self.lock:
             if self.ser and self.ser.is_open:
@@ -129,6 +134,8 @@ class MotionPlayerWrapper:
                     pos = read_reg(self.ser, sid, *REG_PRESENT_POS)
                     if pos is not None:
                         positions[str(sid)] = pos
+        if positions:
+            self._last_feedback = dict(positions)
         return positions
 
     def _play_loop(self, frames, loop):
@@ -145,10 +152,18 @@ class MotionPlayerWrapper:
                     loop_frames(self.ser, frames, stop_flag=self._stop_flag)
                 else:
                     play_frames(self.ser, frames, stop_flag=self._stop_flag)
+        except serial.SerialException as e:
+            logging.error(f"Serial exception during playback loop: {e}")
         except Exception as e:
             logging.error(f"Error during playback loop: {e}")
         finally:
             self.is_playing = False
+            # Refresh cache once playback exits, if bus is still available.
+            try:
+                if self.ser and self.ser.is_open:
+                    self._last_feedback = self.get_feedback()
+            except Exception:
+                pass
             self._stop_flag.clear()
 
 
@@ -233,6 +248,18 @@ class MotionServer:
 
         cmd = msg["cmd"]
 
+        def _resolve_json_path(rel_path: str) -> Optional[str]:
+            if not isinstance(rel_path, str) or not rel_path.strip():
+                return None
+            if ".." in rel_path or rel_path.startswith("/"):
+                return None
+            if not rel_path.lower().endswith(".json"):
+                return None
+            filepath = os.path.abspath(os.path.join(MOTIONS_DIR, rel_path))
+            if not filepath.startswith(MOTIONS_DIR):
+                return None
+            return filepath
+
         def _normalize_frame(frame_dict: dict) -> dict:
             """Normalize incoming frame payload to recorder/playback shape."""
             servos_in = frame_dict.get("servos", {})
@@ -283,6 +310,56 @@ class MotionServer:
             logging.info(f"Playing: {filepath} (loop={loop})")
             self.player.play(filepath, loop=loop)
             self.send_resp(client_sock, {"status": "started"})
+
+        # ── list_files (JSON under motions dir) ──────────────────────────────
+        elif cmd == "list_files":
+            files = []
+            for root, _, names in os.walk(MOTIONS_DIR):
+                for name in names:
+                    if not name.lower().endswith(".json"):
+                        continue
+                    full = os.path.join(root, name)
+                    rel = os.path.relpath(full, MOTIONS_DIR).replace("\\", "/")
+                    if rel.startswith("./"):
+                        rel = rel[2:]
+                    files.append(rel)
+            files.sort()
+            self.send_resp(client_sock, {"status": "ok", "files": files})
+
+        # ── get_file (read JSON content from motions dir) ────────────────────
+        elif cmd == "get_file":
+            rel_path = msg.get("path")
+            filepath = _resolve_json_path(rel_path)
+            if filepath is None:
+                self.send_resp(client_sock, {"status": "error", "error": "Invalid JSON path"})
+                return
+            if not os.path.exists(filepath):
+                self.send_resp(client_sock, {"status": "error", "error": "File not found"})
+                return
+            try:
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = json.load(f)
+            except Exception as e:
+                self.send_resp(client_sock, {"status": "error", "error": f"Read failed: {e}"})
+                return
+            self.send_resp(client_sock, {"status": "ok", "path": rel_path, "content": content})
+
+        # ── save_file (write JSON content to motions dir) ────────────────────
+        elif cmd == "save_file":
+            rel_path = msg.get("path")
+            content = msg.get("content")
+            filepath = _resolve_json_path(rel_path)
+            if filepath is None:
+                self.send_resp(client_sock, {"status": "error", "error": "Invalid JSON path"})
+                return
+            try:
+                os.makedirs(os.path.dirname(filepath), exist_ok=True)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    json.dump(content, f, indent=2)
+                self.send_resp(client_sock, {"status": "ok", "path": rel_path})
+            except Exception as e:
+                self.send_resp(client_sock, {"status": "error", "error": f"Write failed: {e}"})
+                return
 
         # ── play_frame ────────────────────────────────────────────────────────
         elif cmd == "play_frame":

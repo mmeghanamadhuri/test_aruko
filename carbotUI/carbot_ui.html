@@ -1822,7 +1822,8 @@ function toggleTimeline() {
 
 // Timeline load from server
 async function teLoadFromServer(path) {
-  const selectedPath = path || document.getElementById('te-file-select').value || document.getElementById('filename-input').value.trim();
+  const typedPath = document.getElementById('filename-input').value.trim();
+  const selectedPath = path || typedPath || document.getElementById('te-file-select').value;
   if (!selectedPath) { toast('Select a JSON file first', 'warn'); return; }
   const resp = await api('GET', `/api/file?path=${encodeURIComponent(selectedPath)}`);
   if (!resp?.content) return;
@@ -2175,7 +2176,8 @@ function teSaveJSON() {
 async function teSaveToServer() {
   teCommitCurrent();
   if (teFrames.length === 0) { toast('No frames to save', 'warn'); return; }
-  const pathValue = teFilename || document.getElementById('te-file-select').value || document.getElementById('filename-input').value.trim();
+  const typedPath = document.getElementById('filename-input').value.trim();
+  const pathValue = typedPath || teFilename || document.getElementById('te-file-select').value;
   if (!pathValue) { toast('Select a target JSON file first', 'warn'); return; }
   const resp = await api('POST', '/api/file', { path: pathValue, content: teFrames });
   if (!resp) return;

@@ -386,35 +386,43 @@ async def api_play_frame(req: PlayFrameRequest):
 
 @app.get("/api/files")
 async def api_files():
-    files = _list_json_files()
-    append_log("INFO", f"FILES LIST → {len(files)} JSON file(s)")
+    resp = await send_cmd({"cmd": "list_files"})
+    if resp is None:
+        return JSONResponse({"error": "No response"}, status_code=503)
+    if resp.get("status") != "ok":
+        return JSONResponse({"error": resp.get("error", "list_files failed")}, status_code=400)
+    files = resp.get("files", [])
+    append_log("INFO", f"FILES LIST (Jetson) → {len(files)} JSON file(s)")
     return {"files": files}
 
 
 @app.get("/api/file")
 async def api_file_get(path: str = Query(..., description="Relative path to a JSON file")):
-    resolved = _safe_file_path(path)
-    if not resolved.exists():
-        append_log("ERROR", f"FILE LOAD failed: {path} not found")
-        raise HTTPException(status_code=404, detail="file not found")
+    resp = await send_cmd({"cmd": "get_file", "path": path})
+    if resp is None:
+        return JSONResponse({"error": "No response"}, status_code=503)
+    if resp.get("status") != "ok":
+        err = resp.get("error", "get_file failed")
+        code = 404 if "not found" in err.lower() else 400
+        append_log("ERROR", f"FILE LOAD failed: {path} ({err})")
+        return JSONResponse({"error": err}, status_code=code)
 
-    try:
-        content = json.loads(resolved.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        append_log("ERROR", f"FILE LOAD failed: {path} invalid JSON")
-        raise HTTPException(status_code=400, detail=f"invalid JSON: {exc.msg}") from exc
-
-    append_log("INFO", f"FILE LOAD → {path}")
-    return {"path": path, "content": content}
+    append_log("INFO", f"FILE LOAD (Jetson) → {path}")
+    return {"path": resp.get("path", path), "content": resp.get("content")}
 
 
 @app.post("/api/file")
 async def api_file_save(req: FileSaveRequest):
-    resolved = _safe_file_path(req.path)
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    resolved.write_text(json.dumps(req.content, indent=2) + "\n", encoding="utf-8")
-    append_log("INFO", f"FILE SAVE → {req.path}")
-    return {"status": "saved", "path": req.path}
+    resp = await send_cmd({"cmd": "save_file", "path": req.path, "content": req.content})
+    if resp is None:
+        return JSONResponse({"error": "No response"}, status_code=503)
+    if resp.get("status") != "ok":
+        err = resp.get("error", "save_file failed")
+        append_log("ERROR", f"FILE SAVE failed: {req.path} ({err})")
+        return JSONResponse({"error": err}, status_code=400)
+
+    append_log("INFO", f"FILE SAVE (Jetson) → {req.path}")
+    return {"status": "saved", "path": resp.get("path", req.path)}
 
 
 @app.get("/api/logs")
