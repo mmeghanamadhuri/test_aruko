@@ -1104,6 +1104,10 @@ def main():
                         help="JSON recording to load at startup.")
     parser.add_argument("--loop", action="store_true",
                         help="Jump straight into loop mode after loading --file (useful for headless Pi).")
+    parser.add_argument("--play", action="store_true",
+                        help="Play the loaded --file once and exit (useful for startup).")
+    parser.add_argument("--torque-off", action="store_true",
+                        help="Disable torque on all servos and exit.")
     args = parser.parse_args()
 
     # ── --loop requires --file ────────────────────────────────────────────────
@@ -1151,9 +1155,23 @@ def main():
         frames.extend(loaded)
         console.print(f"[green]Loaded[/green] {len(frames)} frame(s) from [cyan]{args.file}[/cyan]\n")
 
+    # ── --torque-off: turn off torque and exit ───────────────────────────────
+    if args.torque_off:
+        set_torque_all(ser, False)
+        ser.close()
+        console.print("\n[green]Torque disabled. Port closed. Bye.[/green]")
+        return
+
     # ── --loop: skip the menu and go straight into loop mode ─────────────────
     if args.loop:
         loop_frames(ser, frames)
+        ser.close()
+        console.print("\n[green]Port closed. Bye.[/green]")
+        return
+
+    # ── --play: skip the menu, play once and exit ────────────────────────────
+    if args.play:
+        play_frames(ser, frames)
         ser.close()
         console.print("\n[green]Port closed. Bye.[/green]")
         return
