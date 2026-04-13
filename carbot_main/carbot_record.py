@@ -91,6 +91,11 @@ def _s16(v: int) -> int:
     return v if v < 32768 else v - 65536
 
 
+def _u16(v: int) -> int:
+    """Signed or wrapped int → unsigned 16-bit (0-65535)."""
+    return v & 0xFFFF
+
+
 def _checksum(pkt: List[int]) -> int:
     return (~sum(pkt[2:])) & 0xFF
 
@@ -98,7 +103,7 @@ def _checksum(pkt: List[int]) -> int:
 def _robust_clear(ser: serial.Serial) -> None:
     """Double-drain: lets USB FIFO flush to PC buffer, then purges twice."""
     ser.reset_input_buffer()
-    time.sleep(0.020)
+    time.sleep(0.005)  # Optimized for vision-guided tracking (was 20ms)
     ser.reset_input_buffer()
 
 
@@ -141,15 +146,23 @@ def ping(ser: serial.Serial, sid: int) -> bool:
 
 def read_reg(ser, sid: int, addr: int, size: int) -> Optional[int]:
     pkt = _build(sid, READ_DATA, [addr, size])
-    _robust_clear(ser)          # double-drain so USB FIFO residue can't poison the reply
-    ser.write(pkt)
-    ser.flush()
-    time.sleep(max(0.003, len(pkt) * 10.0 / BAUDRATE))
-    resp = _recv(ser, sid, timeout=0.12)
-    if resp is None or len(resp[1]) < size:
-        return None
-    d = resp[1]
-    return d[0] if size == 1 else (d[0] | (d[1] << 8))
+    
+    # Try multiple times to handle transient bus glitches on Jetson
+    for attempt in range(2):
+        _robust_clear(ser)
+        ser.write(pkt)
+        ser.flush()
+        time.sleep(max(0.002, len(pkt) * 10.0 / BAUDRATE))
+        resp = _recv(ser, sid, timeout=0.015)  # Snappy timeout for async polling
+        
+        if resp is not None and len(resp[1]) >= size:
+            d = resp[1]
+            return d[0] if size == 1 else (d[0] | (d[1] << 8))
+        
+        if attempt == 0:
+            time.sleep(0.002)  # Faster retry gap
+            
+    return None
 
 
 def write_reg(ser, sid: int, addr: int, size: int, value: int) -> bool:

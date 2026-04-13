@@ -1,0 +1,122 @@
+{
+  "frame_count": 2,
+  "frames": [
+    {
+      "delay": 0.5,
+      "duration": 1.0,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 3125
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1649
+        },
+        "3": {
+          "type": "absolute",
+          "value": 1545
+        },
+        "4": {
+          "type": "absolute",
+          "value": 1235
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1609
+        },
+        "6": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3478
+        },
+        "7": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3762
+        }
+      }
+    },
+    {
+      "delay": 0.5,
+      "duration": 1.0,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 3122
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1511
+        },
+        "3": {
+          "type": "absolute",
+          "value": 1409
+        },
+        "4": {
+          "type": "absolute",
+          "value": 1312
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1572
+        },
+        "6": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3477
+        },
+        "7": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3764
+        }
+      }
+    },
+    {
+      "delay": 0.5,
+      "duration": 1.0,
+      "speed": 200,
+      "servos": {
+        "1": {
+          "type": "absolute",
+          "value": 3125
+        },
+        "2": {
+          "type": "absolute",
+          "value": 1649
+        },
+        "3": {
+          "type": "absolute",
+          "value": 1545
+        },
+        "4": {
+          "type": "absolute",
+          "value": 1235
+        },
+        "5": {
+          "type": "absolute",
+          "value": 1609
+        },
+        "6": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3478
+        },
+        "7": {
+          "type": "relative",
+          "diff": 0,
+          "sign": "+",
+          "ref_pos": 3762
+        }
+      }
+    }
+  ]
+}

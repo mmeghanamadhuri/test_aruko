@@ -11,7 +11,7 @@ from carbot_record import (
     ABS_IDS, REL_IDS, SERVO_IDS,
     REG_PRESENT_POS, REG_GOAL_POSITION, REG_MOVING_SPEED, REG_TORQUE_ENABLE,
     BAUDRATE,
-    read_reg, write_reg, set_torque_all, _s16,
+    read_reg, write_reg, set_torque_all, _s16, _u16,
     play_frames, loop_frames, _load_from_path, ping
 )
 
@@ -29,7 +29,14 @@ class MotionPlayerWrapper:
         self.is_playing = False
         self._thread = None
         self.lock = threading.RLock()
-        self._last_feedback: Dict[str, int] = {}
+        self._last_feedback: Dict[str, int] = {str(sid): 0 for sid in SERVO_IDS}
+        self._last_goals: Dict[int, int] = {}  # Cache for relative move fallbacks
+        self.rpc_rel_ids = [6, 7]              # ONLY Pan/Tilt are relative by default
+
+        # Asynchronous state observer thread
+        self._fb_stop = threading.Event()
+        self._fb_thread = threading.Thread(target=self._feedback_loop, daemon=True)
+        self._fb_thread.start()
 
     def play(self, filepath: str, loop: bool = False):
         with self.lock:
@@ -94,12 +101,12 @@ class MotionPlayerWrapper:
                 if self.ser and self.ser.is_open:
                     write_reg(self.ser, servo_id, *REG_TORQUE_ENABLE, 0)
 
-    def servo_move(self, servo_id: int, value: int, speed: int = 200) -> Optional[int]:
+    def servo_move(self, servo_id: int, value: int, speed: int = 200, mode: Optional[str] = None) -> Optional[int]:
         """
         Move a single servo.
-        - Abs servos (1-5): value is raw 16-bit goal position.
-        - Rel servos (6-7): value is a signed offset from current present position.
-        Returns the raw goal position sent, or None on failure.
+        - mode="abs": value is raw goal position.
+        - mode="rel": value is a signed offset from current.
+        - mode=None: use defaults (1-5=abs, 6-7=rel).
         """
         with self.lock:
             if not (self.ser and self.ser.is_open):
@@ -108,35 +115,114 @@ class MotionPlayerWrapper:
 
             write_reg(self.ser, servo_id, *REG_MOVING_SPEED, max(0, min(1023, speed)))
 
-            if servo_id in REL_IDS:
+            # Decision: Is this a relative move?
+            is_rel = False
+            if mode == "rel":
+                is_rel = True
+            elif mode == "abs":
+                is_rel = False
+            else:
+                is_rel = (servo_id in self.rpc_rel_ids)
+
+            if is_rel:
                 present = read_reg(self.ser, servo_id, *REG_PRESENT_POS)
                 if present is None:
-                    logging.error(f"servo_move: cannot read present pos for servo {servo_id}")
-                    return None
-                present_s16 = _s16(present)
+                    # Fallback to last known goal if possible
+                    if servo_id in self._last_goals:
+                        present_s16 = _s16(self._last_goals[servo_id])
+                        logging.warning(f"servo_move S{servo_id} [rel]: using cached goal {present_s16}")
+                    else:
+                        logging.error(f"servo_move S{servo_id} [rel]: failed to read present pos")
+                        return None
+                else:
+                    present_s16 = _s16(present)
+                
                 target = max(-32768, min(32767, present_s16 + value))
-                raw_val = target & 0xFFFF
+                val = _u16(target)
+                log_tag = "rel"
             else:
-                raw_val = value & 0xFFFF
+                val = max(0, min(65535, value))
+                log_tag = "abs"
+            
+            # logging.info(f"servo_move S{servo_id} [{log_tag}] value={value} -> target={val} speed={speed}")
+            
+            if write_reg(self.ser, servo_id, *REG_GOAL_POSITION, val):
+                self._last_goals[servo_id] = val
+                return val
 
-            write_reg(self.ser, servo_id, *REG_GOAL_POSITION, raw_val)
-            return raw_val
+            return None
+
+    def multi_servo_move(self, servo_dict: Dict[str, int], speed: int = 200, mode: Optional[str] = None):
+        """
+        Move multiple servos at once while holding a single lock.
+        Supports both Abs (1-5) and Rel (6-7) IDs in the same dictionary.
+        servo_dict: {servo_id: goal_val_or_offset}
+        """
+        with self.lock:
+            if not (self.ser and self.ser.is_open):
+                logging.error("Serial port not available for multi_servo_move")
+                return
+            
+            safe_spd = max(0, min(1023, speed))
+            for sid_str, value in servo_dict.items():
+                sid = int(sid_str)
+                write_reg(self.ser, sid, *REG_MOVING_SPEED, safe_spd)
+                
+                # Determine mode for this specific SID
+                is_rel = False
+                if mode == "rel":
+                    is_rel = True
+                elif mode == "abs":
+                    is_rel = False
+                else:
+                    is_rel = (sid in self.rpc_rel_ids)
+
+                if is_rel:
+                    # Resolve relative offset against current state cache
+                    present = self._last_feedback.get(str(sid))
+                    if present is not None:
+                        target = max(-32768, min(32767, _s16(present) + value))
+                        val = _u16(target)
+                    else:
+                        # Fallback to goal cache if present pos read missed
+                        cached_goal = self._last_goals.get(sid)
+                        if cached_goal is not None:
+                            target = max(-32768, min(32767, _s16(cached_goal) + value))
+                            val = _u16(target)
+                        else:
+                            logging.warning(f"multi_servo_move: No state for Rel S{sid}, skipping")
+                            continue
+                else:
+                    # Absolute position for arm joints
+                    val = max(0, min(65535, value))
+                
+                if write_reg(self.ser, sid, *REG_GOAL_POSITION, val):
+                    self._last_goals[sid] = val
 
     def get_feedback(self) -> Dict[str, int]:
-        # Avoid bus contention during active playback by returning cached values.
-        if self.is_playing:
-            return dict(self._last_feedback)
+        """
+        Instant return from state cache. 
+        Synchronous bus scans are now handled by the background observer thread.
+        """
+        return dict(self._last_feedback)
 
-        positions = {}
-        with self.lock:
-            if self.ser and self.ser.is_open:
+    def _feedback_loop(self):
+        """Dedicated thread to keep the state cache fresh without clogging RPCs."""
+        logging.info("Starting background feedback observer...")
+        while not self._fb_stop.is_set():
+            try:
+                # We poll incrementally to minimize bus occupancy per lock
                 for sid in SERVO_IDS:
-                    pos = read_reg(self.ser, sid, *REG_PRESENT_POS)
-                    if pos is not None:
-                        positions[str(sid)] = pos
-        if positions:
-            self._last_feedback = dict(positions)
-        return positions
+                    if self._fb_stop.is_set(): break
+                    with self.lock:
+                        if self.ser and self.ser.is_open:
+                            pos = read_reg(self.ser, sid, *REG_PRESENT_POS)
+                            if pos is not None:
+                                self._last_feedback[str(sid)] = pos
+                    time.sleep(0.01) # Spread the load
+            except Exception as e:
+                logging.debug(f"Feedback loop error (expected during reset): {e}")
+            time.sleep(0.05) # ~10Hz overall update rate per servo is plenty for vision
 
     def _play_loop(self, frames, loop):
         try:
@@ -208,6 +294,8 @@ class MotionServer:
 
     def send_resp(self, sock, resp_dict):
         try:
+            # Inject live telemetry from the asynchronous state cache into every response
+            resp_dict["positions"] = self.player.get_feedback()
             msg = json.dumps(resp_dict) + "\n"
             sock.sendall(msg.encode("utf-8"))
         except Exception as e:
@@ -398,13 +486,26 @@ class MotionServer:
             self.player.play_frame(normalized_frame, loop=loop)
             self.send_resp(client_sock, {"status": "started", "mode": "play_frame"})
 
+        # ── multi_servo_move  (move many servos at once) ──────────────────────
+        elif cmd == "multi_servo_move":
+            servos = msg.get("servos")
+            speed  = msg.get("speed", 200)
+            multi_mode = msg.get("mode") # Can be "abs", "rel", or None (auto)
+
+            if not isinstance(servos, dict):
+                self.send_resp(client_sock, {"status": "error", "error": "servos must be a dict"})
+                return
+
+            self.player.multi_servo_move(servos, speed=speed, mode=multi_mode)
+            self.send_resp(client_sock, {"status": "ok", "mode": "multi_servo_move"})
+
         # ── stop ──────────────────────────────────────────────────────────────
         elif cmd == "stop":
-            mode = msg.get("mode", "soft")
-            if mode not in ("soft", "hard"):
-                mode = "soft"
-            logging.info(f"Stop ({mode})")
-            self.player.stop(mode=mode)
+            stop_mode = msg.get("mode", "soft")
+            if stop_mode not in ("soft", "hard"):
+                stop_mode = "soft"
+            logging.info(f"Stop ({stop_mode})")
+            self.player.stop(mode=stop_mode)
             self.player.join()
             self.send_resp(client_sock, {"status": "stopped"})
 
@@ -473,10 +574,13 @@ class MotionServer:
                 self.send_resp(client_sock, {"status": "error", "error": "value and speed must be integers"})
                 return
 
-            mode = "rel" if servo_id in REL_IDS else "abs"
-            logging.info(f"servo_move S{servo_id} [{mode}] value={value} speed={speed}")
+            # Honoring the explicit mode if provided; else falling back to auto-detection
+            explicit_mode = msg.get("mode")
+            log_mode = explicit_mode if explicit_mode else ("rel" if servo_id in REL_IDS else "abs")
+            
+            logging.info(f"servo_move S{servo_id} [{log_mode}] value={value} speed={speed}")
 
-            raw = self.player.servo_move(servo_id, value, speed)
+            raw = self.player.servo_move(servo_id, value, speed, mode=explicit_mode)
             if raw is None:
                 self.send_resp(client_sock, {"status": "error", "error": "servo_move failed (check serial / present pos)"})
                 return
@@ -485,7 +589,7 @@ class MotionServer:
             self.send_resp(client_sock, {
                 "status": "ok",
                 "servo_id": servo_id,
-                "mode":     mode,
+                "mode":     log_mode,
                 "raw":      raw,
                 "degrees":  round(deg, 2),
             })

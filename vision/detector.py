@@ -14,16 +14,14 @@ from .types import BoundingBox, ButtonDetection
 
 log = logging.getLogger("carbot.vision.detector")
 
-try:
-    import cv2
-except ImportError:
-    cv2 = None  # type: ignore
-
 
 def _bgr_to_model_input(frame: np.ndarray) -> np.ndarray:
     """Roboflow / most training pipelines expect RGB."""
-    if cv2 is None:
+    try:
+        import cv2
+    except ImportError:
         return frame
+    
     if len(frame.shape) == 3 and frame.shape[2] == 3:
         return cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     return frame
@@ -183,6 +181,68 @@ class RoboflowEmbeddedDetector(ButtonDetector):
         return parse_roboflow_result(result, camera_id)
 
 
+class UltralyticsLocalDetector(ButtonDetector):
+    """
+    Runs an Ultralytics YOLO model locally using a Pytorch `.pt` file.
+    """
+
+    def __init__(self, cfg: VisionConfig):
+        try:
+            from ultralytics import YOLO
+        except ImportError as e:
+            raise ImportError(
+                "YOLO vision mode needs: pip install ultralytics"
+            ) from e
+
+        self._cfg = cfg
+        if not os.path.exists(cfg.model_path):
+            raise FileNotFoundError(f"YOLO model not found at: {cfg.model_path}")
+        
+        # Let ultralytics handle device placement during first predict() (warm-up).
+        # Explicit .to("cuda") triggers heap corruption on Jetson due to native allocator conflicts.
+        self._model = YOLO(cfg.model_path)
+
+    def infer(self, frame: np.ndarray, camera_id: int = 0) -> List[ButtonDetection]:
+        try:
+            # YOLO predict handles typical numpy arrays. verbose=False reduces log spam.
+            results = self._model.predict(frame, verbose=False)
+            if not results:
+                return []
+            
+            result = results[0]
+            boxes = result.boxes
+            if boxes is None or len(boxes) == 0:
+                return []
+            
+            names = result.names
+            out: List[ButtonDetection] = []
+            for i in range(len(boxes)):
+                box = boxes[i]
+                # xywh format from ultralytics: center x, center y, width, height
+                xywh = box.xywh[0].cpu().numpy()
+                cx, cy, w, h = xywh.tolist()
+                
+                conf = float(box.conf[0].cpu().numpy())
+                cls_id = int(box.cls[0].cpu().numpy())
+                label = str(names.get(cls_id, f"class_{cls_id}"))
+                
+                out.append(ButtonDetection(
+                    label=label,
+                    confidence=conf,
+                    bbox=BoundingBox(
+                        cx=float(cx),
+                        cy=float(cy),
+                        w=float(w),
+                        h=float(h),
+                    ),
+                    camera_id=camera_id,
+                ))
+            return out
+        except Exception as e:
+            log.warning("Ultralytics local infer failed: %s", e)
+            return []
+
+
 def build_detector(cfg: VisionConfig) -> ButtonDetector:
     mock = os.environ.get("VISION_MOCK", "").strip().lower() in (
         "1",
@@ -194,9 +254,13 @@ def build_detector(cfg: VisionConfig) -> ButtonDetector:
         log.info("VISION_MOCK enabled — using MockButtonDetector")
         return MockButtonDetector()
 
+    if cfg.runtime == "yolo":
+        log.info("Vision runtime=yolo (ultralytics local weights: %s)", cfg.model_path)
+        return UltralyticsLocalDetector(cfg)
+
     if not cfg.model_id:
         raise ValueError(
-            "Set ROBOFLOW_MODEL_ID (workspace/project/version), or VISION_MOCK=1."
+            "Set ROBOFLOW_MODEL_ID (workspace/project/version) for Roboflow runtimes, or use VISION_RUNTIME=yolo / VISION_MOCK=1."
         )
 
     if cfg.runtime == "http":
