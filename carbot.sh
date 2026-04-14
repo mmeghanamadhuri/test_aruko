@@ -7,32 +7,33 @@
 BUTTONS=(front_left_window front_right_window rear_left_window rear_right_window door_lock window_lock)
 
 # ── Defaults (edit these to tune your robot) ─────────────────────────────────
-TRACK_SPEED=800
-SEARCH_SPEED=500
+TRACK_SPEED=1023          # was 800  — max servo speed during tracking
+SEARCH_SPEED=900          # was 500  — faster pan/tilt sweep in SEARCH
 KP_X=0.65
 KP_Y=0.65
 KP_FAR=0.85
 KP_MID=0.85
 KP_NEAR=0.85
 SMOOTH_ALPHA=0.90
-MAX_DELTA=260
-DEADZONE=50
+MAX_DELTA=400             # was 260  — larger single-step corrections allowed
+DEADZONE=40               # was 50   — tighter convergence zone (still stable)
 CONFIDENCE=0.5
 INVERT_PAN=1
 INVERT_TILT=1
-INFER_INTERVAL=0.10  # faster vision updates
-PREVIEW=true         # set false to disable MJPEG stream
-REALIGN_PX=80        # Eye (6,7) waits unless error > 80px
+INFER_INTERVAL=0.05       # was 0.10 — 20 Hz control loop instead of 10 Hz
+ALIGN_STABLE_FRAMES=2     # was 4 (default) — 2 frames × 50ms = 100ms minimum vs 400ms
+PREVIEW=true              # set false to disable MJPEG stream
+REALIGN_PX=80             # Eye (6,7) waits unless error > 80px
 MOTION_HOST=127.0.0.1
 MOTION_PORT=5000
 # Multi-joint Approach Vector (Motors 1,2,3,4 reach forward)
 # DIRECTIONS: S1(+), S2(-), S3(+), S4(+)
 # Servo 5, 6, and 7 are now reserved for TRIPLE-AXIS TRACKING.
 APPROACH_SERVOS="1,2,3,4"
-APPROACH_DELTAS="15,-20,50,40"
+APPROACH_DELTAS="30,-45,90,70"  # was "15,-20,50,40" — 2× larger steps = ~half the steps needed
 APPROACH_DIR=1
 APPROACH_AREA=0.25
-APPROACH_SPD=450
+APPROACH_SPD=850          # was 450  — arm joints move faster during approach
 APPROACH_PAUSE=0.4
 
 # ── Approach: arm forward vector ──────────────────────────────────────────────
@@ -43,7 +44,7 @@ APPROACH_PAUSE=0.4
 
 # Pixel error below which an arm step is allowed to fire.
 # If the button drifts above this, the step pauses until pan/tilt re-centres it.
-APPROACH_ARM_THR=40
+APPROACH_ARM_THR=70       # was 40 — arm steps even with moderate drift (70px = 11% of 640px frame)
 
 # Pixel error above which a pan/tilt micro-correction is sent during approach.
 # Below this the pan/tilt hold steady (avoids jitter near centre).
@@ -54,8 +55,8 @@ APPROACH_PAN_THR=18
 APPROACH_MAX_PAN=70
 
 # Inference ticks to wait after each arm step before allowing the next one.
-# Higher = slower but more stable.  3 ticks @ 0.12s interval = ~0.36s settle.
-APPROACH_STEP_COOLDOWN=3
+# Higher = slower but more stable.  1 tick @ 0.05s interval = ~50ms settle.
+APPROACH_STEP_COOLDOWN=1  # was 3 — 3 ticks × 100ms = 300ms dead wait per step. 1 tick = 50ms.
 
 cd "$(dirname "$0")"
 
@@ -113,6 +114,7 @@ launch() {
   VISION_SEARCH_SPEED="$SEARCH_SPEED" \
   VISION_MAX_DELTA="$MAX_DELTA" \
   VISION_DEADZONE_PX="$DEADZONE" \
+  VISION_ALIGN_STABLE_FRAMES="$ALIGN_STABLE_FRAMES" \
   VISION_CONFIDENCE="$CONFIDENCE" \
   VISION_INFER_INTERVAL_SEC="$INFER_INTERVAL" \
   VISION_REALIGN_PX="$REALIGN_PX" \

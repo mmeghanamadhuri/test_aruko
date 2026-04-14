@@ -173,7 +173,7 @@ def write_reg(ser, sid: int, addr: int, size: int, value: int) -> bool:
     ser.write(pkt)
     ser.flush()
     time.sleep(max(0.005, len(pkt) * 10.0 / BAUDRATE))
-    _recv(ser, sid, timeout=0.08)   # consume status packet
+    _recv(ser, sid, timeout=0.02)   # consume status packet — was 0.08; servo responds in <2ms at 222kbaud
     return True
 
 def wait_interruptible(duration: float, stop_flag: Optional[threading.Event] = None) -> bool:

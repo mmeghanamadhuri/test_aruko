@@ -219,10 +219,10 @@ class MotionPlayerWrapper:
                             pos = read_reg(self.ser, sid, *REG_PRESENT_POS)
                             if pos is not None:
                                 self._last_feedback[str(sid)] = pos
-                    time.sleep(0.01) # Spread the load
+                    time.sleep(0.004) # was 0.01 — tighter per-servo gap keeps cache fresh
             except Exception as e:
                 logging.debug(f"Feedback loop error (expected during reset): {e}")
-            time.sleep(0.05) # ~10Hz overall update rate per servo is plenty for vision
+            time.sleep(0.02) # was 0.05 — ~20Hz overall sweep rate vs old ~7Hz
 
     def _play_loop(self, frames, loop):
         try:
