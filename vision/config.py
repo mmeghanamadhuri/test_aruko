@@ -79,7 +79,7 @@ class VisionConfig:
             "yes",
             "on",
         )
-        h_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_H_MM", "50"))
+        h_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_H_MM", "25"))
         v_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_V_MM", "65"))
         h_serv = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_SERVOS", "").split(",") if x.strip()]
         h_deltas = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_DELTAS", "").split(",") if x.strip()]
@@ -105,7 +105,7 @@ class VisionConfig:
             "on",
         )
 
-        v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "40"))
+        v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "45"))
         v_extra_wait = float(os.environ.get("VISION_OFFSET_V_EXTRA_WAIT_SEC", "10"))
 
         return cls(

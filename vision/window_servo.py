@@ -9,7 +9,7 @@ ALIGN    — Center the button in frame using proportional pan/tilt control.
 APPROACH — Move arm forward in steps (VISION_APPROACH_SERVOS / DELTAS) while S6/S7
            keep the target centred. Ends when bbox area >= VISION_APPROACH_AREA_FRAC.
 POST_H   — (Optional) Horizontal rigid-body move so the **presser** sits over the
-           button: camera is offset from the press axis (default 5 cm); apply
+           button: camera is offset from the press axis (default 2.5 cm); apply
            VISION_OFFSET_H_DELTAS or VISION_MM_PER_RAW_H + VISION_CAMERA_PRESS_OFFSET_H_MM.
 POST_V   — (Optional) Move along the actuator / “reach” axis by VISION_CAMERA_PRESS_OFFSET_V_MM
            (default 6.5 cm) via linear actuator extend/retract (VISION_OFFSET_V_ACTUATOR).
@@ -23,7 +23,7 @@ Key design decisions
 * Horizontal compensation uses the same absolute-goal pattern as approach arm steps.
 * Vertical compensation prefers the **linear actuator** (mm); tune direction with
   VISION_OFFSET_V_ACTUATOR plus **VISION_OFFSET_V_FLIP** to reverse. Optional second
-  leg **VISION_OFFSET_V_EXTRA_MM** (e.g. 40 mm) reaches the contact after the camera
+  leg **VISION_OFFSET_V_EXTRA_MM** (e.g. 45 mm) reaches the contact after the camera
   offset leg. **VISION_OFFSET_H_FLIP** negates lateral deltas.
 """
 
