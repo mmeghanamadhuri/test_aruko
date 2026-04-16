@@ -9,7 +9,7 @@ ALIGN    — Center the button in frame using proportional pan/tilt control.
 APPROACH — Move arm forward in steps (VISION_APPROACH_SERVOS / DELTAS) while S6/S7
            keep the target centred. Ends when bbox area >= VISION_APPROACH_AREA_FRAC.
 POST_H   — (Optional) Lateral rigid move so the **gripper** reaches the button while the
-           camera stays aimed at the center (default ~3 cm camera–gripper breadth). Requires
+           camera stays aimed at the center (default ~4 cm camera–gripper breadth). Requires
            VISION_OFFSET_H_SERVOS + (VISION_OFFSET_H_RAW_DELTA | DELTAS | MM_PER_RAW_H).
 POST_V   — (Optional) Move along the actuator / “reach” axis by VISION_CAMERA_PRESS_OFFSET_V_MM
            (default 6.5 cm) via linear actuator extend/retract (VISION_OFFSET_V_ACTUATOR).
