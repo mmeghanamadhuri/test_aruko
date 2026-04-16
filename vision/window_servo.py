@@ -22,7 +22,9 @@ Key design decisions
   bring the **tip** to the contact point using measured camera–presser geometry.
 * Horizontal compensation uses the same absolute-goal pattern as approach arm steps.
 * Vertical compensation prefers the **linear actuator** (mm); tune direction with
-  VISION_OFFSET_V_ACTUATOR (extend vs retract) for your mounting.
+  VISION_OFFSET_V_ACTUATOR plus **VISION_OFFSET_V_FLIP** to reverse. Optional second
+  leg **VISION_OFFSET_V_EXTRA_MM** (e.g. 45 mm) reaches the contact after the camera
+  offset leg. **VISION_OFFSET_H_FLIP** negates lateral deltas.
 """
 
 from __future__ import annotations
@@ -71,6 +73,12 @@ def _search_moves(pan: int, tilt: int, step: int) -> List[Tuple[int, int]]:
 
 def _clamp(v: float, lim: int) -> int:
     return max(-lim, min(lim, int(round(v))))
+
+
+def _flip_actuator(action: str, flip: bool) -> str:
+    if not flip:
+        return action
+    return "retract" if action == "extend" else "extend"
 
 
 def run(
@@ -173,6 +181,7 @@ def run(
     arm_cooldown_ticks = 0   # ticks remaining before next arm step
     post_h_ticks = 0
     post_v_start: Optional[float] = None
+    post_v_stage = 0
     press_armed = False
     press_deadline = 0.0
 
@@ -225,8 +234,9 @@ def run(
         step_servos: Dict[str, int] = {}
         log_parts: List[str] = []
         rel_ids = {6, 7}
+        hmul = -1 if vcfg.offset_h_flip else 1
         for i, sid in enumerate(servos):
-            delta = int(deltas[i])
+            delta = int(deltas[i]) * hmul
             cur = last_positions.get(str(sid))
             if cur is None:
                 log.warning("POST_H: no telemetry for S%d — skipping horizontal offset", sid)
@@ -349,27 +359,61 @@ def run(
                     if post_h_ticks >= vcfg.offset_settle_h_ticks:
                         phase = Phase.POST_V
                         post_v_start = None
+                        post_v_stage = 0
                 time.sleep(0.02)
                 continue
 
             if phase == Phase.POST_V:
+                now_t = time.monotonic()
                 if post_v_start is None:
-                    post_v_start = time.monotonic()
+                    post_v_start = now_t
+                    post_v_stage = 0
+
+                if post_v_stage == 0:
+                    act = _flip_actuator(vcfg.offset_v_actuator, vcfg.offset_v_flip)
                     if vcfg.offset_v_mm > 0.5:
                         r = rpc(
                             {
                                 "cmd": "actuator",
-                                "action": vcfg.offset_v_actuator,
+                                "action": act,
                                 "distance_mm": vcfg.offset_v_mm,
                             }
                         )
                         if r and r.get("status") != "ok":
-                            log.warning("POST_V actuator: %s", r)
+                            log.warning("POST_V stage1 actuator: %s", r)
+                        log.info("POST_V stage1: %s %.1f mm", act, vcfg.offset_v_mm)
                     else:
-                        log.info("POST_V skipped (VISION_CAMERA_PRESS_OFFSET_V_MM ~ 0)")
-                elif time.monotonic() - post_v_start >= vcfg.offset_v_wait_sec:
+                        log.info("POST_V stage1 skipped (VISION_CAMERA_PRESS_OFFSET_V_MM ~ 0)")
+                    post_v_stage = 1
+                elif post_v_stage == 1 and now_t - post_v_start >= vcfg.offset_v_wait_sec:
+                    post_v_start = now_t
+                    act2 = _flip_actuator(vcfg.offset_v_actuator, vcfg.offset_v_flip)
+                    if vcfg.offset_v_extra_mm > 0.5:
+                        r2 = rpc(
+                            {
+                                "cmd": "actuator",
+                                "action": act2,
+                                "distance_mm": vcfg.offset_v_extra_mm,
+                            }
+                        )
+                        if r2 and r2.get("status") != "ok":
+                            log.warning("POST_V stage2 actuator: %s", r2)
+                        log.info(
+                            "POST_V stage2 (reach): %s %.1f mm",
+                            act2,
+                            vcfg.offset_v_extra_mm,
+                        )
+                        post_v_stage = 2
+                    else:
+                        phase = Phase.PRESS
+                        press_armed = False
+                        post_v_start = None
+                        post_v_stage = 0
+                elif post_v_stage == 2 and now_t - post_v_start >= vcfg.offset_v_extra_wait_sec:
                     phase = Phase.PRESS
                     press_armed = False
+                    post_v_start = None
+                    post_v_stage = 0
                 time.sleep(0.05)
                 continue
 
@@ -458,6 +502,7 @@ def run(
                         phase = Phase.POST_H
                         post_h_ticks = 0
                         post_v_start = None
+                        post_v_stage = 0
                         press_armed = False
                         log.info("→ POST_H (lateral) → POST_V (vertical mm) → PRESS")
                     else:

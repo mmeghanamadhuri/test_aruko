@@ -51,6 +51,10 @@ class VisionConfig:
     offset_h_deltas_raw: List[int]
     mm_per_raw_h: float
     offset_v_actuator: str  # "extend" | "retract"
+    offset_h_flip: bool
+    offset_v_flip: bool
+    offset_v_extra_mm: float
+    offset_v_extra_wait_sec: float
     offset_settle_h_ticks: int
     offset_v_wait_sec: float
     offset_settle_press_sec: float
@@ -85,8 +89,24 @@ class VisionConfig:
         if v_act not in ("extend", "retract"):
             v_act = "extend"
 
+        h_flip = os.environ.get("VISION_OFFSET_H_FLIP", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
         if not h_deltas and mm_pr_h > 0.0 and len(h_serv) == 1 and h_mm > 0:
             h_deltas = [int(round(h_sign * h_mm / mm_pr_h))]
+
+        v_flip = os.environ.get("VISION_OFFSET_V_FLIP", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+        v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "45"))
+        v_extra_wait = float(os.environ.get("VISION_OFFSET_V_EXTRA_WAIT_SEC", "10"))
 
         return cls(
             api_key=os.environ.get("ROBOFLOW_API_KEY", "").strip(),
@@ -110,6 +130,10 @@ class VisionConfig:
             offset_h_deltas_raw=h_deltas,
             mm_per_raw_h=mm_pr_h,
             offset_v_actuator=v_act,
+            offset_h_flip=h_flip,
+            offset_v_flip=v_flip,
+            offset_v_extra_mm=v_extra,
+            offset_v_extra_wait_sec=v_extra_wait,
             offset_settle_h_ticks=int(os.environ.get("VISION_OFFSET_SETTLE_H_TICKS", "6")),
             offset_v_wait_sec=float(os.environ.get("VISION_OFFSET_V_WAIT_SEC", "14")),
             offset_settle_press_sec=float(os.environ.get("VISION_OFFSET_PRESS_WAIT_SEC", "4")),
