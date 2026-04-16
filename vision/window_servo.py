@@ -13,6 +13,8 @@ POST_H   — (Optional) Lateral rigid move so the **gripper** reaches the button
            VISION_OFFSET_H_SERVOS + (VISION_OFFSET_H_RAW_DELTA | DELTAS | MM_PER_RAW_H).
 POST_V   — (Optional) Move along the actuator / “reach” axis by VISION_CAMERA_PRESS_OFFSET_V_MM
            (default 6.5 cm) via linear actuator extend/retract (VISION_OFFSET_V_ACTUATOR).
+POST_WRIST — (Optional) Move wrist servo (default S5) to a tuned goal so the linear actuator
+           points vertically before contact. Set VISION_PRE_PRESS_WRIST_RAW or _DELTA.
 PRESS    — (Optional) Play VISION_PRESS_JSON (e.g. actions/press.json) once.
 DONE     — Freeze all servos.
 
@@ -50,6 +52,7 @@ class Phase(Enum):
     APPROACH = auto()
     POST_H = auto()
     POST_V = auto()
+    POST_WRIST = auto()
     PRESS = auto()
     DONE = auto()
 
@@ -184,6 +187,8 @@ def run(
     post_v_stage = 0
     press_armed = False
     press_deadline = 0.0
+    post_wrist_armed = False
+    post_wrist_start = 0.0
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def rpc(cmd: dict) -> Optional[dict]:
@@ -342,6 +347,7 @@ def run(
                         phase     = Phase.SEARCH
                         stable_ct = 0
                         ema_dx = ema_dy = 0.0
+                        post_wrist_armed = False
 
                 else:
                     if lost > 0:
@@ -423,15 +429,81 @@ def run(
                         )
                         post_v_stage = 2
                     else:
-                        phase = Phase.PRESS
-                        press_armed = False
                         post_v_start = None
                         post_v_stage = 0
+                        if (
+                            vcfg.pre_press_wrist_abs is not None
+                            or vcfg.pre_press_wrist_delta is not None
+                        ):
+                            phase = Phase.POST_WRIST
+                            post_wrist_armed = False
+                        else:
+                            phase = Phase.PRESS
+                            press_armed = False
                 elif post_v_stage == 2 and now_t - post_v_start >= vcfg.offset_v_extra_wait_sec:
-                    phase = Phase.PRESS
-                    press_armed = False
                     post_v_start = None
                     post_v_stage = 0
+                    if (
+                        vcfg.pre_press_wrist_abs is not None
+                        or vcfg.pre_press_wrist_delta is not None
+                    ):
+                        phase = Phase.POST_WRIST
+                        post_wrist_armed = False
+                    else:
+                        phase = Phase.PRESS
+                        press_armed = False
+                time.sleep(0.05)
+                continue
+
+            if phase == Phase.POST_WRIST:
+                now_tw = time.monotonic()
+                if not post_wrist_armed:
+                    sid = vcfg.pre_press_wrist_servo
+                    goal: Optional[int] = None
+                    if vcfg.pre_press_wrist_abs is not None:
+                        goal = vcfg.pre_press_wrist_abs & 0xFFFF
+                        log.info(
+                            "POST_WRIST: S%d -> %d (absolute — vertical actuator align before press)",
+                            sid,
+                            goal,
+                        )
+                    else:
+                        status_wr = rpc({"cmd": "status"})
+                        if status_wr and isinstance(status_wr.get("positions"), dict):
+                            last_positions.update(status_wr["positions"])
+                        cur = last_positions.get(str(sid))
+                        if cur is None:
+                            log.warning(
+                                "POST_WRIST: no telemetry for S%d — skipping wrist move",
+                                sid,
+                            )
+                            phase = Phase.PRESS
+                            press_armed = False
+                            time.sleep(0.05)
+                            continue
+                        d = vcfg.pre_press_wrist_delta
+                        assert d is not None
+                        goal = (int(cur) + d) & 0xFFFF
+                        log.info(
+                            "POST_WRIST: S%d %d -> %d (delta %+d)",
+                            sid,
+                            int(cur),
+                            goal,
+                            d,
+                        )
+                    rpc(
+                        {
+                            "cmd": "multi_servo_move",
+                            "servos": {str(sid): goal},
+                            "speed": vcfg.pre_press_wrist_speed,
+                        }
+                    )
+                    post_wrist_armed = True
+                    post_wrist_start = now_tw
+                elif now_tw - post_wrist_start >= vcfg.pre_press_wrist_wait_sec:
+                    phase = Phase.PRESS
+                    press_armed = False
+                    post_wrist_armed = False
                 time.sleep(0.05)
                 continue
 
@@ -522,7 +594,16 @@ def run(
                         post_v_start = None
                         post_v_stage = 0
                         press_armed = False
-                        log.info("→ POST_H (lateral) → POST_V (vertical mm) → PRESS")
+                        tail = (
+                            " → POST_WRIST (S%d)"
+                            % (vcfg.pre_press_wrist_servo,)
+                            if (
+                                vcfg.pre_press_wrist_abs is not None
+                                or vcfg.pre_press_wrist_delta is not None
+                            )
+                            else ""
+                        )
+                        log.info("→ POST_H (lateral) → POST_V (vertical mm)%s → PRESS", tail)
                     else:
                         rpc({"cmd": "freeze"})
                         phase = Phase.DONE

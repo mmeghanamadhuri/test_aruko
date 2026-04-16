@@ -59,6 +59,12 @@ class VisionConfig:
     offset_v_wait_sec: float
     offset_settle_press_sec: float
     press_json_rel: str
+    # After POST_V, before PRESS: aim linear actuator vertically by setting wrist servo (default S5).
+    pre_press_wrist_servo: int
+    pre_press_wrist_abs: Optional[int]
+    pre_press_wrist_delta: Optional[int]
+    pre_press_wrist_speed: int
+    pre_press_wrist_wait_sec: float
 
     @classmethod
     def from_env(cls) -> VisionConfig:
@@ -117,6 +123,21 @@ class VisionConfig:
         v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "45"))
         v_extra_wait = float(os.environ.get("VISION_OFFSET_V_EXTRA_WAIT_SEC", "10"))
 
+        pw_raw = os.environ.get("VISION_PRE_PRESS_WRIST_RAW", "").strip()
+        pw_delta_s = os.environ.get("VISION_PRE_PRESS_WRIST_DELTA", "").strip()
+        pw_abs: Optional[int] = None
+        pw_delta: Optional[int] = None
+        if pw_raw:
+            try:
+                pw_abs = int(pw_raw)
+            except ValueError:
+                pass
+        elif pw_delta_s:
+            try:
+                pw_delta = int(pw_delta_s)
+            except ValueError:
+                pass
+
         return cls(
             api_key=os.environ.get("ROBOFLOW_API_KEY", "").strip(),
             api_url=_default_api_url(),
@@ -147,4 +168,9 @@ class VisionConfig:
             offset_v_wait_sec=float(os.environ.get("VISION_OFFSET_V_WAIT_SEC", "14")),
             offset_settle_press_sec=float(os.environ.get("VISION_OFFSET_PRESS_WAIT_SEC", "4")),
             press_json_rel=os.environ.get("VISION_PRESS_JSON", "actions/press.json").strip(),
+            pre_press_wrist_servo=int(os.environ.get("VISION_PRE_PRESS_WRIST_SERVO", "5")),
+            pre_press_wrist_abs=pw_abs,
+            pre_press_wrist_delta=pw_delta,
+            pre_press_wrist_speed=int(os.environ.get("VISION_PRE_PRESS_WRIST_SPEED", "180")),
+            pre_press_wrist_wait_sec=float(os.environ.get("VISION_PRE_PRESS_WRIST_WAIT_SEC", "1.5")),
         )
