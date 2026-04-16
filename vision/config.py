@@ -79,7 +79,7 @@ class VisionConfig:
             "yes",
             "on",
         )
-        h_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_H_MM", "25"))
+        h_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_H_MM", "30"))
         v_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_V_MM", "65"))
         h_serv = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_SERVOS", "").split(",") if x.strip()]
         h_deltas = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_DELTAS", "").split(",") if x.strip()]
@@ -97,6 +97,15 @@ class VisionConfig:
         )
         if not h_deltas and mm_pr_h > 0.0 and len(h_serv) == 1 and h_mm > 0:
             h_deltas = [int(round(h_sign * h_mm / mm_pr_h))]
+
+        # One calibrated raw delta for the lateral shift (camera centered, gripper still
+        # offset — move this joint by N raw units to bring the tip ~VISION_CAMERA_PRESS_OFFSET_H_MM).
+        raw_one = os.environ.get("VISION_OFFSET_H_RAW_DELTA", "").strip()
+        if not h_deltas and len(h_serv) == 1 and raw_one:
+            try:
+                h_deltas = [int(round(float(raw_one)))]
+            except ValueError:
+                pass
 
         v_flip = os.environ.get("VISION_OFFSET_V_FLIP", "0").strip().lower() in (
             "1",

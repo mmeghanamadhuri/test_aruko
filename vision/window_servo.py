@@ -8,9 +8,9 @@ ALIGN    — Center the button in frame using proportional pan/tilt control.
            Transitions to APPROACH once stable for VISION_ALIGN_STABLE_FRAMES.
 APPROACH — Move arm forward in steps (VISION_APPROACH_SERVOS / DELTAS) while S6/S7
            keep the target centred. Ends when bbox area >= VISION_APPROACH_AREA_FRAC.
-POST_H   — (Optional) Horizontal rigid-body move so the **presser** sits over the
-           button: camera is offset from the press axis (default 2.5 cm); apply
-           VISION_OFFSET_H_DELTAS or VISION_MM_PER_RAW_H + VISION_CAMERA_PRESS_OFFSET_H_MM.
+POST_H   — (Optional) Lateral rigid move so the **gripper** reaches the button while the
+           camera stays aimed at the center (default ~3 cm camera–gripper breadth). Requires
+           VISION_OFFSET_H_SERVOS + (VISION_OFFSET_H_RAW_DELTA | DELTAS | MM_PER_RAW_H).
 POST_V   — (Optional) Move along the actuator / “reach” axis by VISION_CAMERA_PRESS_OFFSET_V_MM
            (default 6.5 cm) via linear actuator extend/retract (VISION_OFFSET_V_ACTUATOR).
 PRESS    — (Optional) Play VISION_PRESS_JSON (e.g. actions/press.json) once.
@@ -23,7 +23,7 @@ Key design decisions
 * Horizontal compensation uses the same absolute-goal pattern as approach arm steps.
 * Vertical compensation prefers the **linear actuator** (mm); tune direction with
   VISION_OFFSET_V_ACTUATOR plus **VISION_OFFSET_V_FLIP** to reverse. Optional second
-  leg **VISION_OFFSET_V_EXTRA_MM** (e.g. 45 mm) reaches the contact after the camera
+  leg **VISION_OFFSET_V_EXTRA_MM** reaches the contact after the camera
   offset leg. **VISION_OFFSET_H_FLIP** negates lateral deltas.
 """
 
@@ -222,8 +222,11 @@ def run(
         deltas = vcfg.offset_h_deltas_raw
         if not servos or len(servos) != len(deltas):
             log.warning(
-                "POST_H skipped — set VISION_OFFSET_H_SERVOS and VISION_OFFSET_H_DELTAS "
-                "(same length), or VISION_MM_PER_RAW_H with a single servo id."
+                "POST_H skipped — gripper lateral offset not applied. Set "
+                "VISION_OFFSET_H_SERVOS=4 (example) and one of: VISION_OFFSET_H_RAW_DELTA "
+                "(one calibrated raw step for ~VISION_CAMERA_PRESS_OFFSET_H_MM mm), or "
+                "VISION_OFFSET_H_DELTAS (same length as servos), or VISION_MM_PER_RAW_H with "
+                "a single servo id."
             )
             return False
 
@@ -290,6 +293,21 @@ def run(
         rpc({"cmd": "freeze"})
 
     log.info("window_servo ready — phase=SEARCH")
+
+    if vcfg.offset_after_approach:
+        ok_h = bool(
+            vcfg.offset_h_servos
+            and len(vcfg.offset_h_servos) == len(vcfg.offset_h_deltas_raw)
+        )
+        if not ok_h:
+            log.error(
+                "VISION_OFFSET_AFTER_APPROACH is on but POST_H has no lateral servo move "
+                "configured. The camera can be centered on the button while the gripper "
+                "remains ~%.0f mm off — set VISION_OFFSET_H_SERVOS plus "
+                "VISION_OFFSET_H_RAW_DELTA (recommended) or DELTAS / MM_PER_RAW_H. "
+                "See vision/env.example.",
+                vcfg.offset_h_mm,
+            )
 
     try:
         while True:
