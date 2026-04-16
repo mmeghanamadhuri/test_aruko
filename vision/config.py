@@ -43,6 +43,18 @@ class VisionConfig:
     approach_servos: List[int]
     approach_deltas: List[int]
     approach_dir: int
+    # After visual approach: align presser to button using camera–presser geometry (see window_servo).
+    offset_after_approach: bool
+    offset_h_mm: float
+    offset_v_mm: float
+    offset_h_servos: List[int]
+    offset_h_deltas_raw: List[int]
+    mm_per_raw_h: float
+    offset_v_actuator: str  # "extend" | "retract"
+    offset_settle_h_ticks: int
+    offset_v_wait_sec: float
+    offset_settle_press_sec: float
+    press_json_rel: str
 
     @classmethod
     def from_env(cls) -> VisionConfig:
@@ -56,6 +68,25 @@ class VisionConfig:
         runtime = os.environ.get("VISION_RUNTIME", "embedded").strip().lower()
         if runtime not in ("embedded", "http", "yolo"):
             runtime = "embedded"
+
+        off_en = os.environ.get("VISION_OFFSET_AFTER_APPROACH", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        h_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_H_MM", "25"))
+        v_mm = float(os.environ.get("VISION_CAMERA_PRESS_OFFSET_V_MM", "65"))
+        h_serv = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_SERVOS", "").split(",") if x.strip()]
+        h_deltas = [int(x.strip()) for x in os.environ.get("VISION_OFFSET_H_DELTAS", "").split(",") if x.strip()]
+        mm_pr_h = float(os.environ.get("VISION_MM_PER_RAW_H", "0"))
+        h_sign = -1 if os.environ.get("VISION_OFFSET_H_SIGN", "1").strip() == "-1" else 1
+        v_act = os.environ.get("VISION_OFFSET_V_ACTUATOR", "extend").strip().lower()
+        if v_act not in ("extend", "retract"):
+            v_act = "extend"
+
+        if not h_deltas and mm_pr_h > 0.0 and len(h_serv) == 1 and h_mm > 0:
+            h_deltas = [int(round(h_sign * h_mm / mm_pr_h))]
 
         return cls(
             api_key=os.environ.get("ROBOFLOW_API_KEY", "").strip(),
@@ -72,4 +103,15 @@ class VisionConfig:
             approach_servos=[int(x.strip()) for x in os.environ.get("VISION_APPROACH_SERVOS", "3").split(",") if x.strip()],
             approach_deltas=[int(x.strip()) for x in os.environ.get("VISION_APPROACH_DELTAS", "30").split(",") if x.strip()],
             approach_dir=int(os.environ.get("VISION_APPROACH_DIR", "1")),
+            offset_after_approach=off_en,
+            offset_h_mm=h_mm,
+            offset_v_mm=v_mm,
+            offset_h_servos=h_serv,
+            offset_h_deltas_raw=h_deltas,
+            mm_per_raw_h=mm_pr_h,
+            offset_v_actuator=v_act,
+            offset_settle_h_ticks=int(os.environ.get("VISION_OFFSET_SETTLE_H_TICKS", "6")),
+            offset_v_wait_sec=float(os.environ.get("VISION_OFFSET_V_WAIT_SEC", "14")),
+            offset_settle_press_sec=float(os.environ.get("VISION_OFFSET_PRESS_WAIT_SEC", "4")),
+            press_json_rel=os.environ.get("VISION_PRESS_JSON", "actions/press.json").strip(),
         )

@@ -1,27 +1,28 @@
 """
-window_servo.py — Search, Align, and Approach for in-car window buttons.
+window_servo.py — Search, Align, Approach, then camera→presser offsets and press.
 
 Phase overview
 --------------
 SEARCH   — Sweep S6 (pan) & S7 (tilt) until a button is detected.
 ALIGN    — Center the button in frame using proportional pan/tilt control.
            Transitions to APPROACH once stable for VISION_ALIGN_STABLE_FRAMES.
-APPROACH — Move arm (S1-4) forward in small steps using a fixed approach vector
-           (VISION_APPROACH_SERVOS / VISION_APPROACH_DELTAS).
-           S6/S7 remain ACTIVE throughout — micro-corrections keep the button
-           in frame as the arm advances.
-           An arm step fires only when pixel error < VISION_APPROACH_ARM_THR.
-           If the button drifts beyond that threshold the step is paused until
-           re-centred.  Phase ends when bounding-box area >= VISION_APPROACH_AREA_FRAC.
-DONE     — All servos frozen.
+APPROACH — Move arm forward in steps (VISION_APPROACH_SERVOS / DELTAS) while S6/S7
+           keep the target centred. Ends when bbox area >= VISION_APPROACH_AREA_FRAC.
+POST_H   — (Optional) Horizontal rigid-body move so the **presser** sits over the
+           button: camera is offset from the press axis (default 2.5 cm); apply
+           VISION_OFFSET_H_DELTAS or VISION_MM_PER_RAW_H + VISION_CAMERA_PRESS_OFFSET_H_MM.
+POST_V   — (Optional) Move along the actuator / “reach” axis by VISION_CAMERA_PRESS_OFFSET_V_MM
+           (default 6.5 cm) via linear actuator extend/retract (VISION_OFFSET_V_ACTUATOR).
+PRESS    — (Optional) Play VISION_PRESS_JSON (e.g. actions/press.json) once.
+DONE     — Freeze all servos.
 
 Key design decisions
 --------------------
-* No reference-frame JSON files — approach direction is a mechanical constant
-  (the APPROACH_DELTAS vector) that works regardless of button height/placement.
-* Stopping criterion is purely visual (area fraction), invariant to distance.
-* S6/S7 are never hard-frozen — they track continuously so the button stays
-  in frame during the arm advance.
+* Visual approach stops at a **safe stand-off** (bbox area); rigid offsets then
+  bring the **tip** to the contact point using measured camera–presser geometry.
+* Horizontal compensation uses the same absolute-goal pattern as approach arm steps.
+* Vertical compensation prefers the **linear actuator** (mm); tune direction with
+  VISION_OFFSET_V_ACTUATOR (extend vs retract) for your mounting.
 """
 
 from __future__ import annotations
@@ -45,6 +46,9 @@ class Phase(Enum):
     SEARCH = auto()
     ALIGN = auto()
     APPROACH = auto()
+    POST_H = auto()
+    POST_V = auto()
+    PRESS = auto()
     DONE = auto()
 
 
@@ -167,6 +171,10 @@ def run(
     ema_dy = 0.0
     last_positions: Dict[str, int] = {}
     arm_cooldown_ticks = 0   # ticks remaining before next arm step
+    post_h_ticks = 0
+    post_v_start: Optional[float] = None
+    press_armed = False
+    press_deadline = 0.0
 
     # ── Helpers ───────────────────────────────────────────────────────────────
     def rpc(cmd: dict) -> Optional[dict]:
@@ -195,6 +203,45 @@ def run(
         rpc({"cmd": "multi_servo_move",
              "servos": {str(pan): d_pan, str(tilt): d_tilt},
              "speed": spd})
+
+    def fire_offset_horizontal() -> bool:
+        """
+        Apply one rigid correction: present + delta → absolute goal per servo
+        (same convention as fire_arm_step). Skips if not configured.
+        """
+        servos = vcfg.offset_h_servos
+        deltas = vcfg.offset_h_deltas_raw
+        if not servos or len(servos) != len(deltas):
+            log.warning(
+                "POST_H skipped — set VISION_OFFSET_H_SERVOS and VISION_OFFSET_H_DELTAS "
+                "(same length), or VISION_MM_PER_RAW_H with a single servo id."
+            )
+            return False
+
+        status_resp = rpc({"cmd": "status"})
+        if status_resp and isinstance(status_resp.get("positions"), dict):
+            last_positions.update(status_resp["positions"])
+
+        step_servos: Dict[str, int] = {}
+        log_parts: List[str] = []
+        rel_ids = {6, 7}
+        for i, sid in enumerate(servos):
+            delta = int(deltas[i])
+            cur = last_positions.get(str(sid))
+            if cur is None:
+                log.warning("POST_H: no telemetry for S%d — skipping horizontal offset", sid)
+                return False
+            if sid in rel_ids:
+                step_servos[str(sid)] = delta
+                log_parts.append(f"S{sid}:rel({delta:+d})")
+            else:
+                goal = (int(cur) + delta) & 0xFFFF
+                step_servos[str(sid)] = goal
+                log_parts.append(f"S{sid}:{cur}->{goal}({delta:+d})")
+
+        log.info("POST_H camera→presser lateral (~%.1f mm nominal): %s", vcfg.offset_h_mm, " | ".join(log_parts))
+        rpc({"cmd": "multi_servo_move", "servos": step_servos, "speed": app_spd})
+        return True
 
     def fire_arm_step() -> bool:
         """
@@ -289,12 +336,74 @@ def run(
             if mjpeg:
                 mjpeg.update_frame(encode_jpeg(vis, quality=jpeg_q))
 
-            # Skip motion logic on non-inference ticks or in dry-run
-            if not inferred or dry_motion:
+            if dry_motion:
                 time.sleep(0.01)
                 continue
 
-            # No target — nothing to act on
+            # ── After visual approach: rigid offsets + press (no bbox required) ─
+            if phase == Phase.POST_H:
+                if inferred:
+                    if post_h_ticks == 0 and vcfg.offset_after_approach:
+                        fire_offset_horizontal()
+                    post_h_ticks += 1
+                    if post_h_ticks >= vcfg.offset_settle_h_ticks:
+                        phase = Phase.POST_V
+                        post_v_start = None
+                time.sleep(0.02)
+                continue
+
+            if phase == Phase.POST_V:
+                if post_v_start is None:
+                    post_v_start = time.monotonic()
+                    if vcfg.offset_v_mm > 0.5:
+                        r = rpc(
+                            {
+                                "cmd": "actuator",
+                                "action": vcfg.offset_v_actuator,
+                                "distance_mm": vcfg.offset_v_mm,
+                            }
+                        )
+                        if r and r.get("status") != "ok":
+                            log.warning("POST_V actuator: %s", r)
+                    else:
+                        log.info("POST_V skipped (VISION_CAMERA_PRESS_OFFSET_V_MM ~ 0)")
+                elif time.monotonic() - post_v_start >= vcfg.offset_v_wait_sec:
+                    phase = Phase.PRESS
+                    press_armed = False
+                time.sleep(0.05)
+                continue
+
+            if phase == Phase.PRESS:
+                if not press_armed:
+                    press_armed = True
+                    if vcfg.press_json_rel:
+                        log.info("PRESS: playing %s", vcfg.press_json_rel)
+                        rpc(
+                            {
+                                "cmd": "play",
+                                "file": vcfg.press_json_rel,
+                                "loop": False,
+                            }
+                        )
+                    else:
+                        log.info("PRESS skipped (empty VISION_PRESS_JSON)")
+                    press_deadline = time.monotonic() + vcfg.offset_settle_press_sec
+                elif time.monotonic() >= press_deadline:
+                    rpc({"cmd": "freeze"})
+                    phase = Phase.DONE
+                    log.info("Sequence complete (DONE)")
+                time.sleep(0.05)
+                continue
+
+            if phase == Phase.DONE:
+                time.sleep(0.1)
+                continue
+
+            if not inferred:
+                time.sleep(0.01)
+                continue
+
+            # No target — nothing to act on (SEARCH / ALIGN / APPROACH only)
             if target is None:
                 time.sleep(0.01)
                 continue
@@ -340,9 +449,20 @@ def run(
                 # 1. Stopping criterion — purely visual, works at any height/distance
                 area = (target.bbox.w * target.bbox.h) / max(1.0, float(w_px * h_px))
                 if area >= app_area:
-                    log.info("DONE — area=%.3f >= %.3f", area, app_area)
-                    rpc({"cmd": "freeze"})
-                    phase = Phase.DONE
+                    log.info(
+                        "Visual stand-off reached (area=%.3f >= %.3f)",
+                        area,
+                        app_area,
+                    )
+                    if vcfg.offset_after_approach:
+                        phase = Phase.POST_H
+                        post_h_ticks = 0
+                        post_v_start = None
+                        press_armed = False
+                        log.info("→ POST_H (lateral) → POST_V (vertical mm) → PRESS")
+                    else:
+                        rpc({"cmd": "freeze"})
+                        phase = Phase.DONE
                     continue
 
                 # 2. Pan/tilt micro-correction — keeps button in frame while arm moves.
