@@ -1,0 +1,44 @@
+{
+    "frame_count": 1,
+    "frames": [
+        {
+            "delay": 0.5,
+            "duration": 1.0,
+            "speed": 100,
+            "servos": {
+                "1": {
+                    "type": "absolute",
+                    "value": 23
+                },
+                "2": {
+                    "type": "absolute",
+                    "value": 2933
+                },
+                "3": {
+                    "type": "absolute",
+                    "value": 1168
+                },
+                "4": {
+                    "type": "absolute",
+                    "value": 1096
+                },
+                "5": {
+                    "type": "absolute",
+                    "value": 1490
+                },
+                "6": {
+                    "type": "relative",
+                    "diff": 0,
+                    "sign": "+",
+                    "ref_pos": 0
+                },
+                "7": {
+                    "type": "relative",
+                    "diff": 0,
+                    "sign": "-",
+                    "ref_pos": 0
+                }
+            }
+        }
+    ]
+}

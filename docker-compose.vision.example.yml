@@ -1,0 +1,29 @@
+# Example: vision container with bind-mounted source so edits on the host appear
+# immediately under /workspace (no image rebuild for Python changes).
+#
+# Usage (from repo root, adjust paths for your Jetson):
+#   docker compose -f docker-compose.vision.example.yml up -d
+#   docker compose -f docker-compose.vision.example.yml exec vision bash
+#
+# Override mount on Jetson if your tree is not next to this file:
+#   export CARBOT_HOST_REPO=/home/jnx/Prajwal/feature-carbot
+#   docker compose -f docker-compose.vision.example.yml up -d
+#
+# After code changes: restart the long-running Python process inside the container,
+# or run:  ./scripts/docker_refresh_after_edit.sh
+
+services:
+  vision:
+    image: dustynv/l4t-pytorch:r36.2.0
+    container_name: carbot_vision
+    network_mode: host
+    privileged: true
+    runtime: nvidia
+    working_dir: /workspace
+    stdin_open: true
+    tty: true
+    volumes:
+      # Default: repo root -> /workspace (override with CARBOT_HOST_REPO)
+      - ${CARBOT_HOST_REPO:-.}:/workspace
+      - /dev:/dev
+    command: bash -lc "sleep infinity"
