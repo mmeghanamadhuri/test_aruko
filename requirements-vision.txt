@@ -1,0 +1,14 @@
+# Vision module — local inference by default (in-process).
+#
+# Default: VISION_RUNTIME=embedded → pip install inference (CPU/torch).
+# Jetson / NVIDIA GPU: use Roboflow’s inference-gpu install line for your CUDA/JetPack.
+#   https://inference.roboflow.com/quickstart/run_a_model/
+#
+# Optional: VISION_RUNTIME=http + Roboflow Inference Server on this machine:
+#   pip install inference && inference server start   # then http://127.0.0.1:9001
+#   (HTTP client only:) pip install inference-sdk
+
+numpy>=1.19.0
+opencv-python-headless>=4.5.0
+inference>=1.2.0
+inference-sdk>=0.9.0

@@ -1,0 +1,2385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>CarBot Control</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow:wght@300;400;600;700&display=swap');
+
+  :root {
+    --bg:       #0a0c0f;
+    --bg2:      #0f1318;
+    --bg3:      #151c24;
+    --panel:    #111820;
+    --border:   #1e2d3d;
+    --accent:   #00d4ff;
+    --accent2:  #ff6b35;
+    --green:    #00ff9d;
+    --red:      #ff3b5c;
+    --yellow:   #ffd166;
+    --purple:   #bd93f9;
+    --text:     #c8d8e8;
+    --dim:      #4a6278;
+    --mono:     'Share Tech Mono', monospace;
+    --sans:     'Barlow', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 14px;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanlines overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.06) 2px,
+      rgba(0,0,0,0.06) 4px
+    );
+  }
+
+  /* ── Header ── */
+  header {
+    display: flex; align-items: center; gap: 16px;
+    padding: 12px 20px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; z-index: 100;
+  }
+  .logo {
+    font-family: var(--mono);
+    font-size: 20px;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+  .logo span { color: var(--accent2); }
+  .connection-badge {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 10px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .connection-badge:hover { border-color: var(--accent); }
+  .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--dim);
+    transition: background 0.3s;
+  }
+  .dot.online  { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.offline { background: var(--red); }
+
+  .state-pill {
+    margin-left: auto;
+    padding: 4px 12px;
+    border-radius: 2px;
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 2px;
+    border: 1px solid var(--dim);
+    color: var(--dim);
+    transition: all 0.3s;
+  }
+  .state-pill.playing {
+    color: var(--green); border-color: var(--green);
+    box-shadow: 0 0 12px rgba(0,255,157,0.2);
+    animation: pulse-border 1.5s infinite;
+  }
+  @keyframes pulse-border {
+    0%,100% { box-shadow: 0 0 8px rgba(0,255,157,0.2); }
+    50%      { box-shadow: 0 0 18px rgba(0,255,157,0.5); }
+  }
+
+  /* ── Layout ── */
+  .grid {
+    display: grid;
+    grid-template-columns: 300px 1fr 320px;
+    grid-template-rows: auto 1fr;
+    gap: 0;
+    height: calc(100vh - 53px);
+  }
+
+  .panel {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  .panel.right { border-right: none; border-left: 1px solid var(--border); }
+  .panel-title {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 3px;
+    color: var(--dim);
+    text-transform: uppercase;
+    padding: 10px 14px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  .panel-body { flex: 1; overflow-y: auto; padding: 12px; }
+  .panel-body::-webkit-scrollbar { width: 4px; }
+  .panel-body::-webkit-scrollbar-thumb { background: var(--border); }
+
+  /* ── Center main ── */
+  .main-area {
+    display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+
+  /* ── Transport controls ── */
+  .transport {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    display: flex; flex-direction: column; gap: 10px;
+    flex-shrink: 0;
+  }
+  .file-row {
+    display: flex; gap: 8px; align-items: center;
+  }
+  .file-label {
+    font-family: var(--mono); font-size: 11px; color: var(--dim);
+    white-space: nowrap;
+  }
+  input[type=text], input[type=number], select {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 6px 8px;
+    border-radius: 2px;
+    outline: none;
+    transition: border-color 0.2s;
+    width: 100%;
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus {
+    border-color: var(--accent);
+  }
+  select option { background: var(--bg3); }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    font-family: var(--mono);
+    font-size: 12px;
+    padding: 7px 14px;
+    border-radius: 2px;
+    border: 1px solid;
+    cursor: pointer;
+    transition: all 0.15s;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  button:active { transform: scale(0.97); }
+
+  .btn-play    { background: rgba(0,255,157,0.08);  border-color: var(--green);  color: var(--green); }
+  .btn-loop    { background: rgba(0,212,255,0.08);  border-color: var(--accent); color: var(--accent); }
+  .btn-stop    { background: rgba(255,59,92,0.1);   border-color: var(--red);    color: var(--red); }
+  .btn-rec     { background: rgba(255,107,53,0.08); border-color: var(--accent2);color: var(--accent2); }
+  .btn-neutral { background: rgba(255,209,102,0.08);border-color: var(--yellow); color: var(--yellow); }
+  .btn-freeze  { background: rgba(189,147,249,0.08);border-color: var(--purple); color: var(--purple); }
+  .btn-default { background: rgba(255,255,255,0.04);border-color: var(--border); color: var(--text); }
+  .btn-extend  { background: rgba(0,255,157,0.08);  border-color: var(--green);  color: var(--green); }
+  .btn-retract { background: rgba(255,59,92,0.08);  border-color: var(--red);    color: var(--red); }
+
+  button:hover    { filter: brightness(1.2); }
+  button:disabled { opacity: 0.3; cursor: not-allowed; filter: none; }
+
+  /* ── Servo grid ── */
+  .servo-grid {
+    display: flex; flex-direction: column; gap: 6px;
+    flex: 1; overflow-y: auto;
+    padding: 10px 16px;
+  }
+
+  /* ── Servo card — 2-row layout ── */
+  .servo-card {
+    background: var(--bg3);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 8px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    transition: border-color 0.2s;
+  }
+  .servo-card:hover { border-color: var(--accent); }
+
+  /* Row 1: ID | info | bar */
+  .servo-row1 {
+    display: grid;
+    grid-template-columns: 34px 1fr 100px;
+    gap: 8px;
+    align-items: center;
+  }
+  .servo-id {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+    line-height: 1;
+  }
+  .servo-id.rel { color: var(--purple); }
+
+  .servo-info { display: flex; flex-direction: column; gap: 1px; }
+  .servo-pos  { font-family: var(--mono); font-size: 13px; color: var(--text); }
+  .servo-deg  { font-family: var(--mono); font-size: 11px; color: var(--dim); }
+  .servo-mode { font-size: 10px; letter-spacing: 1.5px; color: var(--dim); text-transform: uppercase; }
+
+  .servo-bar-wrap { display: flex; align-items: center; }
+  .servo-bar-bg {
+    flex: 1; height: 4px; background: var(--bg);
+    border-radius: 2px; overflow: hidden;
+  }
+  .servo-bar {
+    height: 100%; background: var(--accent);
+    border-radius: 2px; transition: width 0.4s ease;
+  }
+  .servo-bar.rel { background: var(--purple); }
+
+  /* Row 2: move controls | divider | torque controls */
+  .servo-row2 {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+    flex-wrap: wrap;
+  }
+  .servo-row2-move {
+    display: flex; gap: 4px; align-items: center;
+    flex: 1; min-width: 0;
+  }
+  .servo-row2-torque {
+    display: flex; gap: 4px; align-items: center;
+    flex-shrink: 0;
+  }
+  .servo-vsep {
+    width: 1px; height: 22px;
+    background: var(--border);
+    flex-shrink: 0;
+    margin: 0 2px;
+  }
+
+  /* Compact inputs and buttons inside servo cards */
+  .s-inp {
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    font-family: var(--mono) !important;
+    font-size: 11px !important;
+    padding: 4px 5px !important;
+    border-radius: 2px !important;
+    width: 58px !important;
+    min-width: 0 !important;
+  }
+  .s-inp.speed-inp { width: 48px !important; }
+  .s-inp:focus { border-color: var(--accent) !important; }
+
+  .s-btn {
+    font-family: var(--mono) !important;
+    font-size: 10px !important;
+    padding: 4px 7px !important;
+    border-radius: 2px !important;
+    letter-spacing: 0.5px !important;
+    white-space: nowrap !important;
+    flex-shrink: 0 !important;
+  }
+  .s-label {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--dim);
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  /* ── Left panel ── */
+  .section-head {
+    font-family: var(--mono);
+    font-size: 10px; letter-spacing: 2px;
+    color: var(--dim); text-transform: uppercase;
+    margin: 8px 0 6px;
+  }
+  .file-item {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 8px;
+    border-radius: 2px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    margin-bottom: 3px;
+    font-family: var(--mono); font-size: 12px;
+    transition: all 0.15s;
+  }
+  .file-item:hover { background: var(--bg3); border-color: var(--border); }
+  .file-item.active { background: rgba(0,212,255,0.08); border-color: var(--accent); color: var(--accent); }
+  .file-icon { color: var(--dim); font-size: 11px; }
+  #file-list {
+    max-height: 210px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 6px;
+    background: rgba(0, 0, 0, 0.16);
+  }
+  #file-list::-webkit-scrollbar { width: 6px; }
+  #file-list::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 6px;
+  }
+
+  .rec-params {
+    display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px;
+    margin-top: 6px;
+  }
+  .param-group { display: flex; flex-direction: column; gap: 3px; }
+  .param-label { font-size: 10px; color: var(--dim); font-family: var(--mono); }
+
+  /* ── Actuator panel ── */
+  .actuator-visual {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 10px; padding: 12px 0;
+  }
+  .actuator-track {
+    width: 24px; height: 120px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    position: relative; overflow: hidden;
+  }
+  .actuator-fill {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    background: linear-gradient(0deg, var(--accent2), rgba(255,107,53,0.3));
+    border-radius: 12px;
+    transition: height 0.6s linear;
+    height: 0%;
+  }
+  .actuator-pct {
+    font-family: var(--mono); font-size: 20px; color: var(--accent2);
+  }
+  .actuator-pct.estimated { color: #ffb347; }
+  .actuator-btns {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+    width: 100%;
+  }
+  .act-params { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+
+  /* ── Log panel ── */
+  .log-area {
+    flex: 1; overflow-y: auto;
+    font-family: var(--mono); font-size: 11px;
+    line-height: 1.7;
+    padding: 8px 10px;
+  }
+  .log-area::-webkit-scrollbar { width: 3px; }
+  .log-area::-webkit-scrollbar-thumb { background: var(--border); }
+  .log-entry { display: flex; gap: 8px; }
+  .log-ts  { color: var(--dim); flex-shrink: 0; }
+  .log-lvl { flex-shrink: 0; width: 42px; }
+  .log-lvl.INFO  { color: var(--accent); }
+  .log-lvl.WARN  { color: var(--yellow); }
+  .log-lvl.ERROR { color: var(--red); }
+  .log-lvl.DEBUG { color: var(--dim); }
+  .log-msg { color: var(--text); word-break: break-all; }
+
+  .log-clear {
+    font-size: 10px; padding: 3px 8px;
+    border: 1px solid var(--border); border-radius: 2px;
+    background: transparent; color: var(--dim); cursor: pointer;
+  }
+  .log-clear:hover { border-color: var(--red); color: var(--red); }
+
+  .log-toolbar {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg2);
+    flex-shrink: 0;
+  }
+  .log-filter {
+    flex: 1; font-size: 11px; padding: 3px 6px !important;
+  }
+
+  /* ── Status bar ── */
+  .status-bar {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    padding: 8px 16px;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    font-family: var(--mono); font-size: 11px;
+    flex-shrink: 0;
+  }
+  .stat-item { display: flex; gap: 6px; align-items: center; }
+  .stat-key  { color: var(--dim); }
+  .stat-val  { color: var(--text); }
+  .stat-val.ok  { color: var(--green); }
+  .stat-val.err { color: var(--red); }
+
+  /* ── Config modal ── */
+  .modal-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7); z-index: 200;
+    align-items: center; justify-content: center;
+  }
+  .modal-overlay.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 20px; width: 340px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .modal-title {
+    font-family: var(--mono); font-size: 13px; color: var(--accent);
+    letter-spacing: 2px;
+  }
+  .modal-row { display: flex; flex-direction: column; gap: 4px; }
+  .modal-label { font-size: 11px; color: var(--dim); font-family: var(--mono); }
+  .modal-btns { display: flex; gap: 8px; margin-top: 4px; }
+
+  /* ── Toast ── */
+  .toast {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--panel); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 3px;
+    font-family: var(--mono); font-size: 12px;
+    z-index: 500; pointer-events: none;
+    transform: translateY(20px); opacity: 0;
+    transition: all 0.3s;
+  }
+  .toast.show  { transform: translateY(0); opacity: 1; }
+  .toast.ok    { border-color: var(--green); color: var(--green); }
+  .toast.err   { border-color: var(--red);   color: var(--red); }
+  .toast.warn  { border-color: var(--yellow); color: var(--yellow); }
+
+  .divider {
+    border: none; border-top: 1px solid var(--border);
+    margin: 8px 0;
+  }
+
+  /* ── Torque legend chip ── */
+  .torque-chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-family: var(--mono); font-size: 9px; letter-spacing: 1px;
+    padding: 2px 6px; border-radius: 2px; border: 1px solid;
+    text-transform: uppercase; transition: all 0.2s;
+  }
+  .torque-chip.on  { border-color: var(--purple); color: var(--purple); background: rgba(189,147,249,0.08); }
+  .torque-chip.off { border-color: var(--yellow);  color: var(--yellow);  background: rgba(255,209,102,0.08); }
+
+  /* ── Timeline Editor Drawer ── */
+  .te-toggle-btn {
+    margin-left: 8px;
+    background: rgba(189,147,249,0.08);
+    border: 1px solid var(--purple);
+    color: var(--purple);
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 2px;
+    cursor: pointer;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    transition: all 0.15s;
+  }
+  .te-toggle-btn:hover { filter: brightness(1.3); }
+
+  .te-drawer {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    height: 0;
+    background: var(--bg2);
+    border-top: 2px solid var(--purple);
+    z-index: 150;
+    display: flex;
+    flex-direction: column;
+    transition: height 0.3s cubic-bezier(0.4,0,0.2,1);
+    overflow: hidden;
+  }
+  .te-drawer.open { height: 46vh; min-height: 320px; }
+
+  .te-titlebar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 14px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    cursor: default;
+    user-select: none;
+  }
+  .te-title {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--purple); letter-spacing: 3px; text-transform: uppercase;
+  }
+  .te-toolbar { display: flex; gap: 6px; align-items: center; margin-left: auto; flex-wrap: wrap; }
+
+  /* strip */
+  .te-strip-wrap {
+    overflow-x: auto; overflow-y: hidden;
+    padding: 8px 14px;
+    background: var(--bg3);
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+    height: 80px;
+    display: flex; align-items: center;
+  }
+  .te-strip-wrap::-webkit-scrollbar { height: 4px; }
+  .te-strip-wrap::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .te-strip {
+    display: flex; align-items: stretch;
+    height: 56px;
+    gap: 0;
+    position: relative;
+  }
+
+  .te-block-delay {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: rgba(255,209,102,0.10);
+    border: 1px solid rgba(255,209,102,0.25);
+    border-right: none;
+    font-family: var(--mono); font-size: 9px; color: var(--yellow);
+    min-width: 22px;
+    padding: 2px 4px;
+    cursor: default;
+    border-radius: 2px 0 0 2px;
+    flex-shrink: 0;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+  .te-block-delay .te-label-top { font-size: 8px; opacity: 0.7; letter-spacing: 1px; }
+  .te-block-delay .te-label-val { font-size: 10px; font-weight: bold; }
+
+  .te-block-frame {
+    display: flex; flex-direction: column; justify-content: space-between;
+    background: rgba(0,212,255,0.09);
+    border: 1px solid rgba(0,212,255,0.25);
+    border-radius: 0 2px 2px 0;
+    font-family: var(--mono); font-size: 10px; color: var(--accent);
+    min-width: 44px;
+    padding: 4px 6px;
+    cursor: pointer;
+    flex-shrink: 0;
+    overflow: hidden;
+    transition: all 0.12s;
+    position: relative;
+    margin-right: 4px;
+  }
+  .te-block-frame:hover {
+    background: rgba(0,212,255,0.18);
+    border-color: var(--accent);
+  }
+  .te-block-frame.selected {
+    background: rgba(0,212,255,0.22);
+    border-color: var(--accent);
+    box-shadow: 0 0 10px rgba(0,212,255,0.3);
+  }
+  .te-block-frame.has-actuator {
+    border-bottom: 2px solid var(--accent2);
+  }
+  .te-frame-idx  { font-size: 9px; opacity: 0.65; letter-spacing: 1px; }
+  .te-frame-dur  { font-size: 11px; font-weight: 700; }
+  .te-frame-spd  { font-size: 8px; opacity: 0.6; }
+  .te-frame-actbadge {
+    position: absolute; top: 2px; right: 3px;
+    font-size: 8px; color: var(--accent2); opacity: 0.9;
+  }
+
+  /* frame editor */
+  .te-editor-area {
+    flex: 1; overflow-y: auto; overflow-x: hidden;
+    padding: 10px 14px;
+    display: flex; gap: 14px;
+  }
+  .te-editor-area::-webkit-scrollbar { width: 4px; }
+  .te-editor-area::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .te-no-selection {
+    flex: 1; display: flex; align-items: center; justify-content: center;
+    font-family: var(--mono); font-size: 12px; color: var(--dim);
+    letter-spacing: 2px; text-transform: uppercase;
+  }
+
+  /* meta column */
+  .te-meta-col {
+    display: flex; flex-direction: column; gap: 8px;
+    min-width: 200px; flex-shrink: 0;
+  }
+  .te-meta-title {
+    font-family: var(--mono); font-size: 10px; color: var(--purple);
+    letter-spacing: 2px; text-transform: uppercase;
+    padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  }
+  .te-field-row { display: flex; flex-direction: column; gap: 3px; }
+  .te-field-label { font-size: 10px; color: var(--dim); font-family: var(--mono); }
+  .te-field-row input, .te-field-row select {
+    width: 100%;
+    background: var(--bg3); border: 1px solid var(--border);
+    color: var(--text); font-family: var(--mono); font-size: 12px;
+    padding: 5px 7px; border-radius: 2px; outline: none;
+  }
+  .te-field-row input:focus, .te-field-row select:focus { border-color: var(--purple); }
+
+  .te-act-section {
+    background: rgba(255,107,53,0.06);
+    border: 1px solid rgba(255,107,53,0.2);
+    border-radius: 3px; padding: 8px;
+    display: flex; flex-direction: column; gap: 6px;
+    margin-top: 4px;
+  }
+  .te-act-title {
+    font-family: var(--mono); font-size: 10px; color: var(--accent2);
+    letter-spacing: 1.5px; text-transform: uppercase;
+  }
+  .te-act-row { display: flex; gap: 6px; align-items: center; }
+  .te-act-row select { width: auto; flex: 1; }
+  .te-act-row input  { width: 70px; }
+
+  .te-act-none-btn {
+    font-size: 10px; padding: 2px 8px; background: transparent;
+    border: 1px solid var(--border); color: var(--dim);
+    border-radius: 2px; cursor: pointer; font-family: var(--mono);
+    letter-spacing: 0.5px;
+  }
+  .te-act-none-btn:hover { border-color: var(--red); color: var(--red); }
+
+  /* servo table */
+  .te-servo-col {
+    flex: 1; min-width: 0;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .te-servo-table {
+    border-collapse: collapse;
+    width: 100%;
+    font-family: var(--mono); font-size: 11px;
+  }
+  .te-servo-table th {
+    color: var(--dim); font-weight: 400; font-size: 9px; letter-spacing: 1px;
+    text-transform: uppercase; padding: 3px 8px; text-align: left;
+    border-bottom: 1px solid var(--border); white-space: nowrap;
+  }
+  .te-servo-table td { padding: 3px 4px; vertical-align: middle; }
+  .te-servo-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .te-sid { text-align: center; }
+  .te-sid-badge {
+    display: inline-block; width: 22px; height: 22px; line-height: 22px;
+    text-align: center; border-radius: 2px; font-size: 12px; font-weight: 700;
+  }
+  .te-sid-badge.abs { background: rgba(0,212,255,0.1); color: var(--accent); }
+  .te-sid-badge.rel { background: rgba(189,147,249,0.1); color: var(--purple); }
+
+  .te-type-badge {
+    font-size: 9px; padding: 1px 5px; border-radius: 2px; letter-spacing: 1px;
+    text-transform: uppercase;
+  }
+  .te-type-badge.abs { background: rgba(0,212,255,0.08); color: var(--accent); border: 1px solid rgba(0,212,255,0.2); }
+  .te-type-badge.rel { background: rgba(189,147,249,0.08); color: var(--purple); border: 1px solid rgba(189,147,249,0.2); }
+
+  .te-inp {
+    background: var(--bg) !important;
+    border: 1px solid var(--border) !important;
+    color: var(--text) !important;
+    font-family: var(--mono) !important;
+    font-size: 11px !important;
+    padding: 3px 5px !important;
+    border-radius: 2px !important;
+    width: 70px !important;
+  }
+  .te-inp:focus { border-color: var(--purple) !important; }
+  .te-inp.wide  { width: 88px !important; }
+  .te-inp.sign-inp { width: 40px !important; text-align: center; }
+
+  .te-action-bar {
+    display: flex; gap: 8px; padding: 6px 14px;
+    border-top: 1px solid var(--border);
+    background: var(--bg);
+    flex-shrink: 0;
+  }
+
+  /* responsive */
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: 260px 1fr 280px; }
+  }
+  @media (max-width: 860px) {
+    .grid {
+      grid-template-columns: 1fr;
+      grid-template-rows: auto;
+      height: auto;
+    }
+    .panel, .main-area { height: auto; min-height: 300px; }
+    .panel { border-right: none; border-bottom: 1px solid var(--border); }
+    .panel.right { border-left: none; border-top: 1px solid var(--border); }
+    #file-list { max-height: 170px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<header>
+  <div class="logo">CAR<span>BOT</span></div>
+  <div class="connection-badge" onclick="openConfig()" title="Click to configure">
+    <div class="dot" id="conn-dot"></div>
+    <span id="conn-label">connecting…</span>
+  </div>
+  <div class="state-pill" id="state-pill">IDLE</div>
+  <button class="te-toggle-btn" onclick="toggleTimeline()" title="Open Timeline Editor">⊞ Timeline</button>
+</header>
+
+<!-- ── Main grid ── -->
+<div class="grid">
+
+  <!-- ════════ LEFT: Files & Actions ════════ -->
+  <div class="panel">
+    <div class="panel-title">◈ Files &amp; Actions</div>
+    <div class="panel-body">
+
+      <div class="section-head">Target file</div>
+      <div class="file-row">
+        <input type="text" id="filename-input" value="actions/test_main.json" placeholder="actions/file.json"/>
+      </div>
+
+      <div class="section-head" style="margin-top:14px;">Known files</div>
+      <div id="file-list">
+        <div class="file-item" onclick="selectFile('actions/test_main.json', this)">
+          <span class="file-icon">▸</span> test_main.json
+        </div>
+        <div class="file-item" onclick="selectFile('actions/trail_2.json', this)">
+          <span class="file-icon">▸</span> trail_2.json
+        </div>
+      </div>
+
+      <hr class="divider" style="margin-top:14px;"/>
+
+      <div class="section-head">Record frame settings</div>
+      <div class="rec-params">
+        <div class="param-group">
+          <div class="param-label">Delay (s)</div>
+          <input type="number" id="rec-delay" value="0.5" step="0.1" min="0"/>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Duration (s)</div>
+          <input type="number" id="rec-duration" value="1.0" step="0.1" min="0"/>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Speed</div>
+          <input type="number" id="rec-speed" value="200" step="10" min="0" max="1023"/>
+        </div>
+      </div>
+      <div class="rec-params" style="margin-top:8px;">
+        <div class="param-group">
+          <div class="param-label">Actuator Action</div>
+          <select id="rec-act-action">
+            <option value="">None</option>
+            <option value="extend">Extend</option>
+            <option value="retract">Retract</option>
+            <option value="stop">Stop</option>
+          </select>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Distance (mm)</div>
+          <input type="number" id="rec-act-dist" placeholder="optional" step="5" min="0" max="100"/>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Actuator Dur (s)</div>
+          <input type="number" id="rec-act-dur" placeholder="optional" step="0.1" min="0"/>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <button class="btn-rec" onclick="cmdRecord()" style="width:100%;">⏺ Record Frame</button>
+      </div>
+      <div id="frame-count" style="margin-top:6px; font-family:var(--mono); font-size:11px; color:var(--dim); text-align:center;"></div>
+
+      <hr class="divider" style="margin-top:14px;"/>
+
+      <!-- ── Global torque control ── -->
+      <div class="section-head">Torque — All Motors</div>
+      <div style="display:flex; gap:6px;">
+        <button class="btn-freeze" onclick="cmdFreezeAll()" style="flex:1;" title="Enable torque on all servos">⚙ Freeze All</button>
+        <button class="btn-neutral" onclick="cmdNeutralAll()" style="flex:1;" title="Disable torque on all servos">⊘ Neutral All</button>
+      </div>
+      <div style="margin-top:6px; font-family:var(--mono); font-size:10px; color:var(--dim); line-height:1.6;">
+        Per-motor freeze/neutral available on each servo card →
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ════════ CENTER: Transport + Servo Monitor ════════ -->
+  <div class="main-area">
+
+    <!-- Status bar -->
+    <div class="status-bar">
+      <div class="stat-item">
+        <span class="stat-key">TARGET</span>
+        <span class="stat-val" id="stat-target">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-key">LATENCY</span>
+        <span class="stat-val" id="stat-latency">—</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-key">UPDATES</span>
+        <span class="stat-val" id="stat-updates">0</span>
+      </div>
+      <div class="stat-item">
+        <span class="stat-key">WS</span>
+        <span class="stat-val" id="stat-ws">—</span>
+      </div>
+    </div>
+
+    <!-- Transport -->
+    <div class="transport">
+      <div class="file-row">
+        <span class="file-label">▸ FILE</span>
+        <input type="text" id="play-file-display" readonly
+               style="color:var(--accent); cursor:default;"
+               value="actions/test_main.json"/>
+      </div>
+      <div class="btn-row">
+        <button class="btn-play"    onclick="cmdPlay(false)">▶ Play</button>
+        <button class="btn-loop"    onclick="cmdPlay(true)">⟳ Loop</button>
+        <button class="btn-stop"    onclick="cmdStop('soft')">■ Stop</button>
+        <button class="btn-stop"    onclick="cmdStop('hard')" style="opacity:0.7;">⚡ Hard Stop</button>
+        <button class="btn-default" onclick="cmdStatus()" style="margin-left:auto;">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- ── Servo cards ── -->
+    <div class="servo-grid" id="servo-grid">
+      <!-- Populated by buildServoCards() -->
+    </div>
+
+  </div>
+
+  <!-- ════════ RIGHT: Actuator + Logs ════════ -->
+  <div class="panel right" style="display:flex; flex-direction:column;">
+
+    <!-- Actuator -->
+    <div class="panel-title">◈ Linear Actuator</div>
+    <div style="padding:12px; border-bottom:1px solid var(--border); flex-shrink:0;">
+      <div class="actuator-visual">
+        <div class="actuator-track">
+          <div class="actuator-fill" id="act-fill"></div>
+        </div>
+        <div class="actuator-pct" id="act-pct">—</div>
+      </div>
+      <div class="act-params">
+        <div class="param-group">
+          <div class="param-label">Distance (mm) — leave blank for full stroke</div>
+          <input type="number" id="act-dist" placeholder="e.g. 20" step="5" min="0" max="100"/>
+        </div>
+        <div class="param-group">
+          <div class="param-label">Duration (s) — leave blank for auto</div>
+          <input type="number" id="act-dur" placeholder="e.g. 4.0" step="0.5" min="0"/>
+        </div>
+      </div>
+      <div class="actuator-btns" style="margin-top:10px;">
+        <button class="btn-extend"  onclick="cmdActuator('extend')">↑ Extend</button>
+        <button class="btn-retract" onclick="cmdActuator('retract')">↓ Retract</button>
+        <button class="btn-stop" onclick="cmdActuator('stop')" style="grid-column:span 2;">■ Stop Actuator</button>
+      </div>
+    </div>
+
+    <!-- Logs -->
+    <div class="panel-title" style="display:flex; align-items:center; gap:8px;">
+      <span>◈ Event Log</span>
+    </div>
+    <div class="log-toolbar">
+      <input class="log-filter" type="text" placeholder="Filter logs…" id="log-filter" oninput="filterLogs()"/>
+      <button class="log-clear" onclick="exportLogs()">Export</button>
+      <button class="log-clear" onclick="clearLogs()">✕ Clear</button>
+    </div>
+    <div class="log-area" id="log-area"></div>
+
+  </div>
+</div>
+
+<!-- Config modal -->
+<div class="modal-overlay" id="config-modal">
+  <div class="modal">
+    <div class="modal-title">◈ Connection Config</div>
+    <div class="modal-row">
+      <div class="modal-label">API Base URL</div>
+      <input type="text" id="cfg-base" value="http://localhost:8000"/>
+    </div>
+    <div class="modal-row">
+      <div class="modal-label">WebSocket URL</div>
+      <input type="text" id="cfg-ws" value="ws://localhost:8000/ws"/>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-play" onclick="applyConfig()" style="flex:1;">Apply &amp; Reconnect</button>
+      <button class="btn-default" onclick="closeConfig()" style="flex:1;">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════ TIMELINE EDITOR DRAWER ══════════ -->
+<div class="te-drawer" id="te-drawer">
+
+  <!-- Title bar -->
+  <div class="te-titlebar">
+    <span class="te-title">⊞ Timeline Editor</span>
+    <div class="te-toolbar">
+      <select id="te-file-select" style="min-width:210px;" title="Select a JSON file available on the server"></select>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teRefreshServerFiles()" title="Refresh available JSON files">Refresh Files</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teLoadFromServer()" title="Load a JSON file from the server">Load from Jetson</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teSaveToServer()" title="Save modified JSON to the server">Save to Jetson</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teSaveJSON()" title="Download modified JSON">Download JSON</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teDuplicateFrame()" title="Duplicate selected frame">Dupe</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;" onclick="teAddFrameAfter()" title="Insert blank frame after selection">Insert</button>
+      <button class="btn-stop"    style="font-size:11px;padding:5px 10px;" onclick="teDeleteFrame()"   title="Delete selected frame">Delete</button>
+      <button class="btn-default" style="font-size:11px;padding:5px 10px;color:var(--dim);" onclick="toggleTimeline()">Close</button>
+    </div>
+  </div>
+
+  <!-- Horizontal frame strip -->
+  <div class="te-strip-wrap">
+    <div class="te-strip" id="te-strip">
+      <div class="te-no-selection" style="height:56px;">— no file loaded —</div>
+    </div>
+  </div>
+
+  <!-- Frame editor area -->
+  <div class="te-editor-area" id="te-editor-area">
+    <div class="te-no-selection">tap a frame block above to edit it</div>
+  </div>
+
+  <!-- Bottom action bar -->
+  <div class="te-action-bar">
+    <button class="btn-freeze"  style="font-size:11px;" onclick="cmdFreezeAll()" title="Enable torque on all servos">Freeze All</button>
+    <button class="btn-neutral" style="font-size:11px;" onclick="cmdNeutralAll()" title="Disable torque on all servos">Neutral All</button>
+    <button class="btn-play"    style="font-size:11px;" onclick="tePlaySelectedFrame(false)">Play Frame</button>
+    <button class="btn-loop"    style="font-size:11px;" onclick="tePlaySelectedFrame(true)">Loop Frame</button>
+    <button class="btn-play"    style="font-size:11px;" onclick="teApplyAndPlay(false)">▶ Play This File</button>
+    <button class="btn-loop"    style="font-size:11px;" onclick="teApplyAndPlay(true)">⟳ Loop This File</button>
+    <button class="btn-neutral" style="font-size:11px;" onclick="teMoveFrameLeft()">◀ Move Left</button>
+    <button class="btn-neutral" style="font-size:11px;" onclick="teMoveFrameRight()">▶ Move Right</button>
+    <span id="te-status" style="font-family:var(--mono);font-size:10px;color:var(--dim);margin-left:auto;align-self:center;"></span>
+  </div>
+
+</div>
+
+<!-- Toast -->
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+// State
+// ═══════════════════════════════════════════════════════════
+let API_BASE = 'http://localhost:8000';
+let WS_URL   = 'ws://localhost:8000/ws';
+let ws = null;
+let updateCount   = 0;
+let servoPositions = {};
+let actuatorMm     = 0;
+let actuatorKnown  = true;
+let actuatorPendingMm = null;
+let actuatorPendingDurationSec = 0;
+let logEntries     = [];
+let isPlaying      = false;
+let lastPlayingState = null;
+let playbackTrace = null;
+
+const ACTUATOR_MAX_MM = 100;
+const ACTUATOR_SPEED_MM_PER_SEC = 5;
+
+// Tracks torque state per servo for the chip display. null = unknown.
+const torqueState = {};  // { sid: true | false | null }
+
+const SERVO_IDS = [1,2,3,4,5,6,7];
+const ABS_IDS   = [1,2,3,4,5];
+const REL_IDS   = [6,7];
+
+// ═══════════════════════════════════════════════════════════
+// Init
+// ═══════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  SERVO_IDS.forEach(id => { torqueState[id] = null; });
+  buildServoCards();
+  setActuatorVisual(0, 0);
+  connectWS();
+  syncFile();
+  document.getElementById('filename-input').addEventListener('input', syncFile);
+  teRefreshServerFiles();
+});
+
+function syncFile() {
+  const f = document.getElementById('filename-input').value;
+  document.getElementById('play-file-display').value = f;
+}
+
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function setActuatorVisual(targetMm, durationSec = 0.6) {
+  const fillEl = document.getElementById('act-fill');
+  const pctEl  = document.getElementById('act-pct');
+  if (!fillEl || !pctEl) return;
+
+  actuatorKnown = true;
+  actuatorMm = clamp(targetMm, 0, ACTUATOR_MAX_MM);
+  const pct = (actuatorMm / ACTUATOR_MAX_MM) * 100;
+
+  pctEl.classList.remove('estimated');
+  fillEl.style.transitionDuration = `${Math.max(durationSec, 0)}s`;
+  fillEl.style.height = `${pct}%`;
+  pctEl.textContent = `${actuatorMm.toFixed(0)} mm / ${pct.toFixed(0)}%`;
+}
+
+function setActuatorEstimated(targetMm, durationSec = 0.6) {
+  const fillEl = document.getElementById('act-fill');
+  const pctEl  = document.getElementById('act-pct');
+  if (!fillEl || !pctEl) return;
+
+  actuatorKnown = false;
+  actuatorMm = clamp(targetMm, 0, ACTUATOR_MAX_MM);
+  const pct = (actuatorMm / ACTUATOR_MAX_MM) * 100;
+
+  pctEl.classList.add('estimated');
+  fillEl.style.transitionDuration = `${Math.max(durationSec, 0)}s`;
+  fillEl.style.height = `${pct}%`;
+  pctEl.textContent = `~${actuatorMm.toFixed(0)} mm / ${pct.toFixed(0)}%`;
+}
+
+function selectFile(f, el) {
+  document.getElementById('filename-input').value = f;
+  syncFile();
+  document.querySelectorAll('.file-item').forEach(e => e.classList.remove('active'));
+  if (el) el.classList.add('active');
+  const teSelect = document.getElementById('te-file-select');
+  if (teSelect) teSelect.value = f;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Servo card builder
+// ═══════════════════════════════════════════════════════════
+function buildServoCards() {
+  const grid = document.getElementById('servo-grid');
+  grid.innerHTML = '';
+  SERVO_IDS.forEach(id => {
+    const isRel = REL_IDS.includes(id);
+    const card  = document.createElement('div');
+    card.className = 'servo-card';
+    card.id = `servo-card-${id}`;
+
+    card.innerHTML = `
+      <div class="servo-row1">
+        <div class="servo-id ${isRel ? 'rel' : ''}">${id}</div>
+        <div class="servo-info">
+          <div class="servo-pos" id="spos-${id}">-</div>
+          <div class="servo-deg" id="sdeg-${id}">-</div>
+          <div class="servo-mode">${isRel ? 'relative | S6/S7' : 'absolute | S1-S5'}</div>
+        </div>
+        <div class="servo-bar-wrap">
+          <div class="servo-bar-bg">
+            <div class="servo-bar ${isRel ? 'rel' : ''}" id="sbar-${id}" style="width:50%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="servo-row2">
+        <div class="servo-row2-move">
+          <span class="s-label">raw</span>
+          <input class="s-inp" type="number" id="sinput-${id}"
+                 placeholder="${isRel ? '+/-off' : 'raw'}"
+                 step="${isRel ? 10 : 50}" style="width:58px !important;"
+                 oninput="syncServoInputs(${id}, 'raw')"/>
+          <span class="s-label">deg</span>
+          <input class="s-inp" type="number" id="sdeginput-${id}"
+                 placeholder="deg" step="0.1" style="width:58px !important;"
+                 oninput="syncServoInputs(${id}, 'deg')"/>
+          <span class="s-label">spd</span>
+          <input class="s-inp speed-inp" type="number" id="sspeed-${id}"
+                 value="200" min="0" max="1023" step="10" style="width:48px !important;"/>
+          <button class="btn-default s-btn" onclick="cmdServoMove(${id})" title="Send move command">GO</button>
+        </div>
+
+        <div class="servo-vsep"></div>
+
+        <div class="servo-row2-torque">
+          <button class="btn-freeze s-btn" onclick="cmdServoFreeze(${id})"
+                  title="Enable torque on servo ${id} only">FRZ</button>
+          <button class="btn-neutral s-btn" onclick="cmdServoNeutral(${id})"
+                  title="Disable torque on servo ${id} only">NEU</button>
+          <span class="torque-chip" id="tchip-${id}">-</span>
+        </div>
+      </div>
+    `;
+    grid.appendChild(card);
+  });
+}
+
+function _s16(v) {
+  return v < 32768 ? v : v - 65536;
+}
+
+function servoRawToDeg(raw) {
+  return _s16(raw) * 0.088;
+}
+
+function servoDegToRaw(deg) {
+  return Math.round(deg / 0.088);
+}
+
+function syncServoInputs(id, source) {
+  const rawEl = document.getElementById(`sinput-${id}`);
+  const degEl = document.getElementById(`sdeginput-${id}`);
+  if (!rawEl || !degEl) return;
+
+  if (source === 'raw') {
+    const raw = parseInt(rawEl.value, 10);
+    degEl.value = Number.isFinite(raw) ? servoRawToDeg(raw).toFixed(1) : '';
+  } else {
+    const deg = parseFloat(degEl.value);
+    rawEl.value = Number.isFinite(deg) ? String(servoDegToRaw(deg)) : '';
+  }
+}
+
+function updateServoCard(id, rawVal) {
+  servoPositions[id] = rawVal;
+  const deg  = servoRawToDeg(rawVal).toFixed(1);
+  const sign = parseFloat(deg) >= 0 ? '+' : '';
+
+  const posEl = document.getElementById(`spos-${id}`);
+  const degEl = document.getElementById(`sdeg-${id}`);
+  const barEl = document.getElementById(`sbar-${id}`);
+
+  if (posEl) posEl.textContent = rawVal;
+  if (degEl) degEl.textContent = `${sign}${deg}??`;
+
+  const rawInput = document.getElementById(`sinput-${id}`);
+  const degInput = document.getElementById(`sdeginput-${id}`);
+  if (rawInput && document.activeElement !== rawInput && rawInput.value === '') rawInput.value = String(rawVal);
+  if (degInput && document.activeElement !== degInput && degInput.value === '') degInput.value = Number(deg).toFixed(1);
+
+  const pct = Math.max(0, Math.min(100, (rawVal / 4095) * 100));
+  if (barEl) barEl.style.width = pct + '%';
+}
+
+function setTorqueChip(sid, enabled) {
+  torqueState[sid] = enabled;
+  const chip = document.getElementById(`tchip-${sid}`);
+  if (!chip) return;
+  if (enabled === true) {
+    chip.textContent = 'TQ ON';
+    chip.className   = 'torque-chip on';
+  } else if (enabled === false) {
+    chip.textContent = 'TQ OFF';
+    chip.className   = 'torque-chip off';
+  } else {
+    chip.textContent = '—';
+    chip.className   = 'torque-chip';
+  }
+}
+
+function setAllTorqueChips(enabled) {
+  SERVO_IDS.forEach(id => setTorqueChip(id, enabled));
+}
+
+// ═══════════════════════════════════════════════════════════
+// WebSocket
+// ═══════════════════════════════════════════════════════════
+function connectWS() {
+  setConnStatus('connecting');
+  try {
+    ws = new WebSocket(WS_URL);
+  } catch(e) {
+    setConnStatus('offline');
+    setTimeout(connectWS, 5000);
+    return;
+  }
+
+  ws.onopen = () => {
+    setConnStatus('online');
+    addLog('INFO', 'WebSocket connected');
+    document.getElementById('stat-ws').textContent  = 'OPEN';
+    document.getElementById('stat-ws').className    = 'stat-val ok';
+  };
+
+  ws.onmessage = (ev) => {
+    try { handleWsMessage(JSON.parse(ev.data)); } catch(e) {}
+  };
+
+  ws.onclose = () => {
+    setConnStatus('offline');
+    addLog('WARN', 'WebSocket disconnected – retrying in 3s');
+    document.getElementById('stat-ws').textContent = 'CLOSED';
+    document.getElementById('stat-ws').className   = 'stat-val err';
+    setTimeout(connectWS, 3000);
+  };
+
+  ws.onerror = () => setConnStatus('offline');
+}
+
+function handleWsMessage(msg) {
+  if (msg.type === 'log') {
+    renderLogEntry(msg.entry);
+    logEntries.push(msg.entry);
+  } else if (msg.type === 'log_history') {
+    logEntries = msg.entries || [];
+    rebuildLogArea();
+  } else if (msg.type === 'status') {
+    applyStatus(msg.data);
+  }
+  // 'cmd' echo — nothing extra needed
+}
+
+function applyStatus(data) {
+  updateCount++;
+  document.getElementById('stat-updates').textContent = updateCount;
+
+  isPlaying = data.is_playing;
+  if (lastPlayingState !== null && lastPlayingState !== isPlaying) {
+    addLog('INFO', `Robot playback state -> ${isPlaying ? 'PLAYING' : 'IDLE'}`, {
+      source: 'status',
+      positions_count: data.positions ? Object.keys(data.positions).length : 0
+    });
+    if (!isPlaying) stopPlaybackTrace('robot reported idle');
+  }
+  lastPlayingState = isPlaying;
+  const pill = document.getElementById('state-pill');
+  pill.textContent = isPlaying ? 'PLAYING' : 'IDLE';
+  pill.className   = 'state-pill' + (isPlaying ? ' playing' : '');
+
+  if (data.positions) {
+    Object.entries(data.positions).forEach(([sid, val]) => {
+      updateServoCard(parseInt(sid), val);
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// API helper
+// ═══════════════════════════════════════════════════════════
+async function api(method, path, body) {
+  const t0 = performance.now();
+  try {
+    const opts = { method, headers: { 'Content-Type': 'application/json' } };
+    if (body !== undefined) opts.body = JSON.stringify(body);
+    const resp = await fetch(API_BASE + path, opts);
+    const dt   = Math.round(performance.now() - t0);
+    document.getElementById('stat-latency').textContent = dt + 'ms';
+    document.getElementById('stat-target').textContent  = JETSON_IP_DISPLAY;
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      toast(err.error || err.detail || `HTTP ${resp.status}`, 'err');
+      return null;
+    }
+    return await resp.json();
+  } catch(e) {
+    toast('Connection failed – is the server running?', 'err');
+    setConnStatus('offline');
+    return null;
+  }
+}
+
+let JETSON_IP_DISPLAY = '192.168.99.1';
+fetch(API_BASE + '/api/config')
+  .then(r => r.json())
+  .then(cfg => {
+    JETSON_IP_DISPLAY = `${cfg.jetson_ip}:${cfg.jetson_port}`;
+    document.getElementById('stat-target').textContent = JETSON_IP_DISPLAY;
+  })
+  .catch(() => {});
+
+// ═══════════════════════════════════════════════════════════
+// Transport commands
+// ═══════════════════════════════════════════════════════════
+async function cmdPlay(loop) {
+  const file = document.getElementById('filename-input').value.trim();
+  if (!file) { toast('Enter a filename first', 'warn'); return; }
+  addLog('INFO', `Playback request -> ${file}`, { source: 'transport', mode: loop ? 'loop' : 'once', file });
+  const resp = await api('POST', '/api/play', { file, loop });
+  if (resp?.status === 'started') {
+    toast(`▶ ${loop ? 'LOOP' : 'PLAY'} started`, 'ok');
+    addLog('INFO', `Playback started -> ${file}`, { source: 'transport', mode: loop ? 'loop' : 'once', response: resp });
+    void startPlaybackTraceForFile(file, loop);
+  }
+  else if (resp?.error) toast(resp.error, 'err');
+}
+
+async function cmdStop(mode) {
+  const resp = await api('POST', '/api/stop', { mode });
+  if (resp) {
+    stopPlaybackTrace(`stop requested (${mode})`);
+    addLog('WARN', `Playback stop requested (${mode})`, { source: 'transport', mode, response: resp });
+    toast(`■ Stopped (${mode})`, 'ok');
+  }
+}
+
+async function cmdStatus() {
+  const resp = await api('GET', '/api/status');
+  if (resp) applyStatus(resp);
+}
+
+async function cmdRecord() {
+  const file     = document.getElementById('filename-input').value.trim();
+  const delay    = parseFloat(document.getElementById('rec-delay').value)    || 0.5;
+  const duration = parseFloat(document.getElementById('rec-duration').value) || 1.0;
+  const speed    = parseInt(document.getElementById('rec-speed').value)      || 200;
+  const actuator = readActuatorInputs('rec-act');
+  if (!file) { toast('Enter a filename first', 'warn'); return; }
+  const body = { file, delay, duration, speed };
+  if (actuator) body.actuator = actuator;
+  const resp = await api('POST', '/api/record', body);
+  if (resp?.status === 'recorded') {
+    toast(`Frame #${resp.frame_count} recorded`, 'ok');
+    document.getElementById('frame-count').textContent = `Total frames: ${resp.frame_count}`;
+    addLog('INFO', `Recorded frame to ${file}${actuator ? ` with actuator ${actuator.action}` : ''}`, {
+      source: 'record',
+      file,
+      frame_count: resp.frame_count,
+      delay,
+      duration,
+      speed,
+      actuator
+    });
+    await teReloadFromCurrentFile();
+  } else if (resp?.error) toast(resp.error, 'err');
+}
+
+// ═══════════════════════════════════════════════════════════
+// Global torque (all motors)
+// ═══════════════════════════════════════════════════════════
+async function cmdFreezeAll() {
+  const resp = await api('POST', '/api/freeze');
+  if (resp) {
+    toast('⚙ Torque ON — all motors', 'ok');
+    setAllTorqueChips(true);
+  }
+}
+
+async function cmdNeutralAll() {
+  const resp = await api('POST', '/api/neutral');
+  if (resp) {
+    toast('⊘ Torque OFF — all motors (free-move)', 'warn');
+    setAllTorqueChips(false);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Per-servo commands
+// ═══════════════════════════════════════════════════════════
+
+/**
+ * Send a position command to one servo.
+ * Abs servos (1-5): value = raw 16-bit goal position.
+ * Rel servos (6-7): value = signed offset from current position.
+ */
+async function cmdServoMove(sid) {
+  const valRaw = document.getElementById(`sinput-${sid}`).value;
+  if (valRaw === '') { toast(`S${sid}: enter a value first`, 'warn'); return; }
+
+  const value = parseInt(valRaw);
+  const speed = parseInt(document.getElementById(`sspeed-${sid}`).value) || 200;
+
+  if (isNaN(value)) { toast(`S${sid}: invalid value`, 'err'); return; }
+
+  const resp = await api('POST', '/api/servo/move', { servo_id: sid, value, speed });
+  if (!resp) return;
+
+  if (resp.status === 'ok') {
+    const modeStr = REL_IDS.includes(sid) ? `offset ${value >= 0 ? '+' : ''}${value}` : `raw ${resp.raw}`;
+    toast(`S${sid} → ${modeStr}  (${resp.degrees}°)`, 'ok');
+  } else {
+    toast(resp.error || `S${sid} move failed`, 'err');
+  }
+}
+
+/**
+ * Enable torque on a single servo (freeze).
+ * Uses /api/servo/torque with enable: true.
+ */
+async function cmdServoFreeze(sid) {
+  const resp = await api('POST', '/api/servo/torque', { servo_id: sid, enable: true });
+  if (!resp) return;
+  if (resp.error) {
+    toast(`S${sid} freeze failed: ${resp.error}`, 'err');
+  } else {
+    toast(`S${sid} ⚙ Torque ON`, 'ok');
+    setTorqueChip(sid, true);
+  }
+}
+
+/**
+ * Disable torque on a single servo (neutral / free-move).
+ * Uses /api/servo/torque with enable: false.
+ */
+async function cmdServoNeutral(sid) {
+  const resp = await api('POST', '/api/servo/torque', { servo_id: sid, enable: false });
+  if (!resp) return;
+  if (resp.error) {
+    toast(`S${sid} neutral failed: ${resp.error}`, 'err');
+  } else {
+    toast(`S${sid} ⊘ Torque OFF`, 'warn');
+    setTorqueChip(sid, false);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Actuator
+// ═══════════════════════════════════════════════════════════
+async function cmdActuator(action) {
+  const distRaw = document.getElementById('act-dist').value;
+  const durRaw  = document.getElementById('act-dur').value;
+  const body    = { action };
+  if (distRaw !== '') body.distance_mm = parseFloat(distRaw);
+  if (durRaw  !== '') body.duration    = parseFloat(durRaw);
+
+  const hasExplicitDistance = body.distance_mm != null;
+  const requestedMm = hasExplicitDistance
+    ? clamp(body.distance_mm, 0, ACTUATOR_MAX_MM)
+    : ACTUATOR_MAX_MM;
+  const startMm = actuatorMm;
+
+  if (action === 'extend' || action === 'retract') {
+    const targetMm = !hasExplicitDistance
+      ? (action === 'extend' ? ACTUATOR_MAX_MM : 0)
+      : (action === 'extend'
+          ? clamp(startMm + requestedMm, 0, ACTUATOR_MAX_MM)
+          : clamp(startMm - requestedMm, 0, ACTUATOR_MAX_MM));
+    const travelMm = Math.abs(targetMm - startMm);
+    const durationSec = body.duration != null
+      ? Math.max(body.duration, 0)
+      : (travelMm / ACTUATOR_SPEED_MM_PER_SEC);
+
+    actuatorPendingMm = targetMm;
+    actuatorPendingDurationSec = durationSec;
+    setActuatorEstimated(targetMm, durationSec);
+  } else if (action === 'stop') {
+    actuatorPendingMm = actuatorMm;
+    actuatorPendingDurationSec = 0;
+  }
+
+  const resp = await api('POST', '/api/actuator', body);
+  if (!resp) {
+    return;
+  }
+
+  if (resp.status === 'ok') {
+    if (action === 'extend' || action === 'retract') {
+      setActuatorVisual(actuatorPendingMm ?? actuatorMm, actuatorPendingDurationSec);
+    } else if (action === 'stop') {
+      setActuatorVisual(actuatorMm, 0);
+    }
+
+    actuatorPendingMm = null;
+    actuatorPendingDurationSec = 0;
+    const distLabel = body.distance_mm != null ? ` ${body.distance_mm}mm` : ' full';
+    addLog('INFO', `Actuator ${action.toUpperCase()}${action !== 'stop' ? distLabel : ''}`, {
+      source: 'actuator',
+      request: body,
+      target_mm: actuatorPendingMm ?? actuatorMm
+    });
+    toast(`Actuator ${action.toUpperCase()}${action !== 'stop' ? distLabel : ''}`, 'ok');
+  } else {
+    if (action === 'stop') setActuatorEstimated(actuatorMm, 0);
+    toast(resp.error || `Actuator ${action} failed`, 'err');
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Log
+// ═══════════════════════════════════════════════════════════
+function addLog(level, msg, details = null) {
+  const now = new Date();
+  const ts  = now.toTimeString().slice(0, 8) + '.' + String(now.getMilliseconds()).padStart(3,'0');
+  const entry = { ts, level, msg, details };
+  logEntries.push(entry);
+  renderLogEntry(entry);
+}
+
+function renderLogEntry(entry) {
+  const filter = document.getElementById('log-filter').value.toLowerCase();
+  if (filter && !entry.msg.toLowerCase().includes(filter) &&
+                !entry.level.toLowerCase().includes(filter)) return;
+
+  const area     = document.getElementById('log-area');
+  const atBottom = area.scrollHeight - area.clientHeight <= area.scrollTop + 20;
+
+  const row = document.createElement('div');
+  row.className     = 'log-entry';
+  row.dataset.msg   = entry.msg;
+  row.dataset.level = entry.level;
+  if (entry.details) row.title = JSON.stringify(entry.details, null, 2);
+  row.innerHTML = `
+    <span class="log-ts">${entry.ts}</span>
+    <span class="log-lvl ${entry.level}">${entry.level}</span>
+    <span class="log-msg">${entry.msg}</span>
+  `;
+  area.appendChild(row);
+  if (atBottom) area.scrollTop = area.scrollHeight;
+}
+
+function rebuildLogArea() {
+  const area = document.getElementById('log-area');
+  area.innerHTML = '';
+  logEntries.forEach(renderLogEntry);
+  area.scrollTop = area.scrollHeight;
+}
+
+function filterLogs() { rebuildLogArea(); }
+
+function clearLogs() {
+  logEntries = [];
+  document.getElementById('log-area').innerHTML = '';
+}
+
+function exportLogs() {
+  const recordedFrameCount = logEntries.reduce((maxCount, entry) => {
+    const count = Number(entry?.details?.frame_count);
+    return Number.isFinite(count) ? Math.max(maxCount, count) : maxCount;
+  }, 0);
+  const payload = {
+    exported_at: new Date().toISOString(),
+    target: JETSON_IP_DISPLAY,
+    count: logEntries.length,
+    recorded_frame_count: recordedFrameCount,
+    logs: logEntries
+  };
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `carbot_logs_${stamp}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  addLog('INFO', `Exported ${logEntries.length} log entries`, { source: 'logs', filename: a.download });
+}
+
+function normalizeTimelinePayload(content) {
+  if (Array.isArray(content)) {
+    return { frames: content, frameCount: content.length };
+  }
+  if (content && typeof content === 'object' && Array.isArray(content.frames)) {
+    const parsedCount = Number(content.frame_count);
+    const frameCount = Number.isFinite(parsedCount) ? parsedCount : content.frames.length;
+    return { frames: content.frames, frameCount };
+  }
+  return null;
+}
+
+function buildTimelinePayload(frames) {
+  return {
+    frame_count: frames.length,
+    frames
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// Connection status
+// ═══════════════════════════════════════════════════════════
+function setConnStatus(state) {
+  const dot   = document.getElementById('conn-dot');
+  const label = document.getElementById('conn-label');
+  dot.className = 'dot ' + state;
+  label.textContent = state === 'online'  ? 'CONNECTED' :
+                      state === 'offline' ? 'OFFLINE'   : 'CONNECTING…';
+}
+
+// ═══════════════════════════════════════════════════════════
+// Config modal
+// ═══════════════════════════════════════════════════════════
+function openConfig() {
+  document.getElementById('cfg-base').value = API_BASE;
+  document.getElementById('cfg-ws').value   = WS_URL;
+  document.getElementById('config-modal').classList.add('open');
+}
+function closeConfig() {
+  document.getElementById('config-modal').classList.remove('open');
+}
+function applyConfig() {
+  API_BASE = document.getElementById('cfg-base').value.replace(/\/$/, '');
+  WS_URL   = document.getElementById('cfg-ws').value;
+  closeConfig();
+  if (ws) ws.close();
+  setTimeout(connectWS, 200);
+  toast('Config applied – reconnecting', 'ok');
+}
+document.getElementById('config-modal').addEventListener('click', function(e) {
+  if (e.target === this) closeConfig();
+});
+
+// ═══════════════════════════════════════════════════════════
+// Toast
+// ═══════════════════════════════════════════════════════════
+let toastTimer;
+function toast(msg, type = 'ok') {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.className   = `toast ${type} show`;
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 3000);
+}
+
+function readActuatorInputs(prefix) {
+  const action = document.getElementById(`${prefix}-action`)?.value || '';
+  const distRaw = document.getElementById(`${prefix}-dist`)?.value ?? '';
+  const durRaw = document.getElementById(`${prefix}-dur`)?.value ?? '';
+  if (!action) return null;
+
+  const actuator = { action };
+  if (distRaw !== '') {
+    const distance = parseFloat(distRaw);
+    if (!Number.isFinite(distance) || distance < 0) {
+      toast('Actuator distance must be a non-negative number', 'warn');
+      return null;
+    }
+    actuator.distance_mm = distance;
+  }
+  if (durRaw !== '') {
+    const duration = parseFloat(durRaw);
+    if (!Number.isFinite(duration) || duration < 0) {
+      toast('Actuator duration must be a non-negative number', 'warn');
+      return null;
+    }
+    actuator.duration = duration;
+  }
+  return actuator;
+}
+
+async function refreshServerFileList(selectedPath = '') {
+  const resp = await api('GET', '/api/files');
+  if (!resp?.files) return [];
+
+  const select = document.getElementById('te-file-select');
+  const fileList = document.getElementById('file-list');
+  const currentSelection = selectedPath || document.getElementById('filename-input').value.trim() || teFilename;
+
+  if (select) {
+    select.innerHTML = '';
+    if (resp.files.length === 0) {
+      select.innerHTML = '<option value="">No JSON files found</option>';
+    } else {
+      resp.files.forEach(path => {
+        const opt = document.createElement('option');
+        opt.value = path;
+        opt.textContent = path;
+        select.appendChild(opt);
+      });
+      select.value = resp.files.includes(currentSelection) ? currentSelection : resp.files[0];
+    }
+  }
+
+  if (fileList) {
+    fileList.innerHTML = '';
+    resp.files.forEach(path => {
+      const item = document.createElement('div');
+      item.className = 'file-item';
+      item.onclick = () => selectFile(path, item);
+      item.innerHTML = `<span class="file-icon">></span> ${path.split('/').pop()}`;
+      fileList.appendChild(item);
+      if (path === (select?.value || currentSelection)) item.classList.add('active');
+    });
+  }
+
+  if (select?.value) selectFile(select.value, fileList?.querySelector('.file-item.active') || null);
+  return resp.files;
+}
+
+async function teRefreshServerFiles() {
+  const files = await refreshServerFileList();
+  if (files.length) addLog('INFO', `Jetson file list refreshed (${files.length} files)`);
+}
+
+function summarizeServoTargets(frame) {
+  const servos = frame?.servos || {};
+  return SERVO_IDS.map((sid) => {
+    const servo = servos[sid];
+    if (!servo) return `S${sid}:n/a`;
+    if (servo.type === 'absolute') return `S${sid}:raw ${servo.value ?? 0}`;
+    const sign = servo.sign || '+';
+    return `S${sid}:diff ${sign}${servo.diff ?? 0}`;
+  }).join(', ');
+}
+
+function summarizeActuator(frame) {
+  if (!frame?.actuator) return 'none';
+  const actuator = frame.actuator;
+  const dist = actuator.distance_mm != null ? ` ${actuator.distance_mm}mm` : '';
+  const dur = actuator.duration != null ? ` ${actuator.duration}s` : '';
+  return `${actuator.action}${dist}${dur}`;
+}
+
+function stopPlaybackTrace(reason = '') {
+  if (!playbackTrace) return;
+  playbackTrace.timeouts.forEach((timeoutId) => clearTimeout(timeoutId));
+  if (reason) {
+    addLog('WARN', `Playback trace stopped: ${reason}`, {
+      source: 'playback_trace',
+      label: playbackTrace.label,
+      loop: playbackTrace.loop
+    });
+  }
+  playbackTrace = null;
+}
+
+function schedulePlaybackTraceCycle(trace, cycleNumber = 1) {
+  if (!playbackTrace || playbackTrace.token !== trace.token) return;
+  const frames = trace.frames || [];
+  let elapsedMs = 0;
+
+  frames.forEach((frame, idx) => {
+    const delayMs = Math.max(0, Math.round((parseFloat(frame.delay) || 0) * 1000));
+    const durationMs = Math.max(0, Math.round((parseFloat(frame.duration) || 0) * 1000));
+    const frameNumber = idx + 1;
+    const details = {
+      source: 'playback_trace',
+      label: trace.label,
+      cycle: cycleNumber,
+      frame: frameNumber,
+      total_frames: frames.length,
+      delay_ms: delayMs,
+      duration_ms: durationMs,
+      speed: frame.speed ?? null,
+      actuator: frame.actuator || null,
+      servo_targets: summarizeServoTargets(frame)
+    };
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} queued`, details);
+    }, elapsedMs));
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} start`, details);
+    }, elapsedMs + delayMs));
+
+    trace.timeouts.push(setTimeout(() => {
+      if (!playbackTrace || playbackTrace.token !== trace.token) return;
+      addLog('INFO', `Frame ${frameNumber}/${frames.length} complete`, details);
+    }, elapsedMs + delayMs + durationMs));
+
+    elapsedMs += delayMs + durationMs;
+  });
+
+  trace.timeouts.push(setTimeout(() => {
+    if (!playbackTrace || playbackTrace.token !== trace.token) return;
+    if (trace.loop) {
+      addLog('INFO', `Playback cycle ${cycleNumber} complete, restarting`, {
+        source: 'playback_trace',
+        label: trace.label,
+        cycle: cycleNumber
+      });
+      schedulePlaybackTraceCycle(trace, cycleNumber + 1);
+    } else {
+      addLog('INFO', 'Playback trace complete', {
+        source: 'playback_trace',
+        label: trace.label,
+        cycles: cycleNumber,
+        total_frames: frames.length
+      });
+      playbackTrace = null;
+    }
+  }, elapsedMs));
+}
+
+function startPlaybackTrace(frames, label, loop = false) {
+  stopPlaybackTrace();
+  if (!Array.isArray(frames) || frames.length === 0) {
+    addLog('WARN', `Playback trace unavailable for ${label}`, { source: 'playback_trace', reason: 'no frames' });
+    return;
+  }
+
+  const trace = {
+    token: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    frames: JSON.parse(JSON.stringify(frames)),
+    label,
+    loop,
+    timeouts: []
+  };
+  playbackTrace = trace;
+  addLog('INFO', `Playback trace armed for ${label}`, {
+    source: 'playback_trace',
+    frame_count: frames.length,
+    loop
+  });
+  schedulePlaybackTraceCycle(trace, 1);
+}
+
+async function loadFramesForPlayback(file) {
+  if (teFilename === file && Array.isArray(teFrames) && teFrames.length > 0) {
+    return JSON.parse(JSON.stringify(teFrames));
+  }
+  const resp = await api('GET', `/api/file?path=${encodeURIComponent(file)}`);
+  const normalized = normalizeTimelinePayload(resp?.content);
+  if (!normalized) return null;
+  return normalized.frames;
+}
+
+async function startPlaybackTraceForFile(file, loop) {
+  const frames = await loadFramesForPlayback(file);
+  if (!frames) {
+    addLog('WARN', `Could not load frame trace for ${file}`, { source: 'playback_trace', file });
+    return;
+  }
+  startPlaybackTrace(frames, file, loop);
+}
+
+
+// ═══════════════════════════════════════════════════════════
+// TIMELINE EDITOR
+// ═══════════════════════════════════════════════════════════
+
+// ── State ──
+let teFrames       = [];   // array of frame objects (deep clones from JSON)
+let teSelected     = -1;   // index of selected frame
+let teFilename     = '';   // filename of loaded JSON
+let teDirtyLogged  = false;
+
+const TE_PX_PER_SEC = 36;  // pixels per second for duration blocks
+const TE_MIN_FRAME  = 48;  // min frame block width in px
+const TE_MIN_DELAY  = 24;  // min delay block width in px
+
+// ── Toggle ──
+function toggleTimeline() {
+  const drawer = document.getElementById('te-drawer');
+  drawer.classList.toggle('open');
+}
+
+// Timeline load from server
+async function teLoadFromServer(path, autoOpen = true) {
+  const typedPath = document.getElementById('filename-input').value.trim();
+  const selectedPath = path || typedPath || document.getElementById('te-file-select').value;
+  if (!selectedPath) { toast('Select a JSON file first', 'warn'); return; }
+  const resp = await api('GET', `/api/file?path=${encodeURIComponent(selectedPath)}`);
+  if (!resp?.content) return;
+  teLoadJSON(resp.content, resp.path || selectedPath, autoOpen);
+  selectFile(resp.path || selectedPath, null);
+  addLog('INFO', `Loaded timeline from Jetson: ${resp.path || selectedPath}`);
+}
+
+async function teReloadFromCurrentFile() {
+  const pathValue = teFilename || document.getElementById('filename-input').value.trim();
+  if (!pathValue) return;
+  await teLoadFromServer(pathValue, false);
+}
+
+function teLoadJSON(frames, fname, autoOpen = true) {
+  const normalized = normalizeTimelinePayload(frames);
+  if (!normalized) {
+    toast('JSON must be an array or { frames: [] } payload', 'err');
+    return;
+  }
+  teFrames   = JSON.parse(JSON.stringify(normalized.frames));
+  teSelected = teFrames.length > 0 ? 0 : -1;
+  teFilename = fname || teFilename || 'timeline.json';
+  teDirtyLogged = false;
+  teRenderStrip();
+  teRenderEditor();
+  teSetStatus(`${normalized.frameCount} frames loaded - ${teFilename}`);
+  toast(`Timeline: ${normalized.frameCount} frames loaded`, 'ok');
+  if (autoOpen) {
+    document.getElementById('te-drawer').classList.add('open');
+  }
+}
+
+// ── Status label ──
+function teSetStatus(msg) {
+  const el = document.getElementById('te-status');
+  if (el) el.textContent = msg;
+}
+
+// ── Render the horizontal strip ──
+function teRenderStrip() {
+  const strip = document.getElementById('te-strip');
+  strip.innerHTML = '';
+
+  if (teFrames.length === 0) {
+    strip.innerHTML = '<div class="te-no-selection" style="height:56px;">— no frames —</div>';
+    return;
+  }
+
+  teFrames.forEach((fr, idx) => {
+    const delay    = parseFloat(fr.delay)    || 0;
+    const duration = parseFloat(fr.duration) || 1;
+
+    // ── Delay block ──
+    const delayW = Math.max(TE_MIN_DELAY, delay * TE_PX_PER_SEC);
+    const delayEl = document.createElement('div');
+    delayEl.className = 'te-block-delay';
+    delayEl.style.width = delayW + 'px';
+    delayEl.title = `Frame ${idx + 1} delay: ${delay}s`;
+    delayEl.innerHTML = `
+      <span class="te-label-top">DLY</span>
+      <span class="te-label-val">${delay.toFixed(1)}s</span>
+    `;
+    strip.appendChild(delayEl);
+
+    // ── Frame block ──
+    const frameW = Math.max(TE_MIN_FRAME, duration * TE_PX_PER_SEC);
+    const frameEl = document.createElement('div');
+    frameEl.className = 'te-block-frame' +
+      (idx === teSelected ? ' selected' : '') +
+      (fr.actuator ? ' has-actuator' : '');
+    frameEl.style.width = frameW + 'px';
+    frameEl.title = `Frame ${idx + 1} | dur: ${duration}s | spd: ${fr.speed}`;
+    frameEl.dataset.idx = idx;
+    frameEl.onclick = () => teSelectFrame(idx);
+    frameEl.innerHTML = `
+      <span class="te-frame-idx">F${idx + 1}</span>
+      <span class="te-frame-dur">${duration.toFixed(1)}s</span>
+      <span class="te-frame-spd">spd:${fr.speed || 100}</span>
+      ${fr.actuator ? `<span class="te-frame-actbadge">ACT</span>` : ''}
+    `;
+    strip.appendChild(frameEl);
+  });
+
+  // scroll selected frame into view
+  if (teSelected >= 0) {
+    const sel = strip.querySelector('.te-block-frame.selected');
+    if (sel) sel.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  }
+}
+
+// ── Select a frame ──
+function teSelectFrame(idx) {
+  // Flush current edits before switching
+  if (teSelected >= 0 && teSelected < teFrames.length) teFlushEdits(teSelected);
+  teSelected = idx;
+  teRenderStrip();
+  teRenderEditor();
+  teSetStatus(`Selected frame ${idx + 1}`);
+}
+
+// Timeline frame editor
+function teRenderEditor() {
+  const area = document.getElementById('te-editor-area');
+  if (teSelected < 0 || teSelected >= teFrames.length) {
+    area.innerHTML = '<div class="te-no-selection">tap a frame block above to edit it</div>';
+    return;
+  }
+
+  const fr  = teFrames[teSelected];
+  const N   = teSelected + 1;
+  const tot = teFrames.length;
+
+  let actHtml = '';
+  if (fr.actuator) {
+    actHtml = `
+      <div class="te-act-section">
+        <div class="te-act-title">Actuator</div>
+        <div class="te-act-row">
+          <select id="te-act-action" onchange="teMarkDirty()">
+            <option value="extend" ${fr.actuator.action==='extend' ? 'selected' : ''}>Extend</option>
+            <option value="retract" ${fr.actuator.action==='retract' ? 'selected' : ''}>Retract</option>
+            <option value="stop" ${fr.actuator.action==='stop' ? 'selected' : ''}>Stop</option>
+          </select>
+        </div>
+        <div class="te-act-row">
+          <span class="te-field-label" style="white-space:nowrap;">Dist (mm)</span>
+          <input class="te-inp" type="number" id="te-act-dist" step="5" min="0" max="100"
+            value="${fr.actuator.distance_mm ?? ''}" placeholder="auto" onchange="teMarkDirty()"/>
+        </div>
+        <div class="te-act-row">
+          <span class="te-field-label" style="white-space:nowrap;">Dur (s)</span>
+          <input class="te-inp" type="number" id="te-act-dur" step="0.5" min="0"
+            value="${fr.actuator.duration ?? ''}" placeholder="auto" onchange="teMarkDirty()"/>
+        </div>
+        <button class="te-act-none-btn" onclick="teRemoveActuator()">Remove Actuator</button>
+      </div>
+    `;
+  } else {
+    actHtml = `
+      <button class="btn-default" style="font-size:10px;padding:4px 8px;margin-top:4px;"
+        onclick="teAddActuator()">+ Add Actuator</button>
+    `;
+  }
+
+  const servos = fr.servos || {};
+  let rowsHtml = '';
+  [1,2,3,4,5,6,7].forEach(sid => {
+    const s = servos[sid] || {};
+    const isAbs = (s.type === 'absolute');
+    const isRel = (s.type === 'relative');
+    const badge = isRel ? 'rel' : 'abs';
+    const typeLabel = isRel ? 'REL' : 'ABS';
+
+    if (isAbs) {
+      const rawValue = s.value ?? 0;
+      const degValue = servoRawToDeg(rawValue).toFixed(1);
+      rowsHtml += `
+        <tr>
+          <td class="te-sid"><span class="te-sid-badge ${badge}">${sid}</span></td>
+          <td><span class="te-type-badge ${badge}">${typeLabel}</span></td>
+          <td><input class="te-inp wide" type="number" id="te-s${sid}-val" step="50"
+                value="${rawValue}" onchange="teSyncServoEditor(${sid}, 'raw')" title="Absolute goal position (raw)"/></td>
+          <td><input class="te-inp" type="number" id="te-s${sid}-deg" step="0.1"
+                value="${degValue}" onchange="teSyncServoEditor(${sid}, 'deg')" title="Absolute goal position (degrees)"/></td>
+          <td style="color:var(--dim);font-size:9px;padding-left:6px;">DEG</td>
+        </tr>`;
+    } else if (isRel) {
+      const diffValue = s.diff ?? 0;
+      const signedDiff = (s.sign || '+') === '-' ? -Math.abs(diffValue) : Math.abs(diffValue);
+      const degValue = servoRawToDeg(signedDiff).toFixed(1);
+      rowsHtml += `
+        <tr>
+          <td class="te-sid"><span class="te-sid-badge ${badge}">${sid}</span></td>
+          <td><span class="te-type-badge ${badge}">${typeLabel}</span></td>
+          <td><input class="te-inp" type="number" id="te-s${sid}-diff" step="10"
+                value="${diffValue}" onchange="teSyncServoEditor(${sid}, 'raw')" title="Relative diff"/></td>
+          <td>
+            <select class="te-inp sign-inp" id="te-s${sid}-sign" onchange="teSyncServoEditor(${sid}, 'raw')">
+              <option value="+" ${(s.sign||'+')==='+' ? 'selected' : ''}>+</option>
+              <option value="-" ${(s.sign||'+')==='-' ? 'selected' : ''}>-</option>
+            </select>
+            <input class="te-inp" type="number" id="te-s${sid}-deg" step="0.1"
+                value="${degValue}" onchange="teSyncServoEditor(${sid}, 'deg')" title="Relative diff (degrees)"/>
+          </td>
+          <td><input class="te-inp" type="number" id="te-s${sid}-ref" step="10"
+                value="${s.ref_pos ?? 0}" onchange="teMarkDirty()" title="Reference position"/></td>
+        </tr>`;
+    } else {
+      rowsHtml += `
+        <tr>
+          <td class="te-sid"><span class="te-sid-badge abs">${sid}</span></td>
+          <td><span style="font-size:9px;color:var(--dim);">?</span></td>
+          <td colspan="3" style="color:var(--dim);font-size:10px;">-</td>
+        </tr>`;
+    }
+  });
+
+  area.innerHTML = `
+    <div class="te-meta-col">
+      <div class="te-meta-title">Frame ${N} / ${tot}</div>
+
+      <div class="te-field-row">
+        <div class="te-field-label">Delay (s)</div>
+        <input type="number" id="te-delay" step="0.1" min="0"
+          value="${fr.delay ?? 0.5}" onchange="teMarkDirty()"/>
+      </div>
+      <div class="te-field-row">
+        <div class="te-field-label">Duration (s)</div>
+        <input type="number" id="te-duration" step="0.1" min="0.1"
+          value="${fr.duration ?? 1.0}" onchange="teMarkDirty()"/>
+      </div>
+      <div class="te-field-row">
+        <div class="te-field-label">Speed</div>
+        <input type="number" id="te-speed" step="10" min="0" max="1023"
+          value="${fr.speed ?? 100}" onchange="teMarkDirty()"/>
+      </div>
+
+      ${actHtml}
+    </div>
+
+    <div class="te-servo-col">
+      <div class="te-meta-title" style="color:var(--accent);">Servo Targets</div>
+      <table class="te-servo-table">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>TYPE</th>
+            <th>RAW / DIFF</th>
+            <th>SIGN / DEG</th>
+            <th>REF POS / META</th>
+          </tr>
+        </thead>
+        <tbody>${rowsHtml}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ── Flush editor inputs back into teFrames[idx] ──
+function teFlushEdits(idx) {
+  if (idx < 0 || idx >= teFrames.length) return;
+  const fr = teFrames[idx];
+
+  const delay    = document.getElementById('te-delay');
+  const duration = document.getElementById('te-duration');
+  const speed    = document.getElementById('te-speed');
+
+  if (delay)    fr.delay    = parseFloat(delay.value)    || 0;
+  if (duration) fr.duration = parseFloat(duration.value) || 1;
+  if (speed)    fr.speed    = parseInt(speed.value)      || 100;
+
+  // Actuator
+  if (fr.actuator) {
+    const act    = document.getElementById('te-act-action');
+    const dist   = document.getElementById('te-act-dist');
+    const dur    = document.getElementById('te-act-dur');
+    if (act)  fr.actuator.action      = act.value;
+    if (dist) {
+      const dv = dist.value.trim();
+      fr.actuator.distance_mm = dv !== '' ? parseFloat(dv) : undefined;
+    }
+    if (dur) {
+      const dv = dur.value.trim();
+      fr.actuator.duration = dv !== '' ? parseFloat(dv) : undefined;
+    }
+  }
+
+  // Servos
+  const servos = fr.servos || {};
+  [1,2,3,4,5,6,7].forEach(sid => {
+    const s = servos[sid];
+    if (!s) return;
+    if (s.type === 'absolute') {
+      const el = document.getElementById(`te-s${sid}-val`);
+      if (el) s.value = parseInt(el.value) || 0;
+    } else if (s.type === 'relative') {
+      const diffEl = document.getElementById(`te-s${sid}-diff`);
+      const signEl = document.getElementById(`te-s${sid}-sign`);
+      const refEl  = document.getElementById(`te-s${sid}-ref`);
+      if (diffEl) s.diff    = parseInt(diffEl.value) || 0;
+      if (signEl) s.sign    = signEl.value;
+      if (refEl)  s.ref_pos = parseInt(refEl.value)  || 0;
+    }
+  });
+
+  fr.servos = servos;
+}
+
+let teDirty = false;
+function teMarkDirty() {
+  teDirty = true;
+  if (!teDirtyLogged && teSelected >= 0) {
+    addLog('INFO', `Timeline edited: frame ${teSelected + 1}`);
+    teDirtyLogged = true;
+  }
+}
+
+function teSyncServoEditor(sid, source) {
+  const diffEl = document.getElementById(`te-s${sid}-diff`);
+  const signEl = document.getElementById(`te-s${sid}-sign`);
+  const valEl = document.getElementById(`te-s${sid}-val`);
+  const degEl = document.getElementById(`te-s${sid}-deg`);
+
+  if (!degEl) { teMarkDirty(); return; }
+
+  if (source === 'deg') {
+    const deg = parseFloat(degEl.value);
+    if (!Number.isFinite(deg)) {
+      if (valEl) valEl.value = '';
+      if (diffEl) diffEl.value = '';
+      teMarkDirty();
+      return;
+    }
+    const raw = servoDegToRaw(deg);
+    if (valEl) {
+      valEl.value = String(raw);
+    } else if (diffEl && signEl) {
+      signEl.value = raw < 0 ? '-' : '+';
+      diffEl.value = String(Math.abs(raw));
+    }
+  } else {
+    if (valEl) {
+      const raw = parseInt(valEl.value, 10);
+      degEl.value = Number.isFinite(raw) ? servoRawToDeg(raw).toFixed(1) : '';
+    } else if (diffEl && signEl) {
+      const diff = parseInt(diffEl.value, 10);
+      const signedRaw = (signEl.value === '-' ? -1 : 1) * (Number.isFinite(diff) ? Math.abs(diff) : 0);
+      degEl.value = Number.isFinite(diff) ? servoRawToDeg(signedRaw).toFixed(1) : '';
+    }
+  }
+  teMarkDirty();
+}
+
+// ── Save / flush before any action ──
+function teCommitCurrent() {
+  if (teSelected >= 0) teFlushEdits(teSelected);
+  teDirty = false;
+  teDirtyLogged = false;
+}
+
+// ── Save JSON ──
+function teSaveJSON() {
+  teCommitCurrent();
+  if (teFrames.length === 0) { toast('No frames to save', 'warn'); return; }
+  const payload = buildTimelinePayload(teFrames);
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a    = document.createElement('a');
+  a.href     = URL.createObjectURL(blob);
+  a.download = teFilename || 'timeline_edited.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+  addLog('INFO', `Downloaded timeline JSON: ${teFilename || 'timeline_edited.json'}`);
+  toast('JSON saved!', 'ok');
+}
+
+async function teSaveToServer() {
+  teCommitCurrent();
+  if (teFrames.length === 0) { toast('No frames to save', 'warn'); return; }
+  const typedPath = document.getElementById('filename-input').value.trim();
+  const pathValue = typedPath || teFilename || document.getElementById('te-file-select').value;
+  if (!pathValue) { toast('Select a target JSON file first', 'warn'); return; }
+  const payload = buildTimelinePayload(teFrames);
+  const resp = await api('POST', '/api/file', { path: pathValue, content: payload });
+  if (!resp) return;
+  teFilename = resp.path || pathValue;
+  selectFile(teFilename, null);
+  await refreshServerFileList(teFilename);
+  addLog('INFO', `Saved timeline to Jetson: ${teFilename}`);
+  teSetStatus(`Saved ${teFrames.length} frames - ${teFilename}`);
+  toast('Timeline saved to Jetson', 'ok');
+}
+
+// Timeline editing actions
+function teAddFrameAfter() {
+  teCommitCurrent();
+  let newFrame;
+  if (teSelected >= 0 && teSelected < teFrames.length) {
+    newFrame = JSON.parse(JSON.stringify(teFrames[teSelected]));
+    delete newFrame.actuator;
+  } else {
+    newFrame = {
+      delay: 0.5, duration: 1.0, speed: 100,
+      servos: {
+        "1":{"type":"absolute","value":2048},
+        "2":{"type":"absolute","value":2048},
+        "3":{"type":"absolute","value":2048},
+        "4":{"type":"absolute","value":2048},
+        "5":{"type":"absolute","value":2048},
+        "6":{"type":"relative","diff":0,"sign":"+","ref_pos":0},
+        "7":{"type":"relative","diff":0,"sign":"+","ref_pos":0}
+      }
+    };
+  }
+  const insertAt = teSelected >= 0 ? teSelected + 1 : teFrames.length;
+  teFrames.splice(insertAt, 0, newFrame);
+  teSelected = insertAt;
+  teRenderStrip();
+  teRenderEditor();
+  teSetStatus(`Inserted frame at position ${insertAt + 1}`);
+  addLog('INFO', `Timeline: inserted frame ${insertAt + 1}`);
+}
+
+function teDuplicateFrame() {
+  teCommitCurrent();
+  if (teSelected < 0 || teSelected >= teFrames.length) { toast('Select a frame first', 'warn'); return; }
+  const clone = JSON.parse(JSON.stringify(teFrames[teSelected]));
+  teFrames.splice(teSelected + 1, 0, clone);
+  teSelected = teSelected + 1;
+  teRenderStrip();
+  teRenderEditor();
+  teSetStatus(`Duplicated frame -> F${teSelected + 1}`);
+  addLog('INFO', `Timeline: duplicated frame ${teSelected + 1}`);
+  toast('Frame duplicated', 'ok');
+}
+
+function teDeleteFrame() {
+  if (teSelected < 0 || teSelected >= teFrames.length) { toast('No frame selected', 'warn'); return; }
+  teFrames.splice(teSelected, 1);
+  teSelected = Math.min(teSelected, teFrames.length - 1);
+  teRenderStrip();
+  teRenderEditor();
+  teSetStatus(`${teFrames.length} frames remaining`);
+  addLog('INFO', 'Timeline: deleted selected frame');
+  toast('Frame deleted', 'ok');
+}
+
+function teMoveFrameLeft() {
+  teCommitCurrent();
+  if (teSelected <= 0) return;
+  [teFrames[teSelected], teFrames[teSelected - 1]] = [teFrames[teSelected - 1], teFrames[teSelected]];
+  teSelected--;
+  teRenderStrip();
+  teRenderEditor();
+  addLog('INFO', `Timeline: moved frame to ${teSelected + 1}`);
+}
+
+function teMoveFrameRight() {
+  teCommitCurrent();
+  if (teSelected < 0 || teSelected >= teFrames.length - 1) return;
+  [teFrames[teSelected], teFrames[teSelected + 1]] = [teFrames[teSelected + 1], teFrames[teSelected]];
+  teSelected++;
+  teRenderStrip();
+  teRenderEditor();
+  addLog('INFO', `Timeline: moved frame to ${teSelected + 1}`);
+}
+
+function teAddActuator() {
+  teFlushEdits(teSelected);
+  if (teSelected < 0) return;
+  teFrames[teSelected].actuator = { action: 'extend', distance_mm: 40 };
+  teRenderStrip();
+  teRenderEditor();
+  addLog('INFO', `Timeline: added actuator to frame ${teSelected + 1}`);
+}
+
+function teRemoveActuator() {
+  teFlushEdits(teSelected);
+  if (teSelected < 0) return;
+  delete teFrames[teSelected].actuator;
+  teRenderStrip();
+  teRenderEditor();
+  addLog('INFO', `Timeline: removed actuator from frame ${teSelected + 1}`);
+}
+
+async function teApplyAndPlay(loop) {
+  teCommitCurrent();
+  if (teFrames.length === 0) { toast('No frames in timeline', 'warn'); return; }
+  await teSaveToServer();
+  const file = teFilename || document.getElementById('filename-input').value.trim();
+  if (!file) return;
+  const resp = await api('POST', '/api/play', { file, loop });
+  if (resp?.status === 'started') {
+    addLog('INFO', `Timeline playback ${loop ? 'loop' : 'once'}: ${file}`);
+    startPlaybackTrace(teFrames, file, loop);
+    toast(`${loop ? 'Loop' : 'Play'} started`, 'ok');
+  }
+}
+
+async function tePlaySelectedFrame(loop) {
+  teCommitCurrent();
+  if (teSelected < 0 || teSelected >= teFrames.length) { toast('Select a frame first', 'warn'); return; }
+  const frame = teFrames[teSelected];
+  const resp = await api('POST', '/api/play_frame', { frame, loop });
+  if (!resp) return;
+  if (!resp.error) {
+    addLog('INFO', `Frame playback: F${teSelected + 1} ${loop ? '(loop)' : '(once)'}`);
+    startPlaybackTrace([frame], `frame_${teSelected + 1}`, loop);
+    toast(`Frame ${teSelected + 1} ${loop ? 'looping' : 'playing'}`, 'ok');
+  }
+}
+
+// ── Keyboard nav in timeline ──
+document.addEventListener('keydown', (e) => {
+  if (!document.getElementById('te-drawer').classList.contains('open')) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowLeft')  { teMoveFrameLeft();  e.preventDefault(); }
+  if (e.key === 'ArrowRight') { teMoveFrameRight(); e.preventDefault(); }
+  if (e.key === 'Delete' || e.key === 'Backspace') { teDeleteFrame(); e.preventDefault(); }
+});
+
+document.addEventListener('keydown', (e) => {
+  // Never fire single-key robot shortcuts when Ctrl/Cmd/Alt combos are used.
+  // This prevents accidental record on Ctrl+R browser refresh.
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
+
+  if (e.key === 'p') { cmdPlay(false); e.preventDefault(); }
+  if (e.key === 'l') { cmdPlay(true);  e.preventDefault(); }
+  if (e.key === 's') { cmdStop('soft'); e.preventDefault(); }
+  if (e.key === 'S') { cmdStop('hard'); e.preventDefault(); }
+  if (e.key === 'r') { cmdRecord(); e.preventDefault(); }
+  if (e.key === 'n') { cmdNeutralAll(); e.preventDefault(); }
+  if (e.key === 'f') { cmdFreezeAll(); e.preventDefault(); }
+});
+</script>
+</body>
+</html>
