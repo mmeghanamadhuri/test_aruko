@@ -65,6 +65,9 @@ class VisionConfig:
     model_id: str
     model_path: str
     runtime: str
+    trt_engine_path: str
+    trt_auto_export: bool
+    trt_precision: str
     camera_indices: List[int]
     confidence_threshold: float
     infer_interval_sec: float
@@ -125,8 +128,20 @@ class VisionConfig:
 
 
         runtime = os.environ.get("VISION_RUNTIME", "embedded").strip().lower()
-        if runtime not in ("embedded", "http", "yolo"):
+        if runtime not in ("embedded", "http", "yolo", "yolo_tensorrt"):
             runtime = "embedded"
+        trt_precision = os.environ.get("VISION_TRT_PRECISION", "fp16").strip().lower()
+        if trt_precision not in ("fp16", "fp32", "int8"):
+            trt_precision = "fp16"
+        trt_auto_export = os.environ.get("VISION_TRT_AUTO_EXPORT", "0").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+
+
+
 
 
 
@@ -191,8 +206,13 @@ class VisionConfig:
 
 
 
+<<<<<<< HEAD
         v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "45"))
         v_extra_wait = float(os.environ.get("VISION_OFFSET_V_EXTRA_WAIT_SEC", "3.3333333"))
+=======
+        v_extra = float(os.environ.get("VISION_OFFSET_V_EXTRA_MM", "30"))
+        v_extra_wait = float(os.environ.get("VISION_OFFSET_V_EXTRA_WAIT_SEC", "1.2"))
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
 
@@ -278,6 +298,9 @@ class VisionConfig:
             model_id=os.environ.get("ROBOFLOW_MODEL_ID", "").strip(),
             model_path=os.environ.get("VISION_MODEL_PATH", "best.pt").strip(),
             runtime=runtime,
+            trt_engine_path=os.environ.get("VISION_TRT_ENGINE_PATH", "").strip(),
+            trt_auto_export=trt_auto_export,
+            trt_precision=trt_precision,
             camera_indices=_parse_camera_indices(
                 os.environ.get("CARBOT_VISION_CAMERAS", "0")
             ),
@@ -298,16 +321,26 @@ class VisionConfig:
             offset_v_flip=v_flip,
             offset_v_extra_mm=v_extra,
             offset_v_extra_wait_sec=v_extra_wait,
+<<<<<<< HEAD
             offset_settle_h_ticks=int(os.environ.get("VISION_OFFSET_SETTLE_H_TICKS", "3")),
             offset_v_wait_sec=float(os.environ.get("VISION_OFFSET_V_WAIT_SEC", "3.8888889")),
             offset_settle_press_sec=float(os.environ.get("VISION_OFFSET_PRESS_WAIT_SEC", "1.1111111")),
+=======
+            offset_settle_h_ticks=int(os.environ.get("VISION_OFFSET_SETTLE_H_TICKS", "2")),
+            offset_v_wait_sec=float(os.environ.get("VISION_OFFSET_V_WAIT_SEC", "2.2")),
+            offset_settle_press_sec=float(os.environ.get("VISION_OFFSET_PRESS_WAIT_SEC", "0.6")),
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
             press_json_rel=os.environ.get("VISION_PRESS_JSON", "actions/press.json").strip(),
             revert_json_rel=os.environ.get("VISION_REVERT_JSON", "").strip(),
             pre_press_wrist_servo=int(os.environ.get("VISION_PRE_PRESS_WRIST_SERVO", "5")),
             pre_press_wrist_abs=pw_abs,
             pre_press_wrist_delta=pw_delta,
             pre_press_wrist_speed=int(os.environ.get("VISION_PRE_PRESS_WRIST_SPEED", "396")),
+<<<<<<< HEAD
             pre_press_wrist_wait_sec=float(os.environ.get("VISION_PRE_PRESS_WRIST_WAIT_SEC", "0.8333333")),
+=======
+            pre_press_wrist_wait_sec=float(os.environ.get("VISION_PRE_PRESS_WRIST_WAIT_SEC", "0.45")),
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
             pre_actuator_tilt_servo=int(
                 os.environ.get("VISION_PRE_ACTUATOR_TILT_SERVO", "7").strip() or "7"
             ),
@@ -316,8 +349,13 @@ class VisionConfig:
                 os.environ.get("VISION_PRE_ACTUATOR_TILT_SPEED", "1023").strip() or "1023"
             ),
             pre_actuator_tilt_settle_sec=float(
+<<<<<<< HEAD
                 os.environ.get("VISION_PRE_ACTUATOR_TILT_SETTLE_SEC", "0.1944445").strip()
                 or "0.1944445"
+=======
+                os.environ.get("VISION_PRE_ACTUATOR_TILT_SETTLE_SEC", "0.1").strip()
+                or "0.1"
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
             ),
             post_v_backlash_assist=bl_assist,
             post_v_extend_chunk_mm=post_v_chunk_mm,

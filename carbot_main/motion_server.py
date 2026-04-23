@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # import socket
 # import json
 # import logging
@@ -769,6 +770,9 @@
 #     player = MotionPlayerWrapper(ser)
 #     server = MotionServer(player, arm=arm)
 #     server.start()
+=======
+
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
 import socket
 import json
 import logging
@@ -1540,8 +1544,11 @@ if __name__ == "__main__":
         from actuator import LinearActuator
         arm = LinearActuator(in3_pin=35, in4_pin=37)
         logging.info("LinearActuator initialised on pins 35/37.")
-    except ImportError:
-        logging.warning("actuator.py not found — actuator commands disabled.")
+    except ImportError as e:
+        logging.warning(
+            "Actuator module import failed (%s) — actuator commands disabled.",
+            e,
+        )
     except Exception as e:
         logging.error(f"LinearActuator init failed: {e}")
 

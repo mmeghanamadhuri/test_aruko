@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+import time
 from typing import List, Optional, Tuple, Union
 
 import numpy as np
@@ -78,6 +80,38 @@ class GStreamerCapture:
 Capture = Union[CameraStream, GStreamerCapture]
 
 
+class AsyncCapture:
+    """Background reader that always serves the latest available frame."""
+
+    def __init__(self, base: Capture):
+        self._base = base
+        self._lock = threading.Lock()
+        self._last_frame: Optional[np.ndarray] = None
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._reader, daemon=True)
+        self._thread.start()
+
+    def _reader(self) -> None:
+        while not self._stop.is_set():
+            frame = self._base.read()
+            if frame is None:
+                time.sleep(0.005)
+                continue
+            with self._lock:
+                self._last_frame = frame
+
+    def read(self) -> Optional[np.ndarray]:
+        with self._lock:
+            if self._last_frame is None:
+                return None
+            return self._last_frame.copy()
+
+    def release(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=1.0)
+        self._base.release()
+
+
 def open_gripper_camera() -> Capture:
     """
     Single camera on the arm (first index in ``CARBOT_VISION_CAMERAS``), or
@@ -85,9 +119,19 @@ def open_gripper_camera() -> Capture:
     """
     gst = os.environ.get("CARBOT_VISION_GSTREAMER", "").strip()
     if gst:
-        return GStreamerCapture(gst)
-    first = _parse_first_index(os.environ.get("CARBOT_VISION_CAMERAS", "0"))
-    return CameraStream(first)
+        cap: Capture = GStreamerCapture(gst)
+    else:
+        first = _parse_first_index(os.environ.get("CARBOT_VISION_CAMERAS", "0"))
+        cap = CameraStream(first)
+    use_async = os.environ.get("VISION_CAMERA_ASYNC", "1").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+        "on",
+    )
+    if use_async:
+        return AsyncCapture(cap)
+    return cap
 
 
 def _parse_first_index(raw: str) -> int:

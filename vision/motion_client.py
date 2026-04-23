@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 
 # """JSON-line TCP client for carbot ``motion_server`` (port 5000).
 
@@ -189,6 +190,8 @@
 #     except Exception as e:
 #         log.error("motion_rpc error: %s", e)
 #     return None
+=======
+>>>>>>> b478ef8 (TensorRT driven and overall faster system)
 """JSON-line TCP client for carbot ``motion_server`` (port 5000).
 
 
