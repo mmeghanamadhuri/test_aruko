@@ -17,6 +17,24 @@ from nina.services.startup_service import StartupService
 
 DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
+NEUTRAL_FRAME_DELAY_SEC = 0.2
+NEUTRAL_FRAME_DURATION_SEC = 1.5
+NEUTRAL_FRAME_SPEED = 150
+
+
+def build_neutral_frame() -> dict:
+    """Frame that drives every arm motor to mid-range. Prepended to recordings
+    so playback is always safe regardless of current pose."""
+    return {
+        "delay": NEUTRAL_FRAME_DELAY_SEC,
+        "duration": NEUTRAL_FRAME_DURATION_SEC,
+        "speed": NEUTRAL_FRAME_SPEED,
+        "servos": {
+            str(sid): {"type": "absolute", "value": 2048}
+            for sid in DEFAULT_MOTOR_IDS
+        },
+    }
+
 
 def ensure_motors_ready(dxl: DynamixelManager) -> None:
     dxl.initialize_bus()
@@ -99,10 +117,24 @@ def main() -> None:
     record_action.add_argument("--seconds", type=float, default=5.0, help="Recording duration in seconds")
     record_action.add_argument("--hz", type=float, default=20.0, help="Sampling rate in Hz")
     record_action.add_argument(
+        "--countdown",
+        type=float,
+        default=3.0,
+        help="Seconds to wait after releasing torque before sampling starts",
+    )
+    record_action.add_argument(
+        "--hold-after",
+        action="store_true",
+        help="Re-enable torque after recording so the arm holds the final pose (default off)",
+    )
+    record_action.add_argument(
         "--register",
         action="store_true",
         help="Register action name in manifest after saving JSON",
     )
+
+    sub.add_parser("release-arm", help="Disable torque on all arm motors (free for manual move).")
+    sub.add_parser("hold-arm", help="Enable torque on all arm motors (lock current pose).")
 
     for nav_cmd, nav_help in (
         ("nav-forward", "Drive forward, then stop after --hold seconds."),
@@ -149,15 +181,51 @@ def main() -> None:
 
     if args.command == "record-action":
         try:
-            ensure_motors_ready(dxl)
+            dxl.initialize_bus()
+            health = dxl.run_health_check()
+            if not health.connected:
+                raise SystemExit(
+                    f"Motor health check failed ({health.detected_motors}/{health.expected_motors} motors). {health.detail}"
+                )
+
+            print("Driving arm to neutral start pose...")
+            dxl.set_torque_all(True)
+            try:
+                action_runner.run_named_action(settings.neutral_action_name)
+            except (ValueError, FileNotFoundError) as exc:
+                raise SystemExit(f"Failed to reach neutral start pose: {exc}")
+            time.sleep(0.5)
+
+            print("Releasing torque so the arm can be moved by hand...")
+            dxl.set_torque_all(False)
+
+            countdown = max(0.0, float(args.countdown))
+            if countdown > 0:
+                print(f"Get ready. Recording starts in {countdown:.0f}s...")
+                whole = int(countdown)
+                for remaining in range(whole, 0, -1):
+                    print(f"  {remaining}...")
+                    time.sleep(1.0)
+                leftover = countdown - whole
+                if leftover > 0:
+                    time.sleep(leftover)
 
             interval = 1.0 / args.hz
             sample_count = max(1, int(args.seconds * args.hz))
-            frames = []
+            captured_frames = []
             print(f"Recording '{args.name}' for {args.seconds}s at {args.hz} Hz ({sample_count} samples)...")
             for _ in range(sample_count):
-                frames.append(dxl.capture_frame(duration=interval))
+                captured_frames.append(dxl.capture_frame(duration=interval))
                 time.sleep(interval)
+            print("Recording finished.")
+
+            if args.hold_after:
+                print("Re-enabling torque to hold the final pose.")
+                dxl.set_torque_all(True)
+            else:
+                print("Leaving torque disabled. Use 'hold-arm' to lock the arm.")
+
+            frames = [build_neutral_frame()] + captured_frames
 
             out_path = settings.recordings_dir / f"{args.name}.json"
             payload = {
@@ -167,11 +235,29 @@ def main() -> None:
                 "frames": frames,
             }
             out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-            print(f"Recording saved: {out_path}")
+            print(f"Recording saved: {out_path} ({len(frames)} frames, neutral prepended)")
 
             if args.register:
                 action_runner.register_action(args.name, f"recordings/{args.name}.json")
                 print(f"Registered action '{args.name}' in manifest.")
+        finally:
+            dxl.close()
+        return
+
+    if args.command == "release-arm":
+        try:
+            dxl.initialize_bus()
+            dxl.set_torque_all(False)
+            print("Torque disabled on all arm motors. Arm is free to move.")
+        finally:
+            dxl.close()
+        return
+
+    if args.command == "hold-arm":
+        try:
+            dxl.initialize_bus()
+            dxl.set_torque_all(True)
+            print("Torque enabled on all arm motors. Arm is holding pose.")
         finally:
             dxl.close()
         return
