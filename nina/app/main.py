@@ -130,6 +130,10 @@ def main() -> None:
         help="Playback speed multiplier (1.0 = recorded speed, 2.0 = 2x faster)",
     )
     sub.add_parser("list-actions", help="List available action names.")
+    sub.add_parser(
+        "sync-manifest",
+        help="Scan recordings/ and add any unregistered action JSONs to the manifest.",
+    )
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
     record_action.add_argument("--name", required=True, type=str, help="Action name")
@@ -161,10 +165,12 @@ def main() -> None:
         help="Re-enable torque after recording so the arm holds the final pose (default off)",
     )
     record_action.add_argument(
-        "--register",
-        action="store_true",
-        help="Register action name in manifest after saving JSON",
+        "--no-register",
+        dest="register",
+        action="store_false",
+        help="Skip auto-registering this action in the manifest (default is to register).",
     )
+    record_action.set_defaults(register=True)
 
     sub.add_parser("release-arm", help="Disable torque on all arm motors (free for manual move).")
     sub.add_parser("hold-arm", help="Enable torque on all arm motors (lock current pose).")
@@ -253,6 +259,35 @@ def main() -> None:
         actions = action_runner.list_actions()
         for name, file_path in actions.items():
             print(f"{name}: {file_path}")
+        registered_files = {Path(p).name for p in actions.values()}
+        unregistered = sorted(
+            f for f in settings.recordings_dir.glob("*.json")
+            if f.name not in registered_files
+        )
+        if unregistered:
+            print()
+            print("Unregistered recordings (run 'sync-manifest' to add):")
+            for f in unregistered:
+                print(f"  {f.stem}: recordings/{f.name}")
+        return
+
+    if args.command == "sync-manifest":
+        actions = action_runner.list_actions()
+        registered_files = {Path(p).name for p in actions.values()}
+        added = []
+        for f in sorted(settings.recordings_dir.glob("*.json")):
+            if f.name in registered_files:
+                continue
+            name = f.stem
+            if name in actions:
+                print(f"[skip] '{name}' already registered to a different file ({actions[name]}).")
+                continue
+            action_runner.register_action(name, f"recordings/{f.name}")
+            added.append(name)
+        if added:
+            print(f"Added {len(added)} action(s) to manifest: {', '.join(added)}")
+        else:
+            print("Manifest already up to date.")
         return
 
     if args.command == "record-action":
