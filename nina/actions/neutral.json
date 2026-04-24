@@ -1,0 +1,25 @@
+{
+  "robot": "nina",
+  "description": "Neutral boot pose for all arm servos.",
+  "frame_count": 1,
+  "frames": [
+    {
+      "delay": 0.2,
+      "duration": 0.8,
+      "speed": 200,
+      "servos": {
+        "1": { "type": "absolute", "value": 2048 },
+        "2": { "type": "absolute", "value": 2048 },
+        "3": { "type": "absolute", "value": 2048 },
+        "4": { "type": "absolute", "value": 2048 },
+        "5": { "type": "absolute", "value": 2048 },
+        "6": { "type": "absolute", "value": 2048 },
+        "7": { "type": "absolute", "value": 2048 },
+        "8": { "type": "absolute", "value": 2048 },
+        "9": { "type": "absolute", "value": 2048 },
+        "10": { "type": "absolute", "value": 2048 },
+        "11": { "type": "absolute", "value": 2048 }
+      }
+    }
+  ]
+}

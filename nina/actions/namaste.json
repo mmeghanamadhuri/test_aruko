@@ -1,0 +1,38 @@
+{
+  "robot": "nina",
+  "description": "Example namaste motion placeholder. Tune values on hardware.",
+  "frame_count": 2,
+  "frames": [
+    {
+      "delay": 0.2,
+      "duration": 1.0,
+      "speed": 180,
+      "servos": {
+        "1": { "type": "absolute", "value": 2200 },
+        "2": { "type": "absolute", "value": 1890 },
+        "3": { "type": "absolute", "value": 2100 },
+        "4": { "type": "absolute", "value": 1990 },
+        "5": { "type": "absolute", "value": 2048 },
+        "6": { "type": "absolute", "value": 2048 },
+        "7": { "type": "absolute", "value": 2150 },
+        "8": { "type": "absolute", "value": 1940 },
+        "9": { "type": "absolute", "value": 2048 },
+        "10": { "type": "absolute", "value": 2048 },
+        "11": { "type": "absolute", "value": 2048 }
+      }
+    },
+    {
+      "delay": 0.1,
+      "duration": 0.8,
+      "speed": 150,
+      "servos": {
+        "1": { "type": "absolute", "value": 2250 },
+        "2": { "type": "absolute", "value": 1840 },
+        "3": { "type": "absolute", "value": 2200 },
+        "4": { "type": "absolute", "value": 1890 },
+        "7": { "type": "absolute", "value": 2200 },
+        "8": { "type": "absolute", "value": 1890 }
+      }
+    }
+  ]
+}

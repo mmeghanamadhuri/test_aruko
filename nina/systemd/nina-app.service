@@ -1,0 +1,15 @@
+[Unit]
+Description=Nina Main App
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/nvidia-jetson-platform
+ExecStart=/usr/bin/python3 -m nina.app.main startup
+RemainAfterExit=yes
+Environment=NINA_DXL_PORT=/dev/ttyUSB0
+Environment=NINA_DXL_BAUD=222222
+Environment=NINA_NEUTRAL_ACTION=neutral
+
+[Install]
+WantedBy=multi-user.target

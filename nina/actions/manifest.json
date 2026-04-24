@@ -1,0 +1,7 @@
+{
+  "robot": "nina",
+  "actions": {
+    "neutral": "neutral.json",
+    "namaste": "namaste.json"
+  }
+}
