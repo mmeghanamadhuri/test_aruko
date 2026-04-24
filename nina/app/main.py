@@ -129,6 +129,11 @@ def main() -> None:
         default=1.0,
         help="Playback speed multiplier (1.0 = recorded speed, 2.0 = 2x faster)",
     )
+    run_action.add_argument(
+        "--strict",
+        action="store_true",
+        help="Abort if any expected motor is missing from the bus or from the recording.",
+    )
     sub.add_parser("list-actions", help="List available action names.")
     sub.add_parser(
         "sync-manifest",
@@ -234,8 +239,42 @@ def main() -> None:
     if args.command == "run-action":
         try:
             ensure_motors_ready(dxl)
+
+            actions = action_runner.list_actions()
+            if args.name not in actions:
+                raise SystemExit(f"Unknown action '{args.name}'. Run list-actions to see available names.")
+            action_path = settings.actions_dir / actions[args.name]
+            if not action_path.exists():
+                raise SystemExit(f"Action file not found: {action_path}")
+
+            analysis = dxl.analyze_action_file(action_path)
+            print(
+                f"Action '{args.name}': {analysis['frame_count']} frames, "
+                f"avg {analysis['avg_motors_per_frame']:.1f}/{len(dxl.expected_motor_ids)} motors per frame, "
+                f"min {analysis['min_motors_per_frame']}."
+            )
+            if analysis["motors_missing"]:
+                msg = (
+                    f"[warn] Recording has no goals for motor IDs {analysis['motors_missing']}; "
+                    "those joints will not move during playback. Re-record with the latest forward-fill "
+                    "or run 'repair-action' to seed missing motors."
+                )
+                if args.strict:
+                    raise SystemExit(f"Aborting (--strict). {msg}")
+                print(msg)
+
+            health = dxl.run_health_check()
+            if not health.connected:
+                msg = (
+                    f"[warn] Pre-flight ping: {health.detected_motors}/{health.expected_motors} motors. "
+                    f"{health.detail}. Missing motors will not respond to goal writes."
+                )
+                if args.strict:
+                    raise SystemExit(f"Aborting (--strict). {msg}")
+                print(msg)
+
             speed_scale = max(0.1, float(getattr(args, "speed_scale", 1.0)))
-            action_path = action_runner.run_named_action(args.name, speed_scale=speed_scale)
+            dxl.execute_action_file(action_path, speed_scale=speed_scale)
             scale_note = f" at {speed_scale}x" if speed_scale != 1.0 else ""
             print(f"Action '{args.name}' executed from {action_path}{scale_note}")
         finally:

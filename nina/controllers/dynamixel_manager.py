@@ -104,6 +104,39 @@ class DynamixelManager:
         for frame in frames:
             self._execute_frame(frame, speed_scale=speed_scale)
 
+    def analyze_action_file(self, action_path: Path) -> Dict[str, Any]:
+        """Inspect an action JSON and report which expected motors are
+        actually addressed across all frames. A motor that never appears
+        in any frame will never receive a goal position on playback.
+        """
+        action = json.loads(action_path.read_text(encoding="utf-8"))
+        frames = action.get("frames", [])
+        covered: set = set()
+        per_frame_counts: List[int] = []
+        for frame in frames:
+            servos = frame.get("servos", {}) or {}
+            present_in_frame = 0
+            for raw_sid in servos.keys():
+                try:
+                    sid = int(raw_sid)
+                except (TypeError, ValueError):
+                    continue
+                if sid in self.expected_motor_ids:
+                    covered.add(sid)
+                    present_in_frame += 1
+            per_frame_counts.append(present_in_frame)
+        missing = [sid for sid in self.expected_motor_ids if sid not in covered]
+        avg_motors_per_frame = (
+            sum(per_frame_counts) / len(per_frame_counts) if per_frame_counts else 0.0
+        )
+        return {
+            "frame_count": len(frames),
+            "motors_covered": sorted(covered),
+            "motors_missing": missing,
+            "avg_motors_per_frame": avg_motors_per_frame,
+            "min_motors_per_frame": min(per_frame_counts) if per_frame_counts else 0,
+        }
+
     def capture_frame(self, duration: float, speed: int = 800, delay: float = 0.0) -> Dict[str, Any]:
         """Sample all motor positions into one frame.
 
