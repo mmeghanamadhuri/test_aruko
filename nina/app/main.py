@@ -169,6 +169,14 @@ def main() -> None:
     sub.add_parser("release-arm", help="Disable torque on all arm motors (free for manual move).")
     sub.add_parser("hold-arm", help="Enable torque on all arm motors (lock current pose).")
 
+    repair = sub.add_parser(
+        "repair-action",
+        help="Forward-fill missing motors in an action JSON (fixes recordings with dropped reads).",
+    )
+    repair.add_argument("input", type=str, help="Path to existing action JSON")
+    repair.add_argument("--output", type=str, default=None,
+                        help="Output path (default: overwrite input with .bak backup)")
+
     for nav_cmd, nav_help in (
         ("nav-forward", "Drive forward, then stop after --hold seconds."),
         ("nav-back", "Drive backward, then stop after --hold seconds."),
@@ -284,6 +292,11 @@ def main() -> None:
                 if leftover > 0:
                     time.sleep(leftover)
 
+            print("Priming capture (seeding last-known positions)...")
+            seed = dxl.prime_capture(max_attempts=4)
+            seeded = sum(1 for v in seed.values() if v is not None)
+            print(f"Seeded {seeded}/{len(seed)} motors. Missing: {[s for s, v in seed.items() if v is None] or 'none'}")
+
             interval = 1.0 / args.hz
             sample_count = max(1, int(args.seconds * args.hz))
             motor_speed = max(1, min(1023, int(args.motor_speed)))
@@ -295,7 +308,12 @@ def main() -> None:
             for _ in range(sample_count):
                 captured_frames.append(dxl.capture_frame(duration=interval, speed=motor_speed))
                 time.sleep(interval)
-            print("Recording finished.")
+            stats = dxl.capture_stats()
+            miss_pct = 100.0 * stats["missed_reads"] / max(1, stats["total_reads"])
+            print(
+                f"Recording finished. Read miss rate: {stats['missed_reads']}/{stats['total_reads']} "
+                f"({miss_pct:.1f}%). Tracked motors: {stats['tracked_motors']}."
+            )
 
             if args.hold_after:
                 print("Re-enabling torque to hold the final pose.")
@@ -338,6 +356,49 @@ def main() -> None:
             print("Torque enabled on all arm motors. Arm is holding pose.")
         finally:
             dxl.close()
+        return
+
+    if args.command == "repair-action":
+        in_path = Path(args.input)
+        if not in_path.exists():
+            raise SystemExit(f"Input not found: {in_path}")
+        payload = json.loads(in_path.read_text(encoding="utf-8"))
+        frames = payload.get("frames", [])
+        if not frames:
+            raise SystemExit("No frames in input action file.")
+
+        last_known: dict = {}
+        first_frame_servos = frames[0].get("servos", {}) or {}
+        for sid, spec in first_frame_servos.items():
+            if isinstance(spec, dict) and "value" in spec:
+                last_known[sid] = spec
+        for sid in DEFAULT_MOTOR_IDS:
+            last_known.setdefault(str(sid), {"type": "absolute", "value": 2048})
+
+        filled_count = 0
+        total_slots = 0
+        for frame in frames:
+            servos = frame.setdefault("servos", {})
+            for sid in DEFAULT_MOTOR_IDS:
+                key = str(sid)
+                total_slots += 1
+                if key in servos and isinstance(servos[key], dict) and "value" in servos[key]:
+                    last_known[key] = servos[key]
+                else:
+                    servos[key] = dict(last_known[key])
+                    filled_count += 1
+
+        payload["frame_count"] = len(frames)
+        out_path = Path(args.output) if args.output else in_path
+        if out_path == in_path:
+            backup = in_path.with_suffix(in_path.suffix + ".bak")
+            backup.write_text(in_path.read_text(encoding="utf-8"), encoding="utf-8")
+            print(f"Backup written: {backup}")
+        out_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        miss_pct = 100.0 * filled_count / max(1, total_slots)
+        print(
+            f"Repaired {out_path}: filled {filled_count}/{total_slots} missing motor entries ({miss_pct:.1f}%)."
+        )
         return
 
     if args.command in ("nav-forward", "nav-back", "nav-left", "nav-right",

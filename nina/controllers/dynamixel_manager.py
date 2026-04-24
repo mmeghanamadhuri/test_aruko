@@ -43,6 +43,9 @@ class DynamixelManager:
         self._serial: Optional[Any] = None
         self._is_initialized = False
         self._last_speed: Optional[int] = None
+        self._last_positions: Dict[int, int] = {}
+        self._capture_miss_count: int = 0
+        self._capture_total_reads: int = 0
 
     def initialize_bus(self) -> None:
         if self._serial and getattr(self._serial, "is_open", False):
@@ -102,17 +105,60 @@ class DynamixelManager:
             self._execute_frame(frame, speed_scale=speed_scale)
 
     def capture_frame(self, duration: float, speed: int = 800, delay: float = 0.0) -> Dict[str, Any]:
+        """Sample all motor positions into one frame.
+
+        Reads are inherently jittery on a long half-duplex chain. Rather than
+        dropping motors that fail to respond on a given pass (which makes the
+        recorded frame skip them and leaves them frozen on playback), we fall
+        back to the last successfully read position per motor. Every frame
+        therefore contains every expected motor.
+        """
         self._require_initialized()
-        servos = {}
+        servos: Dict[str, Any] = {}
         for sid in self.expected_motor_ids:
+            self._capture_total_reads += 1
             present = self.read_reg(sid, *REG_PRESENT_POS)
             if present is not None:
-                servos[str(sid)] = {"type": "absolute", "value": self._clamp_pos(present)}
+                value = self._clamp_pos(present)
+                self._last_positions[sid] = value
+            elif sid in self._last_positions:
+                self._capture_miss_count += 1
+                value = self._last_positions[sid]
+            else:
+                self._capture_miss_count += 1
+                continue
+            servos[str(sid)] = {"type": "absolute", "value": value}
         return {
             "delay": delay,
             "duration": duration,
             "speed": speed,
             "servos": servos,
+        }
+
+    def prime_capture(self, max_attempts: int = 3) -> Dict[int, Optional[int]]:
+        """Read every expected motor once before recording starts so the
+        last-known cache is seeded. Returns the seed values per motor.
+        """
+        self._require_initialized()
+        self._last_positions.clear()
+        self._capture_miss_count = 0
+        self._capture_total_reads = 0
+        seed: Dict[int, Optional[int]] = {sid: None for sid in self.expected_motor_ids}
+        for sid in self.expected_motor_ids:
+            for _ in range(max(1, max_attempts)):
+                value = self.read_reg(sid, *REG_PRESENT_POS)
+                if value is not None:
+                    seed[sid] = self._clamp_pos(value)
+                    self._last_positions[sid] = seed[sid]
+                    break
+                time.sleep(0.01)
+        return seed
+
+    def capture_stats(self) -> Dict[str, int]:
+        return {
+            "total_reads": self._capture_total_reads,
+            "missed_reads": self._capture_miss_count,
+            "tracked_motors": len(self._last_positions),
         }
 
     def ping(self, sid: int) -> bool:
