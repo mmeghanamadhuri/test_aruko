@@ -19,11 +19,14 @@ REG_PRESENT_POS = (36, 2)
 POS_MIN = 0
 POS_MAX = 4095
 
-BUS_SETTLE_SEC = 0.25
+BUS_SETTLE_SEC = 0.5
 INTER_PACKET_SEC = 0.004
-PING_RETRIES = 3
+INTER_PING_SEC = 0.008
+HEALTH_CHECK_PASSES = 3
+HEALTH_PASS_REST_SEC = 0.05
+PING_RETRIES = 5
 READ_RETRIES = 4
-PING_TIMEOUT_SEC = 0.08
+PING_TIMEOUT_SEC = 0.15
 READ_TIMEOUT_SEC = 0.05
 WRITE_STATUS_TIMEOUT_SEC = 0.03
 
@@ -58,9 +61,22 @@ class DynamixelManager:
             self._serial.close()
         self._is_initialized = False
 
-    def run_health_check(self) -> HealthReport:
+    def run_health_check(self, passes: int = HEALTH_CHECK_PASSES) -> HealthReport:
         self._require_initialized()
-        reachable = [sid for sid in self.expected_motor_ids if self.ping(sid)]
+        reachable: set = set()
+        passes = max(1, int(passes))
+        for pass_idx in range(passes):
+            for sid in self.expected_motor_ids:
+                if sid in reachable:
+                    continue
+                if self.ping(sid):
+                    reachable.add(sid)
+                time.sleep(INTER_PING_SEC)
+            if len(reachable) == len(self.expected_motor_ids):
+                break
+            if pass_idx < passes - 1:
+                self._robust_clear()
+                time.sleep(HEALTH_PASS_REST_SEC)
         missing = [sid for sid in self.expected_motor_ids if sid not in reachable]
         connected = len(missing) == 0
         detail = "All expected motors reachable." if connected else f"Missing motor IDs: {missing}"

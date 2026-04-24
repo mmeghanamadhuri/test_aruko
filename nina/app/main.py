@@ -109,6 +109,8 @@ def main() -> None:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("startup", help="Initialize motors, run health checks, and go neutral.")
+    health_check = sub.add_parser("health-check", help="Ping every expected motor and print which IDs responded (no torque, no motion).")
+    health_check.add_argument("--passes", type=int, default=3, help="Number of ping passes to attempt (default 3)")
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
     run_action.add_argument(
@@ -184,6 +186,19 @@ def main() -> None:
             action_path = action_runner.run_named_action(args.name, speed_scale=speed_scale)
             scale_note = f" at {speed_scale}x" if speed_scale != 1.0 else ""
             print(f"Action '{args.name}' executed from {action_path}{scale_note}")
+        finally:
+            dxl.close()
+        return
+
+    if args.command == "health-check":
+        try:
+            dxl.initialize_bus()
+            health = dxl.run_health_check(passes=args.passes)
+            print(
+                f"Motors found: {health.detected_motors}/{health.expected_motors}. {health.detail}"
+            )
+            if not health.connected:
+                raise SystemExit(1)
         finally:
             dxl.close()
         return
