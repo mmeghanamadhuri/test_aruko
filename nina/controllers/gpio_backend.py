@@ -11,6 +11,8 @@ and shutdown. NavigationManager owns all logic on top of it.
 """
 
 import logging
+import os
+import warnings
 from typing import Any, Dict, Optional, Protocol
 
 
@@ -49,12 +51,22 @@ class JetsonBackend:
         self._pwm_freq: Dict[int, int] = {}
 
     def setup(self) -> None:
-        try:
-            import Jetson.GPIO as GPIO  # type: ignore
-        except ImportError as exc:
-            raise RuntimeError(
-                "Jetson.GPIO is required on Jetson Nano. Install with: pip install Jetson.GPIO"
-            ) from exc
+        # Hint Jetson.GPIO about the SoC so it skips its carrier-board check
+        # (which prints scary warnings on third-party / custom carrier boards).
+        # Override with NINA_JETSON_MODEL=JETSON_ORIN_NANO etc. for non-Nano hosts.
+        os.environ.setdefault(
+            "JETSON_MODEL_NAME",
+            os.environ.get("NINA_JETSON_MODEL", "JETSON_NANO"),
+        )
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            try:
+                import Jetson.GPIO as GPIO  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "Jetson.GPIO is required on Jetson Nano. Install with: pip install Jetson.GPIO"
+                ) from exc
 
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
