@@ -3,16 +3,30 @@ NavigationManager for Nina (5ft wheeled bot).
 
 Drives 2x JYQD_V7.3E2 BLDC drivers (one per wheel) directly from the Jetson Nano.
 
-JYQD_V7.3E2 control pins (per channel):
-- EL  (enable):    digital input on JYQD - we drive it from Jetson
-- ZF  (direction): digital input on JYQD - HIGH/LOW selects rotation direction
-- VR  (speed):     PWM input on JYQD - 0..100% duty maps to motor speed
-- M / BRK (brake): optional digital input on JYQD - not wired in this build
-- Signal (PG):     pulse OUTPUT from JYQD (Hall feedback) - read-only, not used yet
+The pinout and per-side direction polarity below mirror the known-good
+Raspberry Pi build (carbot navigation_bldc.py) so the Jetson behaves
+identically:
 
-Important: there is NO separate F/R input on JYQD_V7.3E2. Direction is set via
-the ZF pin. There is also no software-controllable brake unless the BRK pin is
-wired, so "brake" here means "disable EL and let the motor coast to a stop".
+  Left wheel : L_EN=BCM18  L_DIR=BCM25  PWM_L=BCM12 (HW PWM0)
+  Right wheel: R_EN=BCM10  R_DIR=BCM22  PWM_R=BCM13 (HW PWM2)
+  Status LED : RED=BCM21   GREEN=BCM20  BLUE=BCM16
+  E-stop     : ESTOP1=BCM17 ESTOP2=BCM5
+
+Direction polarity (matches the Pi):
+  Left  forward => L_DIR HIGH
+  Right forward => R_DIR LOW   (right side is mirrored, so opposite level)
+
+JYQD_V7.3E2 control pins (per channel):
+- EL  (enable)   : digital input on JYQD, we drive it HIGH to enable
+- ZF / DIR       : digital input on JYQD, HIGH/LOW selects rotation
+- VR  (speed)    : PWM input on JYQD, 0..100% duty maps to motor speed
+- M / BRK        : optional digital input, NOT wired in this build
+- Signal (PG)    : pulse OUTPUT from JYQD (Hall feedback), unused
+
+There is NO separate F/R input on this driver. Direction goes through the
+single direction pin (called ZF on some silkscreens, DIR on others).
+There is no software brake unless the BRK pin is wired, so "brake" here
+means disable EL and let the motor coast to a stop.
 
 Hardware PWM on Jetson Nano is only available on:
 - BCM 12 (physical pin 32) -> PWM0
@@ -90,16 +104,16 @@ class NavigationConfig:
     invert_right_dir: bool = False
 
 
-# Default Nina pinout (BCM numbering on Jetson Nano).
-# PWM pins MUST be BCM 12 and BCM 13 to use hardware PWM on Nano.
-# l_dir / r_dir are wired to JYQD ZF (direction). Override via env vars if
-# your physical wiring differs.
+# Default Nina pinout (BCM numbering). These match the working Raspberry Pi
+# build exactly - same physical wires can be moved between Pi and Jetson
+# without resoldering. PWM pins MUST be BCM 12 and BCM 13 to use hardware
+# PWM on Jetson Nano.
 DEFAULT_PINS = NavigationPins(
     l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
-    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "23"))),
+    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
-    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "24"))),
+    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "22"))),
     pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,
     led_green=20,
@@ -301,8 +315,11 @@ class NavigationManager:
             self._backend.set_duty(pins.pwm_r, duty_percent)
 
     def _set_direction(self, side: str, direction: str) -> None:
-        """Write direction to the JYQD ZF pin for the given side, applying
-        per-side polarity inversion."""
+        """Write the direction pin for the given side. Defaults match the
+        proven Pi setup: LEFT forward = HIGH, RIGHT forward = LOW (the
+        right wheel is mirrored, so opposite logic level). Per-side
+        invert_*_dir flags flip these for unusual motor mountings.
+        """
         pins = self.config.pins
         forward = (direction == self.DIR_FORWARD)
         if side == self.SIDE_LEFT:
@@ -311,7 +328,7 @@ class NavigationManager:
                 level = 0 if level else 1
             self._backend.write(pins.l_dir, level)
         else:
-            level = 1 if forward else 0
+            level = 0 if forward else 1
             if self.config.invert_right_dir:
                 level = 0 if level else 1
             self._backend.write(pins.r_dir, level)
