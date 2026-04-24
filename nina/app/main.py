@@ -136,6 +136,16 @@ def main() -> None:
         action="store_true",
         help="Abort if any expected motor is missing from the bus or from the recording.",
     )
+    run_action.add_argument(
+        "--raw-speed",
+        dest="smooth",
+        action="store_false",
+        help=(
+            "Disable adaptive per-motor smoothing. Plays exactly the recorded "
+            "speed/duration per frame (will likely feel jerky on dense recordings)."
+        ),
+    )
+    run_action.set_defaults(smooth=True)
     sub.add_parser("list-actions", help="List available action names.")
     sub.add_parser(
         "sync-manifest",
@@ -276,9 +286,11 @@ def main() -> None:
                 print(msg)
 
             speed_scale = max(0.1, float(getattr(args, "speed_scale", 1.0)))
-            dxl.execute_action_file(action_path, speed_scale=speed_scale)
+            smooth = bool(getattr(args, "smooth", True))
+            dxl.execute_action_file(action_path, speed_scale=speed_scale, smooth=smooth)
             scale_note = f" at {speed_scale}x" if speed_scale != 1.0 else ""
-            print(f"Action '{args.name}' executed from {action_path}{scale_note}")
+            mode_note = "" if smooth else " (raw speed mode)"
+            print(f"Action '{args.name}' executed from {action_path}{scale_note}{mode_note}")
         finally:
             dxl.close()
         return

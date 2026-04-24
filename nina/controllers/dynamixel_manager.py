@@ -2,7 +2,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from nina.models.types import HealthReport
 
@@ -11,6 +11,8 @@ HEADER = 0xFF
 PING = 0x01
 READ_DATA = 0x02
 WRITE_DATA = 0x03
+SYNC_WRITE = 0x83
+BROADCAST_ID = 0xFE
 
 REG_TORQUE_ENABLE = (24, 1)
 REG_GOAL_POSITION = (30, 2)
@@ -19,6 +21,15 @@ REG_PRESENT_POS = (36, 2)
 
 POS_MIN = 0
 POS_MAX = 4095
+
+# MX-28/MX-106 in joint mode: 1 unit of Moving Speed = 0.114 RPM
+# = 0.684 deg/s = ~7.78 ticks/s (4096 ticks/rev). Used to convert a
+# desired ticks-per-second into a register value.
+TICKS_PER_SPEED_UNIT = 7.78
+# Floor on smoothed speed so micro-deltas don't reduce to a literal crawl
+# (and so we never write speed=0, which means "max speed" in joint mode).
+MIN_SMOOTH_SPEED = 8
+MAX_SMOOTH_SPEED = 1023
 
 # Bus timing. The single biggest reliability factor on USB-FTDI Dynamixel chains
 # is the FTDI latency_timer (default 16ms). With the default timer, motor
@@ -54,6 +65,7 @@ class DynamixelManager:
         self._is_initialized = False
         self._last_speed: Optional[int] = None
         self._last_positions: Dict[int, int] = {}
+        self._last_goal: Dict[int, int] = {}
         self._capture_miss_count: int = 0
         self._capture_total_reads: int = 0
 
@@ -147,13 +159,128 @@ class DynamixelManager:
         for sid in self.expected_motor_ids:
             self.write_reg(sid, *REG_TORQUE_ENABLE, value)
 
-    def execute_action_file(self, action_path: Path, speed_scale: float = 1.0) -> None:
+    def execute_action_file(self, action_path: Path,
+                            speed_scale: float = 1.0,
+                            smooth: bool = True) -> None:
+        """Play an action file frame-by-frame.
+
+        smooth=True (default): per-motor moving-speed is computed from the
+        delta between waypoints and the frame duration, so each motor
+        sweeps through the entire frame interval at constant velocity
+        instead of snapping to its goal in 5-10 ms and sitting idle for
+        the rest of the frame. All goal+speed writes for a frame go out in
+        a single sync-write packet, and frame timing is paced on the
+        wall-clock so bus-write time is absorbed into the frame interval
+        rather than added to it.
+
+        smooth=False reverts to the legacy per-motor write loop and the
+        recorded `speed` value (useful for debugging).
+        """
         self._require_initialized()
         action = json.loads(action_path.read_text(encoding="utf-8"))
         frames = action.get("frames", [])
         self._last_speed = None
+        self._last_goal.clear()
+        if smooth:
+            self._seed_last_goal_from_present()
+
+        scale = max(0.05, float(speed_scale))
+        next_deadline = time.time()
         for frame in frames:
-            self._execute_frame(frame, speed_scale=speed_scale)
+            if smooth:
+                next_deadline = self._execute_frame_smooth(
+                    frame, scale=scale, deadline=next_deadline)
+            else:
+                self._execute_frame(frame, speed_scale=speed_scale)
+
+    def _seed_last_goal_from_present(self) -> None:
+        """Read every motor's current position so the first frame's
+        smooth-speed math has a real starting point."""
+        for sid in self.expected_motor_ids:
+            value = self.read_reg(sid, *REG_PRESENT_POS)
+            if value is not None:
+                self._last_goal[sid] = self._clamp_pos(value)
+
+    def _execute_frame_smooth(self, frame: Dict[str, Any],
+                              scale: float, deadline: float) -> float:
+        delay = float(frame.get("delay", 0.0)) / scale
+        duration = float(frame.get("duration", 1.0)) / scale
+        servos = frame.get("servos", {}) or {}
+
+        if delay > 0:
+            time.sleep(delay)
+
+        targets: Dict[int, int] = {}
+        for raw_sid, spec in servos.items():
+            try:
+                sid = int(raw_sid)
+            except (TypeError, ValueError):
+                continue
+            if sid not in self.expected_motor_ids:
+                continue
+            if not isinstance(spec, dict):
+                continue
+            if spec.get("type", "absolute") != "absolute":
+                raise ValueError(f"Unsupported servo command type for S{sid}: {spec.get('type')}")
+            value = spec.get("value")
+            if value is None:
+                continue
+            targets[sid] = self._clamp_pos(value)
+
+        if not targets:
+            time.sleep(max(0.0, duration))
+            return time.time() + duration
+
+        goal_speed: Dict[int, Tuple[int, int]] = {}
+        for sid, goal in targets.items():
+            prev = self._last_goal.get(sid, goal)
+            delta = abs(goal - prev)
+            speed = self._compute_smooth_speed(delta, duration)
+            goal_speed[sid] = (goal, speed)
+            self._last_goal[sid] = goal
+
+        self.sync_write_goal_speed(goal_speed)
+
+        deadline = max(deadline, time.time()) + duration
+        sleep_for = deadline - time.time()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+        return deadline
+
+    @staticmethod
+    def _compute_smooth_speed(delta: int, duration: float) -> int:
+        if duration <= 0:
+            return MAX_SMOOTH_SPEED
+        ticks_per_sec = abs(delta) / duration
+        speed = int(round(ticks_per_sec / TICKS_PER_SPEED_UNIT))
+        return max(MIN_SMOOTH_SPEED, min(MAX_SMOOTH_SPEED, speed))
+
+    def sync_write_goal_speed(self, values: Dict[int, Tuple[int, int]]) -> None:
+        """Broadcast goal_position + moving_speed for many motors in one
+        Protocol-1.0 SYNC_WRITE packet. Writes 4 bytes starting at
+        REG_GOAL_POSITION (addr 30): goal_lo, goal_hi, speed_lo, speed_hi.
+
+        SYNC_WRITE has no status response, so this is fire-and-forget.
+        Bus dead time drops from ~80 ms (11 individual writes) to ~3 ms.
+        """
+        if not values:
+            return
+        addr = REG_GOAL_POSITION[0]
+        bytes_per_motor = 4
+        params: List[int] = [addr, bytes_per_motor]
+        for sid, (goal, speed) in values.items():
+            goal = max(POS_MIN, min(POS_MAX, int(goal)))
+            speed = max(0, min(MAX_SMOOTH_SPEED, int(speed)))
+            params.extend([
+                sid & 0xFF,
+                goal & 0xFF, (goal >> 8) & 0xFF,
+                speed & 0xFF, (speed >> 8) & 0xFF,
+            ])
+        pkt = self._build(BROADCAST_ID, SYNC_WRITE, params)
+        self._serial.reset_input_buffer()
+        self._serial.write(pkt)
+        self._serial.flush()
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
 
     def analyze_action_file(self, action_path: Path) -> Dict[str, Any]:
         """Inspect an action JSON and report which expected motors are
