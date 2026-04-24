@@ -284,6 +284,15 @@ def main() -> None:
     if args.command == "health-check":
         try:
             dxl.initialize_bus()
+            timer = dxl.latency_timer_ms
+            if timer is not None:
+                print(f"FTDI latency_timer set to {timer} ms.")
+            else:
+                print(
+                    "[warn] Could not set FTDI latency_timer (may need root). "
+                    "Try: 'echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'. "
+                    "Default 16 ms causes intermittent Dynamixel read failures."
+                )
             health = dxl.run_health_check(passes=args.passes)
             print(
                 f"Motors found: {health.detected_motors}/{health.expected_motors}. {health.detail}"

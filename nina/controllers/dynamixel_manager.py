@@ -1,4 +1,5 @@
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,7 +20,16 @@ REG_PRESENT_POS = (36, 2)
 POS_MIN = 0
 POS_MAX = 4095
 
-BUS_SETTLE_SEC = 0.5
+# Bus timing. The single biggest reliability factor on USB-FTDI Dynamixel chains
+# is the FTDI latency_timer (default 16ms). With the default timer, motor
+# responses can sit in the FTDI internal FIFO for up to 16ms before being
+# forwarded to the OS - long enough to land in the next ping's response window
+# and confuse parsing. We set latency_timer=1ms in initialize_bus() and use an
+# active drain (DRAIN_QUIET_SEC of silence) instead of a fixed sleep.
+BUS_SETTLE_SEC = 1.5
+FTDI_LATENCY_MS = 1
+DRAIN_QUIET_SEC = 0.003
+DRAIN_MAX_SEC = 0.030
 INTER_PACKET_SEC = 0.004
 INTER_PING_SEC = 0.008
 HEALTH_CHECK_PASSES = 3
@@ -53,11 +63,52 @@ class DynamixelManager:
 
         serial = self._load_serial_module()
         self._serial = serial.Serial(port=self.serial_port, baudrate=self.baudrate, timeout=0.1)
+        try:
+            latency_ms = int(os.environ.get("NINA_DXL_LATENCY_MS", FTDI_LATENCY_MS))
+        except ValueError:
+            latency_ms = FTDI_LATENCY_MS
+        latency_set = self._set_ftdi_latency_timer(latency_ms)
+        self._latency_timer_ms = latency_ms if latency_set else None
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
-        time.sleep(BUS_SETTLE_SEC)
+        try:
+            settle = float(os.environ.get("NINA_DXL_SETTLE_SEC", BUS_SETTLE_SEC))
+        except ValueError:
+            settle = BUS_SETTLE_SEC
+        time.sleep(max(0.0, settle))
         self._robust_clear()
         self._is_initialized = True
+
+    def _set_ftdi_latency_timer(self, value_ms: int) -> bool:
+        """Set the FTDI USB-serial chip's latency_timer register.
+
+        Default is 16ms which is too slow for Dynamixel - response bytes can
+        sit in the FTDI FIFO long enough to leak into the next request's
+        response window. 1ms is the Robotis-recommended value.
+
+        We try the sysfs path (works for any FTDI on Linux). If that fails we
+        silently continue - the active drain in _robust_clear still helps.
+        Returns True if the timer was set, False otherwise.
+        """
+        port = getattr(self._serial, "port", None) or self.serial_port
+        if not port or not port.startswith("/dev/"):
+            return False
+        device_name = port.rsplit("/", 1)[-1]
+        candidates = [
+            f"/sys/bus/usb-serial/devices/{device_name}/latency_timer",
+        ]
+        for path in candidates:
+            try:
+                with open(path, "w") as fh:
+                    fh.write(str(int(value_ms)))
+                return True
+            except (FileNotFoundError, PermissionError, OSError):
+                continue
+        return False
+
+    @property
+    def latency_timer_ms(self) -> Optional[int]:
+        return getattr(self, "_latency_timer_ms", None)
 
     def close(self) -> None:
         if self._serial and getattr(self._serial, "is_open", False):
@@ -283,8 +334,25 @@ class DynamixelManager:
         return None
 
     def _robust_clear(self) -> None:
-        self._serial.reset_input_buffer()
-        time.sleep(0.005)
+        """Actively drain the FTDI internal FIFO before the next request.
+
+        reset_input_buffer() only flushes the kernel-side buffer, NOT the
+        FTDI chip's internal FIFO. Bytes still in the chip can land in the
+        OS buffer right after the flush and contaminate the next response.
+        We poll for actual bytes and read them out; once the line has been
+        quiet for DRAIN_QUIET_SEC we do one final OS-side flush.
+        """
+        deadline = time.time() + DRAIN_MAX_SEC
+        last_byte_seen_at = time.time()
+        while time.time() < deadline:
+            pending = self._serial.in_waiting
+            if pending:
+                self._serial.read(pending)
+                last_byte_seen_at = time.time()
+            else:
+                if time.time() - last_byte_seen_at >= DRAIN_QUIET_SEC:
+                    break
+                time.sleep(0.0005)
         self._serial.reset_input_buffer()
 
     @staticmethod
