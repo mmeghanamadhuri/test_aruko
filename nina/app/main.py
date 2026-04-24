@@ -7,6 +7,11 @@ from typing import List
 from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
+from nina.controllers.navigation_manager import (
+    DEFAULT_PINS,
+    NavigationConfig,
+    NavigationManager,
+)
 from nina.services.startup_service import StartupService
 
 
@@ -41,6 +46,45 @@ def build_app():
     return settings, dxl, action_runner, startup_service
 
 
+def build_navigation(settings) -> NavigationManager:
+    nav_config = NavigationConfig(
+        pins=DEFAULT_PINS,
+        backend_name=settings.navigation.backend_name,
+        pwm_frequency_hz=settings.navigation.pwm_frequency_hz,
+        default_speed_percent=settings.navigation.default_speed_percent,
+        turn_duration_sec=settings.navigation.turn_duration_sec,
+    )
+    return NavigationManager(nav_config)
+
+
+def run_nav_command(nav: NavigationManager, command: str,
+                    speed: int, duration: float, hold: float) -> None:
+    nav.initialize()
+    try:
+        if command == "nav-forward":
+            nav.forward(speed_percent=speed)
+            time.sleep(hold)
+            nav.stop()
+        elif command == "nav-back":
+            nav.backward(speed_percent=speed)
+            time.sleep(hold)
+            nav.stop()
+        elif command == "nav-left":
+            nav.turn_left(speed_percent=speed, duration=duration)
+        elif command == "nav-right":
+            nav.turn_right(speed_percent=speed, duration=duration)
+        elif command == "nav-stop":
+            nav.stop()
+        elif command == "nav-brake":
+            nav.engage_brake()
+        elif command == "nav-release":
+            nav.release_brake()
+        else:
+            raise ValueError(f"Unknown nav command: {command}")
+    finally:
+        nav.shutdown()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Nina app bootstrap and controls.")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -59,6 +103,21 @@ def main() -> None:
         action="store_true",
         help="Register action name in manifest after saving JSON",
     )
+
+    for nav_cmd, nav_help in (
+        ("nav-forward", "Drive forward, then stop after --hold seconds."),
+        ("nav-back", "Drive backward, then stop after --hold seconds."),
+        ("nav-left", "Turn left for --duration seconds, then stop."),
+        ("nav-right", "Turn right for --duration seconds, then stop."),
+    ):
+        nav_parser = sub.add_parser(nav_cmd, help=nav_help)
+        nav_parser.add_argument("--speed", type=int, default=None, help="Speed percent 0-100 (default from env)")
+        nav_parser.add_argument("--duration", type=float, default=None, help="Turn duration in seconds")
+        nav_parser.add_argument("--hold", type=float, default=1.0, help="Forward/back hold seconds before stop")
+
+    sub.add_parser("nav-stop", help="Immediately stop the BLDC drive motors.")
+    sub.add_parser("nav-brake", help="Engage ZF brake on both wheels.")
+    sub.add_parser("nav-release", help="Release ZF brake on both wheels.")
 
     args = parser.parse_args()
     settings, dxl, action_runner, startup_service = build_app()
@@ -115,6 +174,16 @@ def main() -> None:
                 print(f"Registered action '{args.name}' in manifest.")
         finally:
             dxl.close()
+        return
+
+    if args.command in ("nav-forward", "nav-back", "nav-left", "nav-right",
+                        "nav-stop", "nav-brake", "nav-release"):
+        nav = build_navigation(settings)
+        speed = getattr(args, "speed", None)
+        duration = getattr(args, "duration", None)
+        hold = getattr(args, "hold", 1.0)
+        run_nav_command(nav, args.command, speed=speed, duration=duration, hold=hold)
+        print(f"Navigation command '{args.command}' completed.")
         return
 
 
