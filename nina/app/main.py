@@ -376,7 +376,15 @@ def main() -> None:
             time.sleep(0.5)
 
             print("Releasing torque so the arm can be moved by hand...")
-            dxl.set_torque_all(False)
+            stuck = dxl.set_torque_all(False)
+            if stuck:
+                print(
+                    f"[warn] Could not release torque on motor IDs {stuck}. "
+                    "These joints will stay rigid during recording. "
+                    "Check the bus / power and re-run, or use 'release-arm' to retry."
+                )
+            else:
+                print("All motors released. Arm should move freely now.")
 
             countdown = max(0.0, float(args.countdown))
             if countdown > 0:
@@ -440,7 +448,13 @@ def main() -> None:
     if args.command == "release-arm":
         try:
             dxl.initialize_bus()
-            dxl.set_torque_all(False)
+            stuck = dxl.set_torque_all(False)
+            if stuck:
+                print(
+                    f"[warn] Could not release torque on motor IDs {stuck}. "
+                    "Bus may be flaky - re-run 'release-arm' or check wiring/power."
+                )
+                raise SystemExit(1)
             print("Torque disabled on all arm motors. Arm is free to move.")
         finally:
             dxl.close()
@@ -449,7 +463,13 @@ def main() -> None:
     if args.command == "hold-arm":
         try:
             dxl.initialize_bus()
-            dxl.set_torque_all(True)
+            stuck = dxl.set_torque_all(True)
+            if stuck:
+                print(
+                    f"[warn] Could not enable torque on motor IDs {stuck}. "
+                    "Those joints will not hold position."
+                )
+                raise SystemExit(1)
             print("Torque enabled on all arm motors. Arm is holding pose.")
         finally:
             dxl.close()

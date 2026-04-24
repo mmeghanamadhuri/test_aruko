@@ -47,9 +47,11 @@ HEALTH_CHECK_PASSES = 3
 HEALTH_PASS_REST_SEC = 0.05
 PING_RETRIES = 5
 READ_RETRIES = 4
+WRITE_RETRIES = 4
 PING_TIMEOUT_SEC = 0.15
 READ_TIMEOUT_SEC = 0.05
-WRITE_STATUS_TIMEOUT_SEC = 0.03
+WRITE_STATUS_TIMEOUT_SEC = 0.05
+TORQUE_VERIFY_PASSES = 3
 
 
 class DynamixelManager:
@@ -153,11 +155,32 @@ class DynamixelManager:
             detail=detail,
         )
 
-    def set_torque_all(self, enable: bool) -> None:
+    def set_torque_all(self, enable: bool) -> List[int]:
+        """Enable or disable torque on every expected motor and verify by
+        reading the torque register back. Retries any motor that didn't
+        latch the new value. Returns the list of motor IDs that could NOT
+        be set after all retries (empty list = success).
+
+        This matters most for release-before-recording: a single dropped
+        write would otherwise leave one motor rigid for the whole session
+        with no warning.
+        """
         self._require_initialized()
-        value = 1 if enable else 0
-        for sid in self.expected_motor_ids:
-            self.write_reg(sid, *REG_TORQUE_ENABLE, value)
+        target = 1 if enable else 0
+        remaining = list(self.expected_motor_ids)
+        for _ in range(max(1, TORQUE_VERIFY_PASSES)):
+            for sid in remaining:
+                self.write_reg(sid, *REG_TORQUE_ENABLE, target)
+            still_wrong: List[int] = []
+            for sid in remaining:
+                actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+                if actual is None or actual != target:
+                    still_wrong.append(sid)
+            if not still_wrong:
+                return []
+            remaining = still_wrong
+            time.sleep(0.02)
+        return remaining
 
     def execute_action_file(self, action_path: Path,
                             speed_scale: float = 1.0,
@@ -400,16 +423,30 @@ class DynamixelManager:
                 time.sleep(0.01)
         return None
 
-    def write_reg(self, sid: int, addr: int, size: int, value: int) -> bool:
+    def write_reg(self, sid: int, addr: int, size: int, value: int,
+                  retries: int = WRITE_RETRIES) -> bool:
+        """Write to a Dynamixel register and verify the status response.
+
+        Returns True only if the motor actually replied with a status
+        packet (which is its acknowledgement of the write). Retries up to
+        `retries` times on no-response - this is critical for the torque
+        register, where a silently dropped packet leaves the motor in the
+        wrong state with no warning.
+        """
         value = int(value) & (0xFF if size == 1 else 0xFFFF)
         params = [addr, value & 0xFF] if size == 1 else [addr, value & 0xFF, (value >> 8) & 0xFF]
         pkt = self._build(sid, WRITE_DATA, params)
-        self._serial.reset_input_buffer()
-        self._serial.write(pkt)
-        self._serial.flush()
-        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
-        self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC)
-        return True
+        attempts = max(1, int(retries))
+        for attempt in range(attempts):
+            self._robust_clear()
+            self._serial.write(pkt)
+            self._serial.flush()
+            time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+            if self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC) is not None:
+                return True
+            if attempt < attempts - 1:
+                time.sleep(0.01)
+        return False
 
     def _execute_frame(self, frame: Dict[str, Any], speed_scale: float = 1.0) -> None:
         scale = max(0.05, float(speed_scale))
