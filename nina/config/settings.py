@@ -3,6 +3,13 @@ from pathlib import Path
 import os
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on", "y")
+
+
 @dataclass(frozen=True)
 class NavigationSettings:
     backend_name: str
@@ -13,6 +20,8 @@ class NavigationSettings:
     max_duty_percent: float
     kick_start_duty_percent: float
     kick_start_duration_sec: float
+    invert_left_dir: bool
+    invert_right_dir: bool
 
 
 @dataclass(frozen=True)
@@ -43,6 +52,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
         kick_start_duty_percent=float(os.environ.get("NINA_NAV_KICK_DUTY", "100")),
         kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.25")),
+        invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
+        invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
     )
 
     return NinaSettings(

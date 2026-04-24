@@ -3,12 +3,16 @@ NavigationManager for Nina (5ft wheeled bot).
 
 Drives 2x JYQD_V7.3E2 BLDC drivers (one per wheel) directly from the Jetson Nano.
 
-Per-side wired lines:
-- EL (enable):  digital output
-- Signal (F/R direction): digital output
-- ZF (brake):   digital output, HIGH = brake
-- VR (speed):   PWM input (hardware PWM on BCM 12 / BCM 13)
-- GND
+JYQD_V7.3E2 control pins (per channel):
+- EL  (enable):    digital input on JYQD - we drive it from Jetson
+- ZF  (direction): digital input on JYQD - HIGH/LOW selects rotation direction
+- VR  (speed):     PWM input on JYQD - 0..100% duty maps to motor speed
+- M / BRK (brake): optional digital input on JYQD - not wired in this build
+- Signal (PG):     pulse OUTPUT from JYQD (Hall feedback) - read-only, not used yet
+
+Important: there is NO separate F/R input on JYQD_V7.3E2. Direction is set via
+the ZF pin. There is also no software-controllable brake unless the BRK pin is
+wired, so "brake" here means "disable EL and let the motor coast to a stop".
 
 Hardware PWM on Jetson Nano is only available on:
 - BCM 12 (physical pin 32) -> PWM0
@@ -31,20 +35,31 @@ log = logging.getLogger("nina.navigation")
 
 @dataclass(frozen=True)
 class NavigationPins:
-    """All BCM pin numbers for navigation hardware."""
+    """All BCM pin numbers for navigation hardware.
+
+    l_dir / r_dir map to the JYQD's ZF pin (direction). The legacy l_zf /
+    r_zf fields are kept so older configs / env overrides keep working,
+    but they're aliases for the same physical pin.
+    """
     l_en: int
     l_dir: int
-    l_zf: int
     pwm_l: int
     r_en: int
     r_dir: int
-    r_zf: int
     pwm_r: int
     led_red: int
     led_green: int
     led_blue: int
     estop_1: int
     estop_2: int
+
+    @property
+    def l_zf(self) -> int:
+        return self.l_dir
+
+    @property
+    def r_zf(self) -> int:
+        return self.r_dir
 
 
 @dataclass(frozen=True)
@@ -68,19 +83,24 @@ class NavigationConfig:
     # to the requested speed. Set duration to 0 to disable.
     kick_start_duty_percent: float = 100.0
     kick_start_duration_sec: float = 0.25
+    # Direction polarity per side. JYQD ZF=HIGH usually means one direction
+    # and ZF=LOW the other, but which is "forward" depends on motor wiring.
+    # Flip these if a side spins the opposite of expected.
+    invert_left_dir: bool = False
+    invert_right_dir: bool = False
 
 
 # Default Nina pinout (BCM numbering on Jetson Nano).
 # PWM pins MUST be BCM 12 and BCM 13 to use hardware PWM on Nano.
+# l_dir / r_dir are wired to JYQD ZF (direction). Override via env vars if
+# your physical wiring differs.
 DEFAULT_PINS = NavigationPins(
-    l_en=18,
-    l_dir=25,
-    l_zf=int(os.environ.get("NINA_NAV_L_ZF", "23")),
-    pwm_l=12,
-    r_en=10,
-    r_dir=22,
-    r_zf=int(os.environ.get("NINA_NAV_R_ZF", "24")),
-    pwm_r=13,
+    l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
+    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "23"))),
+    pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
+    r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
+    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "24"))),
+    pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,
     led_green=20,
     led_blue=16,
@@ -119,16 +139,27 @@ class NavigationManager:
                 log.debug("E-stop pin %s left as input", pin)
 
         for pin in (pins.led_red, pins.led_green, pins.led_blue,
-                    pins.l_en, pins.l_dir, pins.l_zf,
-                    pins.r_en, pins.r_dir, pins.r_zf):
+                    pins.l_en, pins.l_dir,
+                    pins.r_en, pins.r_dir):
             self._backend.configure_output(pin)
 
         self._backend.configure_pwm(pins.pwm_l, self.config.pwm_frequency_hz)
         self._backend.configure_pwm(pins.pwm_r, self.config.pwm_frequency_hz)
 
-        self.release_brake()
+        self._backend.write(pins.l_dir, 0)
+        self._backend.write(pins.r_dir, 0)
+        self._backend.write(pins.l_en, 0)
+        self._backend.write(pins.r_en, 0)
+
         self._is_initialized = True
-        log.info("NavigationManager initialized with backend=%s", self._backend.name)
+        log.info(
+            "NavigationManager initialized backend=%s pins: L_EN=BCM%d L_ZF/DIR=BCM%d L_PWM=BCM%d "
+            "R_EN=BCM%d R_ZF/DIR=BCM%d R_PWM=BCM%d invert_left=%s invert_right=%s",
+            self._backend.name,
+            pins.l_en, pins.l_dir, pins.pwm_l,
+            pins.r_en, pins.r_dir, pins.pwm_r,
+            self.config.invert_left_dir, self.config.invert_right_dir,
+        )
 
     def shutdown(self) -> None:
         if not self._is_initialized:
@@ -137,7 +168,6 @@ class NavigationManager:
             self.stop()
             self._set_enable(self.SIDE_LEFT, False)
             self._set_enable(self.SIDE_RIGHT, False)
-            self.engage_brake()
         finally:
             try:
                 self._backend.shutdown()
@@ -188,16 +218,19 @@ class NavigationManager:
             log.exception("emergency_stop failed: %s", exc)
 
     def engage_brake(self) -> None:
-        pins = self.config.pins
-        self._backend.write(pins.l_zf, 1)
-        self._backend.write(pins.r_zf, 1)
-        log.info("brake engaged")
+        """Coast-stop both wheels by disabling EL on each driver. JYQD_V7.3E2
+        has no software brake unless its BRK pin is wired separately."""
+        self._control_speed(self.SIDE_LEFT, False, 0, self.DIR_FORWARD)
+        self._control_speed(self.SIDE_RIGHT, False, 0, self.DIR_FORWARD)
+        log.info("brake (EL disable) engaged - motors will coast to stop")
 
     def release_brake(self) -> None:
+        """Re-enable EL on both drivers (does not start motion - VR/PWM
+        still drives the speed)."""
         pins = self.config.pins
-        self._backend.write(pins.l_zf, 0)
-        self._backend.write(pins.r_zf, 0)
-        log.info("brake released")
+        self._backend.write(pins.l_en, 1)
+        self._backend.write(pins.r_en, 1)
+        log.info("brake released (EL re-enabled)")
 
     def set_status(self, mode: str) -> None:
         if not self._is_initialized:
@@ -213,7 +246,9 @@ class NavigationManager:
     def _command_both(self, direction: str, speed: int) -> None:
         self.stop()
         time.sleep(self.config.settle_delay_sec)
-        self.release_brake()
+        self._set_direction(self.SIDE_LEFT, direction)
+        self._set_direction(self.SIDE_RIGHT, direction)
+        time.sleep(0.02)  # let JYQD latch direction before EL/PWM ramps
         self._kick_start(left_dir=direction, right_dir=direction, target_speed=speed)
         self._control_speed(self.SIDE_LEFT, True, speed, direction)
         self._control_speed(self.SIDE_RIGHT, True, speed, direction)
@@ -222,7 +257,9 @@ class NavigationManager:
                     speed: int, duration: Optional[float]) -> None:
         self.stop()
         time.sleep(self.config.settle_delay_sec)
-        self.release_brake()
+        self._set_direction(self.SIDE_LEFT, left_dir)
+        self._set_direction(self.SIDE_RIGHT, right_dir)
+        time.sleep(0.02)
         self._kick_start(left_dir=left_dir, right_dir=right_dir, target_speed=speed)
         self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
         self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
@@ -255,14 +292,29 @@ class NavigationManager:
         duty_percent = self._apply_deadband(speed_percent)
         pins = self.config.pins
 
+        self._set_direction(side, direction)
         if side == self.SIDE_LEFT:
             self._backend.write(pins.l_en, 1 if enable else 0)
-            self._backend.write(pins.l_dir, 1 if direction == self.DIR_FORWARD else 0)
             self._backend.set_duty(pins.pwm_l, duty_percent)
         else:
             self._backend.write(pins.r_en, 1 if enable else 0)
-            self._backend.write(pins.r_dir, 0 if direction == self.DIR_FORWARD else 1)
             self._backend.set_duty(pins.pwm_r, duty_percent)
+
+    def _set_direction(self, side: str, direction: str) -> None:
+        """Write direction to the JYQD ZF pin for the given side, applying
+        per-side polarity inversion."""
+        pins = self.config.pins
+        forward = (direction == self.DIR_FORWARD)
+        if side == self.SIDE_LEFT:
+            level = 1 if forward else 0
+            if self.config.invert_left_dir:
+                level = 0 if level else 1
+            self._backend.write(pins.l_dir, level)
+        else:
+            level = 1 if forward else 0
+            if self.config.invert_right_dir:
+                level = 0 if level else 1
+            self._backend.write(pins.r_dir, level)
 
     def _apply_deadband(self, speed_percent: int) -> float:
         """Map user-facing 0..100 speed to actual PWM duty using deadband config."""

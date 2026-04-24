@@ -82,6 +82,8 @@ def build_navigation(settings) -> NavigationManager:
         max_duty_percent=settings.navigation.max_duty_percent,
         kick_start_duty_percent=settings.navigation.kick_start_duty_percent,
         kick_start_duration_sec=settings.navigation.kick_start_duration_sec,
+        invert_left_dir=settings.navigation.invert_left_dir,
+        invert_right_dir=settings.navigation.invert_right_dir,
     )
     return NavigationManager(nav_config)
 
@@ -497,22 +499,48 @@ def main() -> None:
     if args.command == "nav-test-direction":
         nav = build_navigation(settings)
         nav.initialize()
+        pins = nav.config.pins
         try:
+            sides_label = args.side
+            print(
+                f"Direction test on {sides_label} side(s). "
+                f"L_ZF/DIR=BCM{pins.l_dir} R_ZF/DIR=BCM{pins.r_dir}. "
+                f"Watch the wheel(s) - they should physically reverse between phases."
+            )
             for cycle in range(args.cycles):
                 for direction in ("forward", "backward"):
-                    print(f"[cycle {cycle + 1}/{args.cycles}] {args.side} -> {direction} @ {args.speed}%")
+                    dir_const = nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD
                     if args.side in ("left", "both"):
-                        nav._control_speed(nav.SIDE_LEFT, True, args.speed,
-                                           nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD)
+                        zf_level = (1 if direction == "forward" else 0)
+                        if nav.config.invert_left_dir:
+                            zf_level = 0 if zf_level else 1
+                        print(
+                            f"[cycle {cycle + 1}/{args.cycles}] LEFT -> {direction} @ {args.speed}% "
+                            f"(BCM{pins.l_dir} -> {'HIGH' if zf_level else 'LOW'})"
+                        )
+                        nav._control_speed(nav.SIDE_LEFT, True, args.speed, dir_const)
                     if args.side in ("right", "both"):
-                        nav._control_speed(nav.SIDE_RIGHT, True, args.speed,
-                                           nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD)
+                        zf_level = (1 if direction == "forward" else 0)
+                        if nav.config.invert_right_dir:
+                            zf_level = 0 if zf_level else 1
+                        print(
+                            f"[cycle {cycle + 1}/{args.cycles}] RIGHT -> {direction} @ {args.speed}% "
+                            f"(BCM{pins.r_dir} -> {'HIGH' if zf_level else 'LOW'})"
+                        )
+                        nav._control_speed(nav.SIDE_RIGHT, True, args.speed, dir_const)
                     time.sleep(args.interval)
                     nav.stop()
                     time.sleep(0.3)
         finally:
             nav.shutdown()
-        print("Direction test done. If wheels never reversed, the F/R wiring or JYQD jumper is the culprit.")
+        print(
+            "Direction test done. If the wheel kept spinning the same way:\n"
+            "  1. Confirm JYQD ZF input is wired to the BCM pin shown above.\n"
+            "  2. Probe that pin with 'nav-test-pin --pin <BCM> --mode high/low' to confirm the level.\n"
+            "  3. JYQD ZF threshold is ~3V; Jetson 3.3V should be fine but check with a meter.\n"
+            "  4. If the level toggles correctly but the motor doesn't reverse, set\n"
+            "     NINA_NAV_INVERT_LEFT=1 / NINA_NAV_INVERT_RIGHT=1 (some motors swing the other way)."
+        )
         return
 
     if args.command == "nav-test-pin":
