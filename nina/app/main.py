@@ -132,7 +132,15 @@ def main() -> None:
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
     record_action.add_argument("--name", required=True, type=str, help="Action name")
     record_action.add_argument("--seconds", type=float, default=5.0, help="Recording duration in seconds")
-    record_action.add_argument("--hz", type=float, default=20.0, help="Sampling rate in Hz")
+    record_action.add_argument(
+        "--hz",
+        type=float,
+        default=5.0,
+        help=(
+            "Sampling rate in Hz. Lower = smoother playback (more bus headroom per frame). "
+            "Recommended 4-8 for 11-motor chains. Higher rates can cause jerky playback."
+        ),
+    )
     record_action.add_argument(
         "--motor-speed",
         type=int,
