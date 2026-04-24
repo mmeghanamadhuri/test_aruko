@@ -19,7 +19,8 @@ DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
 NEUTRAL_FRAME_DELAY_SEC = 0.2
 NEUTRAL_FRAME_DURATION_SEC = 1.5
-NEUTRAL_FRAME_SPEED = 150
+NEUTRAL_FRAME_SPEED = 600
+DEFAULT_RECORD_MOTOR_SPEED = 800
 
 
 def build_neutral_frame() -> dict:
@@ -110,12 +111,24 @@ def main() -> None:
     sub.add_parser("startup", help="Initialize motors, run health checks, and go neutral.")
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
+    run_action.add_argument(
+        "--speed-scale",
+        type=float,
+        default=1.0,
+        help="Playback speed multiplier (1.0 = recorded speed, 2.0 = 2x faster)",
+    )
     sub.add_parser("list-actions", help="List available action names.")
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
     record_action.add_argument("--name", required=True, type=str, help="Action name")
     record_action.add_argument("--seconds", type=float, default=5.0, help="Recording duration in seconds")
     record_action.add_argument("--hz", type=float, default=20.0, help="Sampling rate in Hz")
+    record_action.add_argument(
+        "--motor-speed",
+        type=int,
+        default=DEFAULT_RECORD_MOTOR_SPEED,
+        help="Dynamixel moving speed register value stored per frame (1-1023, ~1023=max)",
+    )
     record_action.add_argument(
         "--countdown",
         type=float,
@@ -167,8 +180,10 @@ def main() -> None:
     if args.command == "run-action":
         try:
             ensure_motors_ready(dxl)
-            action_path = action_runner.run_named_action(args.name)
-            print(f"Action '{args.name}' executed from {action_path}")
+            speed_scale = max(0.1, float(getattr(args, "speed_scale", 1.0)))
+            action_path = action_runner.run_named_action(args.name, speed_scale=speed_scale)
+            scale_note = f" at {speed_scale}x" if speed_scale != 1.0 else ""
+            print(f"Action '{args.name}' executed from {action_path}{scale_note}")
         finally:
             dxl.close()
         return
@@ -212,10 +227,14 @@ def main() -> None:
 
             interval = 1.0 / args.hz
             sample_count = max(1, int(args.seconds * args.hz))
+            motor_speed = max(1, min(1023, int(args.motor_speed)))
             captured_frames = []
-            print(f"Recording '{args.name}' for {args.seconds}s at {args.hz} Hz ({sample_count} samples)...")
+            print(
+                f"Recording '{args.name}' for {args.seconds}s at {args.hz} Hz "
+                f"({sample_count} samples, motor speed={motor_speed})..."
+            )
             for _ in range(sample_count):
-                captured_frames.append(dxl.capture_frame(duration=interval))
+                captured_frames.append(dxl.capture_frame(duration=interval, speed=motor_speed))
                 time.sleep(interval)
             print("Recording finished.")
 

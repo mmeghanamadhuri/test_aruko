@@ -39,6 +39,7 @@ class DynamixelManager:
         self.expected_motor_ids = expected_motor_ids
         self._serial: Optional[Any] = None
         self._is_initialized = False
+        self._last_speed: Optional[int] = None
 
     def initialize_bus(self) -> None:
         if self._serial and getattr(self._serial, "is_open", False):
@@ -76,14 +77,15 @@ class DynamixelManager:
         for sid in self.expected_motor_ids:
             self.write_reg(sid, *REG_TORQUE_ENABLE, value)
 
-    def execute_action_file(self, action_path: Path) -> None:
+    def execute_action_file(self, action_path: Path, speed_scale: float = 1.0) -> None:
         self._require_initialized()
         action = json.loads(action_path.read_text(encoding="utf-8"))
         frames = action.get("frames", [])
+        self._last_speed = None
         for frame in frames:
-            self._execute_frame(frame)
+            self._execute_frame(frame, speed_scale=speed_scale)
 
-    def capture_frame(self, duration: float, speed: int = 200, delay: float = 0.0) -> Dict[str, Any]:
+    def capture_frame(self, duration: float, speed: int = 800, delay: float = 0.0) -> Dict[str, Any]:
         self._require_initialized()
         servos = {}
         for sid in self.expected_motor_ids:
@@ -136,17 +138,21 @@ class DynamixelManager:
         self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC)
         return True
 
-    def _execute_frame(self, frame: Dict[str, Any]) -> None:
-        delay = float(frame.get("delay", 0.0))
-        duration = float(frame.get("duration", 1.0))
-        speed = int(frame.get("speed", 200))
+    def _execute_frame(self, frame: Dict[str, Any], speed_scale: float = 1.0) -> None:
+        scale = max(0.05, float(speed_scale))
+        delay = float(frame.get("delay", 0.0)) / scale
+        duration = float(frame.get("duration", 1.0)) / scale
+        raw_speed = int(frame.get("speed", 800))
+        speed = max(1, min(1023, int(round(raw_speed * scale))))
         servos = frame.get("servos", {})
 
         if delay > 0:
             time.sleep(delay)
 
-        for sid in self.expected_motor_ids:
-            self.write_reg(sid, *REG_MOVING_SPEED, speed)
+        if speed != self._last_speed:
+            for sid in self.expected_motor_ids:
+                self.write_reg(sid, *REG_MOVING_SPEED, speed)
+            self._last_speed = speed
 
         for raw_sid, spec in servos.items():
             sid = int(raw_sid)
