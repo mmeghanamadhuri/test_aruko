@@ -80,6 +80,8 @@ def build_navigation(settings) -> NavigationManager:
         turn_duration_sec=settings.navigation.turn_duration_sec,
         min_duty_percent=settings.navigation.min_duty_percent,
         max_duty_percent=settings.navigation.max_duty_percent,
+        kick_start_duty_percent=settings.navigation.kick_start_duty_percent,
+        kick_start_duration_sec=settings.navigation.kick_start_duration_sec,
     )
     return NavigationManager(nav_config)
 
@@ -191,6 +193,16 @@ def main() -> None:
                           help="Drive HIGH, LOW, or PWM at --duty")
     nav_test.add_argument("--duty", type=float, default=50.0, help="PWM duty 0-100 (only for --mode pwm)")
     nav_test.add_argument("--hold", type=float, default=5.0, help="Seconds to hold the signal")
+
+    nav_dir = sub.add_parser(
+        "nav-test-direction",
+        help="Run motors alternating forward/back every --interval seconds for diagnosing F/R wiring.",
+    )
+    nav_dir.add_argument("--side", choices=("left", "right", "both"), default="both",
+                         help="Which wheel to test")
+    nav_dir.add_argument("--speed", type=int, default=80, help="Speed percent")
+    nav_dir.add_argument("--interval", type=float, default=3.0, help="Seconds per direction phase")
+    nav_dir.add_argument("--cycles", type=int, default=3, help="Number of fwd/back cycles")
 
     args = parser.parse_args()
     settings, dxl, action_runner, startup_service = build_app()
@@ -336,6 +348,27 @@ def main() -> None:
         hold = getattr(args, "hold", 1.0)
         run_nav_command(nav, args.command, speed=speed, duration=duration, hold=hold)
         print(f"Navigation command '{args.command}' completed.")
+        return
+
+    if args.command == "nav-test-direction":
+        nav = build_navigation(settings)
+        nav.initialize()
+        try:
+            for cycle in range(args.cycles):
+                for direction in ("forward", "backward"):
+                    print(f"[cycle {cycle + 1}/{args.cycles}] {args.side} -> {direction} @ {args.speed}%")
+                    if args.side in ("left", "both"):
+                        nav._control_speed(nav.SIDE_LEFT, True, args.speed,
+                                           nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD)
+                    if args.side in ("right", "both"):
+                        nav._control_speed(nav.SIDE_RIGHT, True, args.speed,
+                                           nav.DIR_FORWARD if direction == "forward" else nav.DIR_BACKWARD)
+                    time.sleep(args.interval)
+                    nav.stop()
+                    time.sleep(0.3)
+        finally:
+            nav.shutdown()
+        print("Direction test done. If wheels never reversed, the F/R wiring or JYQD jumper is the culprit.")
         return
 
     if args.command == "nav-test-pin":

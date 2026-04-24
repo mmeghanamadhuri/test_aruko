@@ -62,6 +62,12 @@ class NavigationConfig:
     # to ~70 lets `--speed 5` actually move the wheel.
     min_duty_percent: float = 0.0
     max_duty_percent: float = 100.0
+    # Kick-start: BLDC motors need a brief high-duty pulse to break static
+    # friction and let the controller sense rotor position. Drives the PWM
+    # at kick_start_duty_percent for kick_start_duration_sec, then drops
+    # to the requested speed. Set duration to 0 to disable.
+    kick_start_duty_percent: float = 100.0
+    kick_start_duration_sec: float = 0.25
 
 
 # Default Nina pinout (BCM numbering on Jetson Nano).
@@ -208,6 +214,7 @@ class NavigationManager:
         self.stop()
         time.sleep(self.config.settle_delay_sec)
         self.release_brake()
+        self._kick_start(left_dir=direction, right_dir=direction, target_speed=speed)
         self._control_speed(self.SIDE_LEFT, True, speed, direction)
         self._control_speed(self.SIDE_RIGHT, True, speed, direction)
 
@@ -216,10 +223,25 @@ class NavigationManager:
         self.stop()
         time.sleep(self.config.settle_delay_sec)
         self.release_brake()
+        self._kick_start(left_dir=left_dir, right_dir=right_dir, target_speed=speed)
         self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
         self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
         time.sleep(duration if duration is not None else self.config.turn_duration_sec)
         self.stop()
+
+    def _kick_start(self, left_dir: str, right_dir: str, target_speed: int) -> None:
+        """Brief high-duty pulse to overcome static friction and rotor sensing."""
+        if target_speed <= 0:
+            return
+        kick_dur = float(self.config.kick_start_duration_sec)
+        if kick_dur <= 0:
+            return
+        kick_speed = max(target_speed, int(self.config.kick_start_duty_percent))
+        kick_speed = max(0, min(100, kick_speed))
+        self._control_speed(self.SIDE_LEFT, True, kick_speed, left_dir)
+        self._control_speed(self.SIDE_RIGHT, True, kick_speed, right_dir)
+        time.sleep(kick_dur)
+        log.info("kick-start %d%% for %.2fs", kick_speed, kick_dur)
 
     def _control_speed(self, side: str, enable: bool,
                        speed_percent: int, direction: str) -> None:

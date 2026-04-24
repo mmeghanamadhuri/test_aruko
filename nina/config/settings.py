@@ -11,6 +11,8 @@ class NavigationSettings:
     turn_duration_sec: float
     min_duty_percent: float
     max_duty_percent: float
+    kick_start_duty_percent: float
+    kick_start_duration_sec: float
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "70")),
         max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
+        kick_start_duty_percent=float(os.environ.get("NINA_NAV_KICK_DUTY", "100")),
+        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.25")),
     )
 
     return NinaSettings(
