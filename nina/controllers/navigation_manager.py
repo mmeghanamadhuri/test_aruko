@@ -55,6 +55,13 @@ class NavigationConfig:
     default_speed_percent: int = 15
     turn_duration_sec: float = 2.3
     settle_delay_sec: float = 0.1
+    # Deadband compensation: linearly remaps the user-facing 0..100 speed
+    # range to [min_duty_percent, max_duty_percent] on the actual PWM output.
+    # On a 3.3V Jetson driving a 5V JYQD VR input, the motor often needs
+    # ~70-80% real duty before it starts spinning; setting min_duty_percent
+    # to ~70 lets `--speed 5` actually move the wheel.
+    min_duty_percent: float = 0.0
+    max_duty_percent: float = 100.0
 
 
 # Default Nina pinout (BCM numbering on Jetson Nano).
@@ -223,16 +230,27 @@ class NavigationManager:
             raise ValueError(f"Invalid direction '{direction}'")
 
         speed_percent = max(0, min(100, int(speed_percent)))
+        duty_percent = self._apply_deadband(speed_percent)
         pins = self.config.pins
 
         if side == self.SIDE_LEFT:
             self._backend.write(pins.l_en, 1 if enable else 0)
             self._backend.write(pins.l_dir, 1 if direction == self.DIR_FORWARD else 0)
-            self._backend.set_duty(pins.pwm_l, speed_percent)
+            self._backend.set_duty(pins.pwm_l, duty_percent)
         else:
             self._backend.write(pins.r_en, 1 if enable else 0)
             self._backend.write(pins.r_dir, 0 if direction == self.DIR_FORWARD else 1)
-            self._backend.set_duty(pins.pwm_r, speed_percent)
+            self._backend.set_duty(pins.pwm_r, duty_percent)
+
+    def _apply_deadband(self, speed_percent: int) -> float:
+        """Map user-facing 0..100 speed to actual PWM duty using deadband config."""
+        if speed_percent <= 0:
+            return 0.0
+        lo = max(0.0, min(100.0, float(self.config.min_duty_percent)))
+        hi = max(0.0, min(100.0, float(self.config.max_duty_percent)))
+        if hi <= lo:
+            return hi
+        return lo + (speed_percent / 100.0) * (hi - lo)
 
     def _set_enable(self, side: str, enable: bool) -> None:
         pins = self.config.pins

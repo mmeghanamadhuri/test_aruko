@@ -9,6 +9,8 @@ class NavigationSettings:
     pwm_frequency_hz: int
     default_speed_percent: int
     turn_duration_sec: float
+    min_duty_percent: float
+    max_duty_percent: float
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
         default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "15")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
+        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "70")),
+        max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
     )
 
     return NinaSettings(

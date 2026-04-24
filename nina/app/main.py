@@ -72,6 +72,8 @@ def build_navigation(settings) -> NavigationManager:
         pwm_frequency_hz=settings.navigation.pwm_frequency_hz,
         default_speed_percent=settings.navigation.default_speed_percent,
         turn_duration_sec=settings.navigation.turn_duration_sec,
+        min_duty_percent=settings.navigation.min_duty_percent,
+        max_duty_percent=settings.navigation.max_duty_percent,
     )
     return NavigationManager(nav_config)
 
@@ -165,6 +167,16 @@ def main() -> None:
     sub.add_parser("nav-stop", help="Immediately stop the BLDC drive motors.")
     sub.add_parser("nav-brake", help="Engage ZF brake on both wheels.")
     sub.add_parser("nav-release", help="Release ZF brake on both wheels.")
+
+    nav_test = sub.add_parser(
+        "nav-test-pin",
+        help="Drive a single GPIO pin or PWM output for diagnostics. Probe with a multimeter.",
+    )
+    nav_test.add_argument("--pin", required=True, type=int, help="BCM pin number to drive")
+    nav_test.add_argument("--mode", choices=("high", "low", "pwm"), default="high",
+                          help="Drive HIGH, LOW, or PWM at --duty")
+    nav_test.add_argument("--duty", type=float, default=50.0, help="PWM duty 0-100 (only for --mode pwm)")
+    nav_test.add_argument("--hold", type=float, default=5.0, help="Seconds to hold the signal")
 
     args = parser.parse_args()
     settings, dxl, action_runner, startup_service = build_app()
@@ -304,6 +316,25 @@ def main() -> None:
         hold = getattr(args, "hold", 1.0)
         run_nav_command(nav, args.command, speed=speed, duration=duration, hold=hold)
         print(f"Navigation command '{args.command}' completed.")
+        return
+
+    if args.command == "nav-test-pin":
+        from nina.controllers.gpio_backend import create_backend
+        backend = create_backend(settings.navigation.backend_name)
+        backend.setup()
+        try:
+            if args.mode == "pwm":
+                backend.configure_pwm(args.pin, settings.navigation.pwm_frequency_hz)
+                backend.set_duty(args.pin, args.duty)
+                print(f"BCM {args.pin} -> PWM @ {args.duty}% duty, {settings.navigation.pwm_frequency_hz} Hz for {args.hold}s")
+            else:
+                backend.configure_output(args.pin)
+                value = 1 if args.mode == "high" else 0
+                backend.write(args.pin, value)
+                print(f"BCM {args.pin} -> {'HIGH' if value else 'LOW'} for {args.hold}s")
+            time.sleep(args.hold)
+        finally:
+            backend.shutdown()
         return
 
 
