@@ -12,7 +12,7 @@ from nina.controllers.navigation_manager import (
     NavigationConfig,
     NavigationManager,
 )
-from nina.services.startup_service import StartupService
+from nina.services.startup_service import StartupService, health_mode
 
 
 DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -39,11 +39,17 @@ def build_neutral_frame() -> dict:
 
 def ensure_motors_ready(dxl: DynamixelManager) -> None:
     dxl.initialize_bus()
-    health = dxl.run_health_check()
-    if not health.connected:
-        raise SystemExit(
-            f"Motor health check failed ({health.detected_motors}/{health.expected_motors} motors). {health.detail}"
-        )
+    mode = health_mode()
+    if mode != "off":
+        health = dxl.run_health_check()
+        if not health.connected:
+            msg = (
+                f"Health check: {health.detected_motors}/{health.expected_motors} motors responded. "
+                f"{health.detail}"
+            )
+            if mode == "strict":
+                raise SystemExit(f"Aborting (strict mode). {msg}")
+            print(f"[warn] {msg} (continuing; set NINA_HEALTH_CHECK=strict to abort)")
     dxl.set_torque_all(True)
 
 
@@ -224,11 +230,17 @@ def main() -> None:
     if args.command == "record-action":
         try:
             dxl.initialize_bus()
-            health = dxl.run_health_check()
-            if not health.connected:
-                raise SystemExit(
-                    f"Motor health check failed ({health.detected_motors}/{health.expected_motors} motors). {health.detail}"
-                )
+            mode = health_mode()
+            if mode != "off":
+                health = dxl.run_health_check()
+                if not health.connected:
+                    msg = (
+                        f"Health check: {health.detected_motors}/{health.expected_motors} motors responded. "
+                        f"{health.detail}"
+                    )
+                    if mode == "strict":
+                        raise SystemExit(f"Aborting (strict mode). {msg}")
+                    print(f"[warn] {msg} (continuing; set NINA_HEALTH_CHECK=strict to abort)")
 
             print("Driving arm to neutral start pose...")
             dxl.set_torque_all(True)
