@@ -53,7 +53,11 @@ DRAIN_MAX_SEC_FAST = 0.030
 DRAIN_MAX_SEC_SLOW = 0.080
 INTER_PACKET_SEC = 0.004
 INTER_PING_SEC = 0.004
-HEALTH_CHECK_PASSES = 2
+# Empirically the user's MX-28/MX-106 chain misses ping at 30 ms timeout
+# but hits read_reg (4 retries x 40 ms = 160 ms per motor) reliably, so
+# 3 passes x 60 ms gives the same 180 ms per-motor budget as read_reg
+# while being early-exit on a clean bus.
+HEALTH_CHECK_PASSES = 3
 HEALTH_PASS_REST_SEC = 0.03
 # Public ping() retries are for ad-hoc use. run_health_check() bypasses this
 # loop and uses _ping_once() because its own multi-pass loop is the retry,
@@ -61,11 +65,12 @@ HEALTH_PASS_REST_SEC = 0.03
 PING_RETRIES = 3
 READ_RETRIES = 4
 WRITE_RETRIES = 4
-# A Dynamixel status packet at 1Mbaud arrives in <2ms. Even with the FTDI
-# latency_timer at the kernel default of 16ms a missing-motor timeout
-# resolves well under 30ms. The old 150ms value was the dominant cost
-# of every failed ping during a noisy startup.
-PING_TIMEOUT_SEC = 0.030
+# A Dynamixel status packet at 1Mbaud arrives in <2 ms. With the FTDI
+# latency_timer at 1 ms the round-trip is well under 10 ms, but USB stack
+# jitter on the Jetson can push it to 30-50 ms when other USB traffic is
+# active. 60 ms keeps the ping budget roughly equal to read_reg
+# (4 attempts x 40 ms) so we don't lie about which motors are alive.
+PING_TIMEOUT_SEC = 0.060
 READ_TIMEOUT_SEC = 0.040
 WRITE_STATUS_TIMEOUT_SEC = 0.040
 TORQUE_VERIFY_PASSES = 3
@@ -147,13 +152,14 @@ class DynamixelManager:
 
     def _announce_bus_health(self, target_latency_ms: int, latency_set: bool) -> None:
         """Print a single, actionable line so the user always knows whether
-        the FTDI latency_timer is at the recommended value. The most
-        common cause of intermittent missing motors is running without
-        sudo, which leaves latency_timer at 16ms - this makes that
-        instantly visible from any command, not just health-check."""
+        the FTDI latency_timer is at the recommended value. The check is
+        on the *actual* value, not on whether we wrote it - the udev rule
+        sets it for us at plug time, so a successful state can show up
+        even when our own write returned permission-denied."""
         actual = self._latency_timer_ms
-        if latency_set:
-            print(f"[bus] FTDI latency_timer = {actual} ms (recommended).")
+        if actual is not None and actual == int(target_latency_ms):
+            via = "set by us" if latency_set else "set by udev rule or previous run"
+            print(f"[bus] FTDI latency_timer = {actual} ms ({via}).")
             return
         if actual is None:
             print(
@@ -283,14 +289,17 @@ class DynamixelManager:
         time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
         return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
-    def set_torque_all(self, enable: bool) -> List[int]:
+    def set_torque_all(self, enable: bool, verify: bool = True) -> List[int]:
         """Enable or disable torque on every expected motor.
 
         Fast path: a single SYNC_WRITE pushes the torque byte to all 11
-        motors in one ~30-byte packet (~0.3 ms on the wire), then we
-        verify with one read per motor. Any motor that didn't latch is
-        retried per-motor with a normal write+verify (which is bounded
-        and small).
+        motors in one ~30-byte packet (~0.3 ms on the wire). If verify
+        is True we then do ONE single-attempt read per motor (~30 ms x
+        11 = ~350 ms) and only fall back to per-motor write_reg+read
+        retries for whatever didn't latch. This avoids the previous
+        nested 3 verify-passes x (11 writes + 11 reads with 4 internal
+        retries) cascade that turned a single stuck motor into 6+ s of
+        bus time.
 
         Returns the list of motor IDs that could NOT be set after all
         retries. This matters most for release-before-recording: a single
@@ -303,29 +312,33 @@ class DynamixelManager:
         ids = list(self.expected_motor_ids)
         self._sync_write_byte(REG_TORQUE_ENABLE[0], {sid: target for sid in ids})
         time.sleep(0.005)
+        if not verify:
+            self._timing("set_torque_all", t0, f"{'on' if enable else 'off'}, no-verify")
+            return []
 
-        still_wrong: List[int] = []
+        failed: List[int] = []
         for sid in ids:
-            actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+            actual = self._read_reg_once(sid, *REG_TORQUE_ENABLE)
             if actual is None or actual != target:
-                still_wrong.append(sid)
-        if not still_wrong:
+                failed.append(sid)
+        if not failed:
             self._timing("set_torque_all", t0, f"{'on' if enable else 'off'}, fast-path")
             return []
 
-        remaining = still_wrong
+        # Per-motor retries only for the small subset that missed.
+        remaining = failed
         for _ in range(max(1, TORQUE_VERIFY_PASSES - 1)):
             for sid in remaining:
                 self.write_reg(sid, *REG_TORQUE_ENABLE, target)
-            failed: List[int] = []
+            still_wrong: List[int] = []
             for sid in remaining:
-                actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+                actual = self._read_reg_once(sid, *REG_TORQUE_ENABLE)
                 if actual is None or actual != target:
-                    failed.append(sid)
-            if not failed:
+                    still_wrong.append(sid)
+            if not still_wrong:
                 self._timing("set_torque_all", t0, f"{'on' if enable else 'off'}, retry-path")
                 return []
-            remaining = failed
+            remaining = still_wrong
             time.sleep(0.02)
         self._timing(
             "set_torque_all", t0,
