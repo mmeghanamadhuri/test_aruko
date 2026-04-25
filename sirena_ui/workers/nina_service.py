@@ -121,7 +121,7 @@ class NinaService:
         text: str,
         *,
         lang: str = "en",
-        tld: str = "co.in",
+        tld: str = "com",
         offset: float = 0.0,
     ) -> Path:
         """

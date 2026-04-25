@@ -36,15 +36,15 @@ class AudioGenerator:
         out_path: Path,
         *,
         lang: str = "en",
-        tld: str = "co.in",
+        tld: str = "com",
         slow: bool = False,
     ) -> Path:
         """
         Render `text` to an MP3 at `out_path` using gTTS.
 
         `tld` selects the regional voice (gTTS sends a different Google
-        Translate host per TLD): `co.in` -> Indian English (female),
-        `co.uk` -> UK, `com.au` -> Australian, `com` -> US.
+        Translate host per TLD): `com` -> US English (default), `co.uk`
+        -> UK, `com.au` -> Australian, `co.in` -> Indian English.
 
         Raises `AudioGeneratorError` if generation fails (network down,
         bad language code, etc.).

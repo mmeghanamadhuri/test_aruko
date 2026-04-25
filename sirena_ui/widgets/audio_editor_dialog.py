@@ -24,13 +24,13 @@ from sirena_ui.workers.audio_gen_worker import AudioGenWorker
 from sirena_ui.workers.nina_service import NinaService
 
 
-# (display label, lang code, tld) — kept short on purpose, the user can
-# always edit the manifest by hand for exotic combos.
+# (display label, lang code, tld) — first entry is the default. Users
+# can edit the manifest by hand for exotic combos not listed here.
 VOICE_PRESETS = [
-    ("Indian English (female)", "en", "co.in"),
-    ("US English", "en", "com"),
+    ("US English (default)", "en", "com"),
     ("UK English", "en", "co.uk"),
     ("Australian English", "en", "com.au"),
+    ("Indian English", "en", "co.in"),
     ("Hindi", "hi", "co.in"),
     ("Spanish (Spain)", "es", "es"),
     ("French (France)", "fr", "fr"),

@@ -38,7 +38,7 @@ Each row in the **Playback** tab shows the action's current audio
 **Audio** button. The audio editor lets you:
 
 - Type the words to speak (defaults to the action name).
-- Pick a voice preset (Indian English female, US, UK, Hindi, etc.).
+- Pick a voice preset (US English by default, plus UK, Australian, Indian, Hindi, etc.).
 - Set the **audio offset** (seconds the runtime waits after motion
   starts before firing the clip).
 - **Preview** the existing clip, **Generate & Save** a new one,
