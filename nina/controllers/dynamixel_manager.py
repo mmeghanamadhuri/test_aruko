@@ -95,6 +95,13 @@ class DynamixelManager:
         self._latency_timer_ms: Optional[int] = None
         self._drain_quiet_sec: float = DRAIN_QUIET_SEC_FAST
         self._drain_max_sec: float = DRAIN_MAX_SEC_FAST
+        # Some FTDI Dynamixel cables (any TTL chain that doesn't have
+        # hardware TX-disable like the Robotis U2D2) echo every byte we
+        # transmit back onto the receive line. Without compensation
+        # those echo bytes get parsed as fake "successful" status
+        # responses and ping returns True for every motor, present or
+        # not. Set on first bus init by _detect_echo().
+        self._echo_present: bool = False
 
     def initialize_bus(self) -> None:
         if self._serial and getattr(self._serial, "is_open", False):
@@ -122,8 +129,40 @@ class DynamixelManager:
             settle = BUS_SETTLE_SEC
         time.sleep(max(0.0, settle))
         self._robust_clear()
+        self._detect_echo()
         self._is_initialized = True
         self._timing("initialize_bus", t0)
+
+    def _detect_echo(self) -> None:
+        """Send a few short pings to a bogus motor ID and watch for
+        bytes coming back. A non-zero echo rate means our cable is
+        echoing every transmission back onto the receive line; we then
+        flip self._echo_present so every send drains its own echo
+        before the parser sees it."""
+        bogus_id = 0xFD
+        echoes = 0
+        trials = 4
+        try:
+            for _ in range(trials):
+                self._serial.reset_input_buffer()
+                pkt = self._build(bogus_id, PING)
+                self._serial.write(pkt)
+                self._serial.flush()
+                time.sleep(0.005)
+                if self._serial.in_waiting:
+                    self._serial.read(self._serial.in_waiting)
+                    echoes += 1
+                time.sleep(0.005)
+        except (OSError, AttributeError):
+            self._echo_present = False
+            return
+        self._echo_present = echoes >= max(1, trials // 2)
+        if self._echo_present:
+            print(
+                "[bus] FTDI cable is echoing transmissions; enabling "
+                "post-send echo drain so ping/read results reflect real "
+                "motor responses (not our own echo)."
+            )
 
     @staticmethod
     def _timing_enabled() -> bool:
@@ -284,9 +323,7 @@ class DynamixelManager:
         run_health_check, which provides its own retry via multi-pass."""
         pkt = self._build(sid, PING)
         self._robust_clear()
-        self._serial.write(pkt)
-        self._serial.flush()
-        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        self._send_packet(pkt)
         return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
     def scan_baudrates(self,
@@ -474,9 +511,7 @@ class DynamixelManager:
             params.extend([sid & 0xFF, int(val) & 0xFF])
         pkt = self._build(BROADCAST_ID, SYNC_WRITE, params)
         self._serial.reset_input_buffer()
-        self._serial.write(pkt)
-        self._serial.flush()
-        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        self._send_packet(pkt)
 
     def execute_action_file(self, action_path: Path,
                             speed_scale: float = 1.0,
@@ -544,9 +579,7 @@ class DynamixelManager:
         capture priming)."""
         pkt = self._build(sid, READ_DATA, [addr, size])
         self._robust_clear()
-        self._serial.write(pkt)
-        self._serial.flush()
-        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        self._send_packet(pkt)
         resp = self._recv(sid, timeout=READ_TIMEOUT_SEC)
         if resp is not None and len(resp[1]) >= size:
             data = resp[1]
@@ -643,9 +676,7 @@ class DynamixelManager:
             ])
         pkt = self._build(BROADCAST_ID, SYNC_WRITE, params)
         self._serial.reset_input_buffer()
-        self._serial.write(pkt)
-        self._serial.flush()
-        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        self._send_packet(pkt)
 
     def analyze_action_file(self, action_path: Path) -> Dict[str, Any]:
         """Inspect an action JSON and report which expected motors are
@@ -741,9 +772,7 @@ class DynamixelManager:
         pkt = self._build(sid, PING)
         for attempt in range(PING_RETRIES):
             self._robust_clear()
-            self._serial.write(pkt)
-            self._serial.flush()
-            time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+            self._send_packet(pkt)
             if self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None:
                 return True
             if attempt < PING_RETRIES - 1:
@@ -754,9 +783,7 @@ class DynamixelManager:
         pkt = self._build(sid, READ_DATA, [addr, size])
         for attempt in range(READ_RETRIES):
             self._robust_clear()
-            self._serial.write(pkt)
-            self._serial.flush()
-            time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+            self._send_packet(pkt)
             resp = self._recv(sid, timeout=READ_TIMEOUT_SEC)
             if resp is not None and len(resp[1]) >= size:
                 data = resp[1]
@@ -781,9 +808,7 @@ class DynamixelManager:
         attempts = max(1, int(retries))
         for attempt in range(attempts):
             self._robust_clear()
-            self._serial.write(pkt)
-            self._serial.flush()
-            time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+            self._send_packet(pkt)
             if self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC) is not None:
                 return True
             if attempt < attempts - 1:
@@ -838,6 +863,39 @@ class DynamixelManager:
                                         return full[4], list(full[5:-1])
             time.sleep(0.001)
         return None
+
+    def _send_packet(self, pkt: bytes) -> None:
+        """Write a packet to the bus and consume our own echo bytes if
+        the cable echoes (auto-detected at init). On a non-echoing
+        cable (Robotis U2D2 etc.) this is a near-no-op since
+        _consume_echo finds no bytes and returns immediately.
+
+        Replaces the inline write+flush+sleep pattern used by every
+        sender (ping, read_reg, write_reg, sync_write_*) so the echo
+        compensation only has to live in one place.
+        """
+        self._serial.write(pkt)
+        self._serial.flush()
+        if self._echo_present:
+            self._consume_echo(len(pkt))
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+
+    def _consume_echo(self, n_bytes: int) -> int:
+        """Read up to n_bytes from the input buffer (which on an
+        echoing cable will be exactly the bytes we just transmitted).
+        Bounded by a 30 ms deadline so a partially-corrupted echo can't
+        hang us. Returns count actually drained."""
+        drained = 0
+        deadline = time.time() + 0.030
+        while drained < n_bytes and time.time() < deadline:
+            avail = self._serial.in_waiting
+            if avail > 0:
+                take = min(avail, n_bytes - drained)
+                chunk = self._serial.read(take)
+                drained += len(chunk)
+            else:
+                time.sleep(0.0005)
+        return drained
 
     def _robust_clear(self) -> None:
         """Actively drain the FTDI internal FIFO before the next request.
