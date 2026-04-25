@@ -108,8 +108,8 @@ def main() -> None:
     run_action.add_argument(
         "--sub-hz",
         type=float,
-        default=100.0,
-        help="Interpolated update rate during smooth playback in Hz (default: 100).",
+        default=75.0,
+        help="Interpolated update rate during smooth playback in Hz (default: 75).",
     )
     run_action.add_argument(
         "--max-speed",
