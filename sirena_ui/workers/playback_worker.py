@@ -18,7 +18,7 @@ class PlaybackWorker(QThread):
         smooth: bool = True,
         sub_hz: float = 50.0,
         max_speed: int = 1023,
-        speed: float = 1.0,
+        speed: float = 0.5,
         parent=None,
     ) -> None:
         super().__init__(parent)
