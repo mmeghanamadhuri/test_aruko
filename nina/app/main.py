@@ -117,6 +117,15 @@ def main() -> None:
         default=1023,
         help="Per-motor speed limit during smooth playback (0-1023, 1023 = max).",
     )
+    run_action.add_argument(
+        "--speed",
+        type=float,
+        default=1.0,
+        help=(
+            "Playback time multiplier (1.0 = recorded tempo, 0.5 = half speed, "
+            "2.0 = double speed). Smoothness is preserved at any value."
+        ),
+    )
     sub.add_parser("list-actions", help="List available action names.")
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
@@ -194,13 +203,14 @@ def main() -> None:
             mode = "smooth" if not args.no_smooth else "stepped"
             print(
                 f"Playing '{args.name}' ({mode} mode, sub_hz={args.sub_hz}, "
-                f"max_speed={args.max_speed})..."
+                f"max_speed={args.max_speed}, speed={args.speed}x)..."
             )
             action_path = action_runner.run_named_action(
                 args.name,
                 smooth=not args.no_smooth,
                 sub_hz=args.sub_hz,
                 max_speed=args.max_speed,
+                speed=args.speed,
             )
             print(f"Action '{args.name}' executed from {action_path}")
         finally:

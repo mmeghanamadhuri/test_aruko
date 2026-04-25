@@ -91,6 +91,7 @@ class DynamixelManager:
         sub_hz: float = 50.0,
         max_speed: int = 1023,
         warmup_sec: float = 0.5,
+        speed: float = 1.0,
     ) -> None:
         """
         Smoothly play back a recorded action.
@@ -101,6 +102,13 @@ class DynamixelManager:
         `Moving Speed` once at the start, so the trajectory shape is set by
         the interpolated goal stream rather than by the per-frame "step + wait"
         used in `execute_action_file`.
+
+        `speed` is a playback-time multiplier:
+          1.0 -> play at the recorded tempo
+          0.5 -> half speed (twice as long)
+          2.0 -> double speed (half as long)
+        Interpolation density (sub_hz) is unchanged, so smoothness is preserved
+        at any tempo.
         """
         self._require_initialized()
         action = json.loads(action_path.read_text(encoding="utf-8"))
@@ -110,6 +118,7 @@ class DynamixelManager:
 
         sub_hz = max(1.0, float(sub_hz))
         sub_dt = 1.0 / sub_hz
+        speed = max(0.05, float(speed))
 
         self.set_moving_speed_all(max_speed)
 
@@ -120,7 +129,7 @@ class DynamixelManager:
                 present[sid] = self._clamp_pos(v)
 
         first_goals = self._frame_goals(frames[0])
-        warmup = max(float(warmup_sec), float(frames[0].get("duration", 0.0)))
+        warmup = max(float(warmup_sec), float(frames[0].get("duration", 0.0)) / speed)
         if warmup > 0 and first_goals:
             self._interpolate_segment(present, first_goals, warmup, sub_dt)
         elif first_goals:
@@ -129,10 +138,10 @@ class DynamixelManager:
         for i in range(len(frames) - 1):
             a = frames[i]
             b = frames[i + 1]
-            delay = float(b.get("delay", 0.0))
+            delay = float(b.get("delay", 0.0)) / speed
             if delay > 0:
                 time.sleep(delay)
-            duration = max(0.001, float(b.get("duration", 0.05)))
+            duration = max(0.001, float(b.get("duration", 0.05)) / speed)
             a_goals = self._frame_goals(a) or first_goals
             b_goals = self._frame_goals(b)
             self._interpolate_segment(a_goals, b_goals, duration, sub_dt)
