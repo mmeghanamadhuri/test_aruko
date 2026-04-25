@@ -407,13 +407,21 @@ def main() -> None:
             print()
             if result["echo_rate"] > 0.5:
                 print(
-                    "ECHO DETECTED. Your FTDI cable is bouncing our own "
-                    "transmissions back onto the receive line, where they "
-                    "get parsed as fake 'success' responses. This makes "
-                    "every ping result unreliable."
+                    "ECHO DETECTED on the raw cable. Without compensation "
+                    "every transmitted packet bounces back onto RX and "
+                    "parses as a fake 'success' response."
                 )
                 print()
-                print("Options to fix:")
+                print(
+                    "Software workaround is ALREADY ACTIVE in this build "
+                    "(post-send echo drain, auto-enabled at bus init). "
+                    "Ping/read/write paths discard their own echo before "
+                    "the parser sees it, so bus-diag and run-action "
+                    "results now reflect real motor responses."
+                )
+                print()
+                print("Hardware-level options (only needed if you want to")
+                print("eliminate echo entirely instead of working around it):")
                 print(
                     "  1. Use a Robotis U2D2 (suppresses echo in hardware)."
                 )
@@ -421,13 +429,8 @@ def main() -> None:
                     "  2. If your cable has a TXEN signal, wire it to RTS "
                     "and use serial.rs485 mode."
                 )
-                print(
-                    "  3. As a software workaround we'd have to drain "
-                    "exactly len(packet) bytes after every send. Tell me "
-                    "if you want that and we'll add it."
-                )
             else:
-                print("No echo detected - cable is wired correctly.")
+                print("No echo detected - cable suppresses echo in hardware.")
             return
         finally:
             dxl.close()
@@ -604,14 +607,26 @@ def main() -> None:
                 f"Recording '{args.name}' for {args.seconds}s at {args.hz} Hz "
                 f"({sample_count} samples, motor speed={motor_speed})..."
             )
+            t_record_start = time.time()
+            slow_frames = 0
             for _ in range(sample_count):
+                t_frame = time.time()
                 captured_frames.append(dxl.capture_frame(duration=interval, speed=motor_speed))
-                time.sleep(interval)
+                frame_elapsed = time.time() - t_frame
+                if frame_elapsed > interval * 1.5:
+                    slow_frames += 1
+                sleep_left = interval - frame_elapsed
+                if sleep_left > 0:
+                    time.sleep(sleep_left)
+            record_elapsed = time.time() - t_record_start
             stats = dxl.capture_stats()
             miss_pct = 100.0 * stats["missed_reads"] / max(1, stats["total_reads"])
             print(
-                f"Recording finished. Read miss rate: {stats['missed_reads']}/{stats['total_reads']} "
-                f"({miss_pct:.1f}%). Tracked motors: {stats['tracked_motors']}."
+                f"Recording finished in {record_elapsed:.1f}s "
+                f"(target {args.seconds}s). Read miss rate: "
+                f"{stats['missed_reads']}/{stats['total_reads']} "
+                f"({miss_pct:.1f}%). Tracked motors: {stats['tracked_motors']}. "
+                f"Frames slower than budget: {slow_frames}/{sample_count}."
             )
 
             if args.hold_after:

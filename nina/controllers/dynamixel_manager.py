@@ -714,17 +714,19 @@ class DynamixelManager:
     def capture_frame(self, duration: float, speed: int = 800, delay: float = 0.0) -> Dict[str, Any]:
         """Sample all motor positions into one frame.
 
-        Reads are inherently jittery on a long half-duplex chain. Rather than
-        dropping motors that fail to respond on a given pass (which makes the
-        recorded frame skip them and leaves them frozen on playback), we fall
-        back to the last successfully read position per motor. Every frame
-        therefore contains every expected motor.
+        Uses single-attempt reads (_read_reg_once) instead of the 4-retry
+        read_reg, because every captured frame already has a safety net:
+        if a motor misses on this pass, we forward-fill from the last
+        successfully read value. Retrying 4 times per motor would
+        balloon per-frame time to 1-2 s on a noisy bus and silently
+        slow recording to a crawl - the forward-fill keeps the data
+        clean while the capture loop stays at its target rate.
         """
         self._require_initialized()
         servos: Dict[str, Any] = {}
         for sid in self.expected_motor_ids:
             self._capture_total_reads += 1
-            present = self.read_reg(sid, *REG_PRESENT_POS)
+            present = self._read_reg_once(sid, *REG_PRESENT_POS)
             if present is not None:
                 value = self._clamp_pos(present)
                 self._last_positions[sid] = value
@@ -743,8 +745,16 @@ class DynamixelManager:
         }
 
     def prime_capture(self, max_attempts: int = 3) -> Dict[int, Optional[int]]:
-        """Read every expected motor once before recording starts so the
+        """Read every expected motor before recording starts so the
         last-known cache is seeded. Returns the seed values per motor.
+
+        Uses _read_reg_once (single attempt) wrapped in our own
+        max_attempts loop with a short backoff. read_reg's internal
+        4-retry would multiply with this loop and produce 16 attempts
+        per motor on a missing-motor case (~9 s of priming for an
+        11-motor chain on a noisy bus). Single-attempt reads with a
+        short outer retry keeps priming under ~1 s while still giving
+        each motor a real chance to respond.
         """
         self._require_initialized()
         self._last_positions.clear()
@@ -753,7 +763,7 @@ class DynamixelManager:
         seed: Dict[int, Optional[int]] = {sid: None for sid in self.expected_motor_ids}
         for sid in self.expected_motor_ids:
             for _ in range(max(1, max_attempts)):
-                value = self.read_reg(sid, *REG_PRESENT_POS)
+                value = self._read_reg_once(sid, *REG_PRESENT_POS)
                 if value is not None:
                     seed[sid] = self._clamp_pos(value)
                     self._last_positions[sid] = seed[sid]
