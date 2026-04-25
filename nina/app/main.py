@@ -107,6 +107,17 @@ def main() -> None:
     record_action.add_argument("--seconds", type=float, default=5.0, help="Recording duration in seconds")
     record_action.add_argument("--hz", type=float, default=20.0, help="Sampling rate in Hz")
     record_action.add_argument(
+        "--countdown",
+        type=float,
+        default=3.0,
+        help="Seconds between releasing torque and the start of sampling (gives you time to grab the arm).",
+    )
+    record_action.add_argument(
+        "--hold-after",
+        action="store_true",
+        help="Re-enable torque on every motor after recording so the arm holds its final pose (default: leave released).",
+    )
+    record_action.add_argument(
         "--register",
         action="store_true",
         help="Register action name in manifest after saving JSON",
@@ -179,6 +190,19 @@ def main() -> None:
         try:
             ensure_motors_ready(dxl)
 
+            print("Releasing torque on all motors so you can move the arm by hand...")
+            dxl.set_torque_all(False)
+
+            countdown = max(0.0, float(args.countdown))
+            if countdown > 0:
+                whole = int(countdown)
+                for remaining in range(whole, 0, -1):
+                    print(f"  starting in {remaining}...")
+                    time.sleep(1.0)
+                fractional = countdown - whole
+                if fractional > 0:
+                    time.sleep(fractional)
+
             interval = 1.0 / args.hz
             sample_count = max(1, int(args.seconds * args.hz))
             frames = []
@@ -186,6 +210,13 @@ def main() -> None:
             for _ in range(sample_count):
                 frames.append(dxl.capture_frame(duration=interval))
                 time.sleep(interval)
+            print("Recording complete.")
+
+            if args.hold_after:
+                print("Re-enabling torque so the arm holds its current pose.")
+                dxl.set_torque_all(True)
+            else:
+                print("Leaving torque released; the arm is free to move. Run `startup` or `run-action <name>` to re-engage torque.")
 
             out_path = settings.recordings_dir / f"{args.name}.json"
             payload = {
