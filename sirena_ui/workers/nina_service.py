@@ -72,3 +72,22 @@ class NinaService:
 
     def action_path(self, name: str) -> Path:
         return self.settings.actions_dir / self.list_actions()[name]
+
+    def action_audio_path(self, name: str) -> Optional[Path]:
+        """
+        Resolve the audio file to play alongside an action, if any.
+
+        Lookup order:
+          1. Explicit `audio` field on the manifest entry.
+          2. Convention: `nina/actions/audio/<name>.{wav,mp3}`.
+        """
+        rel = self.action_runner.get_action_audio(name)
+        if rel:
+            candidate = self.settings.actions_dir / rel
+            if candidate.exists():
+                return candidate
+        for ext in (".wav", ".mp3"):
+            candidate = self.settings.actions_dir / "audio" / f"{name}{ext}"
+            if candidate.exists():
+                return candidate
+        return None

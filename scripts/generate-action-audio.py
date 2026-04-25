@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""
+Generate an audio clip for a Nina action using Google Text-to-Speech
+(gTTS). Output is an MP3 saved at `nina/actions/audio/<name>.mp3` and
+the manifest entry for that action is updated to point at it.
+
+Examples:
+    python3 scripts/generate-action-audio.py namaste
+    python3 scripts/generate-action-audio.py namaste --text "Namaste, welcome"
+    python3 scripts/generate-action-audio.py wave --lang en --tld co.in
+
+Requirements (one-time):
+    pip install --user gTTS
+    sudo apt install -y mpg123       # so the GUI / CLI can play .mp3
+
+Run from the repo root.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Generate Nina action audio with gTTS.")
+    parser.add_argument("action", help="Action name to generate audio for (must exist in manifest).")
+    parser.add_argument("--text", default=None, help="Text to speak (default: capitalized action name).")
+    parser.add_argument("--lang", default="en", help="gTTS language code (default: en).")
+    parser.add_argument(
+        "--tld",
+        default="co.in",
+        help="Google TLD for accent selection (default: co.in for Indian-English female voice).",
+    )
+    parser.add_argument(
+        "--no-register",
+        action="store_true",
+        help="Generate the file but skip updating the manifest entry.",
+    )
+    args = parser.parse_args()
+
+    try:
+        from gtts import gTTS
+    except ImportError:
+        print("gTTS is not installed. Run: pip install --user gTTS", file=sys.stderr)
+        return 1
+
+    repo_root = Path(__file__).resolve().parents[1]
+    actions_dir = repo_root / "nina" / "actions"
+    audio_dir = actions_dir / "audio"
+    manifest_path = actions_dir / "manifest.json"
+
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    out_path = audio_dir / f"{args.action}.mp3"
+
+    text = args.text or args.action.replace("_", " ").title()
+    print(f"Generating audio for action '{args.action}': '{text}' (lang={args.lang}, tld={args.tld})")
+    gTTS(text=text, lang=args.lang, tld=args.tld, slow=False).save(str(out_path))
+    print(f"Saved {out_path} ({out_path.stat().st_size} bytes)")
+
+    if args.no_register:
+        return 0
+
+    if not manifest_path.exists():
+        print(f"manifest not found at {manifest_path}; skipping registration.", file=sys.stderr)
+        return 0
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    actions = manifest.setdefault("actions", {})
+    rel_audio = f"audio/{args.action}.mp3"
+
+    existing = actions.get(args.action)
+    if existing is None:
+        print(
+            f"Action '{args.action}' is not in the manifest. "
+            "Add the action first (record-action --register) or pass --no-register."
+        )
+        return 0
+    if isinstance(existing, dict):
+        existing["audio"] = rel_audio
+        actions[args.action] = existing
+    else:
+        actions[args.action] = {"file": existing, "audio": rel_audio}
+    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    print(f"Updated manifest entry for '{args.action}' -> audio={rel_audio}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

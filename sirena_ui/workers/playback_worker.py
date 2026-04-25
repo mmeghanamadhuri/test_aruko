@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from typing import Optional
+
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -19,6 +23,7 @@ class PlaybackWorker(QThread):
         sub_hz: float = 50.0,
         max_speed: int = 1023,
         speed: float = 0.5,
+        audio_path: Optional[Path] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -28,10 +33,14 @@ class PlaybackWorker(QThread):
         self._sub_hz = sub_hz
         self._max_speed = max_speed
         self._speed = speed
+        self._audio_path = audio_path
+        self._audio_player = AudioPlayer()
 
     def run(self) -> None:
         try:
             with self._service.bus_lock:
+                if self._audio_path is not None:
+                    self._audio_player.play(self._audio_path)
                 self._service.action_runner.run_named_action(
                     self._action_name,
                     smooth=self._smooth,

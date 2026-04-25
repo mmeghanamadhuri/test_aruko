@@ -12,6 +12,7 @@ from nina.controllers.navigation_manager import (
     NavigationConfig,
     NavigationManager,
 )
+from nina.services.audio_player import AudioPlayer
 from nina.services.startup_service import StartupService
 
 
@@ -126,6 +127,11 @@ def main() -> None:
             "2.0 = double speed). Smoothness is preserved at any value."
         ),
     )
+    run_action.add_argument(
+        "--no-audio",
+        action="store_true",
+        help="Skip the audio clip associated with this action (if any).",
+    )
     sub.add_parser("list-actions", help="List available action names.")
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
@@ -201,9 +207,21 @@ def main() -> None:
         try:
             ensure_motors_ready(dxl)
             mode = "smooth" if not args.no_smooth else "stepped"
+            audio_rel = action_runner.get_action_audio(args.name)
+            audio_path = (
+                settings.actions_dir / audio_rel
+                if (audio_rel and not args.no_audio)
+                else None
+            )
+            audio_note = ""
+            if audio_path and audio_path.exists():
+                audio_note = f", audio={audio_path.name}"
+                AudioPlayer().play(audio_path)
+            elif audio_rel and not args.no_audio:
+                audio_note = f", audio MISSING ({audio_rel})"
             print(
                 f"Playing '{args.name}' ({mode} mode, sub_hz={args.sub_hz}, "
-                f"max_speed={args.max_speed}, speed={args.speed}x)..."
+                f"max_speed={args.max_speed}, speed={args.speed}x{audio_note})..."
             )
             action_path = action_runner.run_named_action(
                 args.name,
