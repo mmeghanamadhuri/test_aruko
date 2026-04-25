@@ -37,7 +37,11 @@ MAX_SMOOTH_SPEED = 1023
 # forwarded to the OS - long enough to land in the next ping's response window
 # and confuse parsing. We set latency_timer=1ms in initialize_bus() and use an
 # active drain (DRAIN_QUIET_SEC of silence) instead of a fixed sleep.
-BUS_SETTLE_SEC = 1.5
+# Settle time covers the FTDI USB enumeration + UART hand-shake at port-open;
+# 0.3s is enough on every Jetson Nano + U2D2 combo we've measured. The
+# previous 1.5s was paying for the lack of an active drain, which we now do
+# in _robust_clear() right after.
+BUS_SETTLE_SEC = 0.3
 FTDI_LATENCY_MS = 1
 # Drain waits long enough that any in-flight FTDI byte arrives before the
 # next packet is sent. With latency_timer=1ms the FTDI flushes promptly and
@@ -48,15 +52,22 @@ DRAIN_QUIET_SEC_SLOW = 0.020
 DRAIN_MAX_SEC_FAST = 0.030
 DRAIN_MAX_SEC_SLOW = 0.080
 INTER_PACKET_SEC = 0.004
-INTER_PING_SEC = 0.008
-HEALTH_CHECK_PASSES = 3
-HEALTH_PASS_REST_SEC = 0.05
-PING_RETRIES = 5
+INTER_PING_SEC = 0.004
+HEALTH_CHECK_PASSES = 2
+HEALTH_PASS_REST_SEC = 0.03
+# Public ping() retries are for ad-hoc use. run_health_check() bypasses this
+# loop and uses _ping_once() because its own multi-pass loop is the retry,
+# avoiding a 5*3 = 15-retry cascade that turned a noisy bus into a 30s hang.
+PING_RETRIES = 3
 READ_RETRIES = 4
 WRITE_RETRIES = 4
-PING_TIMEOUT_SEC = 0.15
-READ_TIMEOUT_SEC = 0.05
-WRITE_STATUS_TIMEOUT_SEC = 0.05
+# A Dynamixel status packet at 1Mbaud arrives in <2ms. Even with the FTDI
+# latency_timer at the kernel default of 16ms a missing-motor timeout
+# resolves well under 30ms. The old 150ms value was the dominant cost
+# of every failed ping during a noisy startup.
+PING_TIMEOUT_SEC = 0.030
+READ_TIMEOUT_SEC = 0.040
+WRITE_STATUS_TIMEOUT_SEC = 0.040
 TORQUE_VERIFY_PASSES = 3
 
 
@@ -210,6 +221,11 @@ class DynamixelManager:
         self._is_initialized = False
 
     def run_health_check(self, passes: int = HEALTH_CHECK_PASSES) -> HealthReport:
+        """Multi-pass ping of every expected motor. Each pass uses a SINGLE
+        ping attempt per motor (not the public ping()'s built-in retry
+        loop) so the multi-pass loop is the only retry layer - this is
+        what kept a noisy bus from turning startup into a 30 second hang.
+        """
         self._require_initialized()
         reachable: set = set()
         passes = max(1, int(passes))
@@ -217,7 +233,7 @@ class DynamixelManager:
             for sid in self.expected_motor_ids:
                 if sid in reachable:
                     continue
-                if self.ping(sid):
+                if self._ping_once(sid):
                     reachable.add(sid)
                 time.sleep(INTER_PING_SEC)
             if len(reachable) == len(self.expected_motor_ids):
@@ -234,6 +250,16 @@ class DynamixelManager:
             expected_motors=len(self.expected_motor_ids),
             detail=detail,
         )
+
+    def _ping_once(self, sid: int) -> bool:
+        """Single-attempt ping with no internal retry. Used by
+        run_health_check, which provides its own retry via multi-pass."""
+        pkt = self._build(sid, PING)
+        self._robust_clear()
+        self._serial.write(pkt)
+        self._serial.flush()
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
     def set_torque_all(self, enable: bool) -> List[int]:
         """Enable or disable torque on every expected motor and verify by

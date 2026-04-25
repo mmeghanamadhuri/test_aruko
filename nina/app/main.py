@@ -37,8 +37,13 @@ def build_neutral_frame() -> dict:
     }
 
 
-def ensure_motors_ready(dxl: DynamixelManager) -> None:
+def ensure_motors_ready(dxl: DynamixelManager):
+    """Initialize the bus, run a single health check (if not disabled),
+    enable torque, and return the HealthReport. Returns None when health
+    checks are disabled via NINA_HEALTH_CHECK=off so the caller can skip
+    any missing-motor warnings entirely."""
     dxl.initialize_bus()
+    health = None
     mode = health_mode()
     if mode != "off":
         health = dxl.run_health_check()
@@ -51,6 +56,7 @@ def ensure_motors_ready(dxl: DynamixelManager) -> None:
                 raise SystemExit(f"Aborting (strict mode). {msg}")
             print(f"[warn] {msg} (continuing; set NINA_HEALTH_CHECK=strict to abort)")
     dxl.set_torque_all(True)
+    return health
 
 
 def build_app():
@@ -258,7 +264,7 @@ def main() -> None:
 
     if args.command == "run-action":
         try:
-            ensure_motors_ready(dxl)
+            health = ensure_motors_ready(dxl)
 
             actions = action_runner.list_actions()
             if args.name not in actions:
@@ -283,15 +289,10 @@ def main() -> None:
                     raise SystemExit(f"Aborting (--strict). {msg}")
                 print(msg)
 
-            health = dxl.run_health_check()
-            if not health.connected:
-                msg = (
-                    f"[warn] Pre-flight ping: {health.detected_motors}/{health.expected_motors} motors. "
-                    f"{health.detail}. Missing motors will not respond to goal writes."
+            if args.strict and health is not None and not health.connected:
+                raise SystemExit(
+                    f"Aborting (--strict). Bus health: {health.detail}"
                 )
-                if args.strict:
-                    raise SystemExit(f"Aborting (--strict). {msg}")
-                print(msg)
 
             speed_scale = max(0.1, float(getattr(args, "speed_scale", 1.0)))
             smooth = bool(getattr(args, "smooth", True))
