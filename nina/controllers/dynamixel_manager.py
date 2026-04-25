@@ -289,6 +289,47 @@ class DynamixelManager:
         time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
         return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
+    def bus_reliability_report(self, samples: int = 20) -> Dict[int, Dict[str, Any]]:
+        """Ping each expected motor `samples` times and report success
+        rate, average response time, and longest streak of consecutive
+        failures. Useful for pinpointing physical bus problems: one
+        motor at 5/20 with a long failure streak is almost certainly a
+        loose connector to that motor; a smooth gradient where higher
+        IDs get worse points to a missing termination resistor at the
+        end of the chain or to power-supply sag.
+        """
+        self._require_initialized()
+        report: Dict[int, Dict[str, Any]] = {}
+        for sid in self.expected_motor_ids:
+            successes = 0
+            response_times: List[float] = []
+            longest_streak = 0
+            current_streak = 0
+            for _ in range(samples):
+                t0 = time.time()
+                ok = self._ping_once(sid)
+                elapsed = time.time() - t0
+                if ok:
+                    successes += 1
+                    response_times.append(elapsed)
+                    current_streak = 0
+                else:
+                    current_streak += 1
+                    longest_streak = max(longest_streak, current_streak)
+                time.sleep(INTER_PING_SEC)
+            avg_resp_ms = (
+                1000.0 * sum(response_times) / len(response_times)
+                if response_times else None
+            )
+            report[sid] = {
+                "samples": samples,
+                "successes": successes,
+                "success_rate": successes / samples,
+                "avg_response_ms": avg_resp_ms,
+                "longest_failure_streak": longest_streak,
+            }
+        return report
+
     def set_torque_all(self, enable: bool, verify: bool = True) -> List[int]:
         """Enable or disable torque on every expected motor.
 
@@ -467,11 +508,24 @@ class DynamixelManager:
             time.sleep(max(0.0, duration))
             return time.time() + duration
 
+        recorded_speed = max(
+            MIN_SMOOTH_SPEED,
+            min(MAX_SMOOTH_SPEED, int(frame.get("speed", 800))),
+        )
         goal_speed: Dict[int, Tuple[int, int]] = {}
         for sid, goal in targets.items():
-            prev = self._last_goal.get(sid, goal)
-            delta = abs(goal - prev)
-            speed = self._compute_smooth_speed(delta, duration)
+            if sid in self._last_goal:
+                prev = self._last_goal[sid]
+                delta = abs(goal - prev)
+                speed = self._compute_smooth_speed(delta, duration)
+            else:
+                # No known starting position (seed read failed for this
+                # motor on a noisy bus). delta=0 would smooth this to
+                # MIN_SMOOTH_SPEED (~1 RPM) and the motor would visibly
+                # not reach the goal during the frame. Fall back to the
+                # recorded per-frame speed so the motor actually moves;
+                # subsequent frames pick up smoothing automatically.
+                speed = recorded_speed
             goal_speed[sid] = (goal, speed)
             self._last_goal[sid] = goal
 

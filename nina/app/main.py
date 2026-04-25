@@ -137,6 +137,17 @@ def main() -> None:
             "without sudo - the #1 cause of intermittent missing motors."
         ),
     )
+    bus_diag = sub.add_parser(
+        "bus-diag",
+        help=(
+            "Per-motor bus reliability test: pings each motor N times "
+            "and reports success rate. Pinpoints which motor / connector "
+            "is bad when intermittent failures persist after the udev "
+            "rule is installed."
+        ),
+    )
+    bus_diag.add_argument("--samples", type=int, default=30,
+                          help="Pings per motor (default 30)")
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
     run_action.add_argument(
@@ -318,6 +329,65 @@ def main() -> None:
         finally:
             dxl.close()
         return
+
+    if args.command == "bus-diag":
+        try:
+            dxl.initialize_bus()
+            samples = max(5, int(args.samples))
+            print(f"Pinging each motor {samples} times...")
+            report = dxl.bus_reliability_report(samples=samples)
+            print()
+            print(f"{'ID':>3}  {'OK':>5}  {'Rate':>6}  {'AvgRT':>7}  {'WorstStreak':>11}  Verdict")
+            print("-" * 60)
+            unhealthy: List[int] = []
+            for sid, stats in report.items():
+                rate = stats["success_rate"]
+                rt = stats["avg_response_ms"]
+                rt_str = f"{rt:5.1f}ms" if rt is not None else "  --  "
+                if rate >= 0.95:
+                    verdict = "OK"
+                elif rate >= 0.7:
+                    verdict = "FLAKY"
+                    unhealthy.append(sid)
+                else:
+                    verdict = "BAD"
+                    unhealthy.append(sid)
+                print(
+                    f"{sid:>3}  {stats['successes']:>2}/{samples:<2}  "
+                    f"{rate*100:5.1f}%  {rt_str:>7}  "
+                    f"{stats['longest_failure_streak']:>11}  {verdict}"
+                )
+            print()
+            if not unhealthy:
+                print("All motors healthy on the bus.")
+                return
+            ids_str = ", ".join(str(s) for s in unhealthy)
+            print(f"Unreliable motor IDs: {ids_str}")
+            print()
+            print("Hardware troubleshooting checklist (in order of likelihood):")
+            print(
+                "  1. RE-SEAT the daisy-chain connectors at and just before "
+                "the lowest unreliable ID. A loose 3-pin Molex on one motor "
+                "corrupts every motor downstream of it."
+            )
+            print(
+                "  2. Check the 12V / 14.8V power rail at the LAST motor "
+                "in the chain with a multimeter under load. If it's >0.4V "
+                "below the supply, the chain is power-starved - shorter "
+                "wires or a beefier PSU."
+            )
+            print(
+                "  3. If unreliable IDs are clustered at the END of the "
+                "chain (highest IDs), add a 220 ohm termination resistor "
+                "between Data and GND on the last motor's free port."
+            )
+            print(
+                "  4. Verify all motors are at the same baudrate and have "
+                "unique IDs (a duplicate ID will collide every ping)."
+            )
+            return
+        finally:
+            dxl.close()
 
     if args.command == "setup-bus":
         repo_root = Path(__file__).resolve().parents[2]
