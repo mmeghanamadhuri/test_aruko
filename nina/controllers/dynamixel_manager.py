@@ -95,6 +95,7 @@ class DynamixelManager:
         if self._serial and getattr(self._serial, "is_open", False):
             return
 
+        t0 = time.time()
         serial = self._load_serial_module()
         self._serial = serial.Serial(port=self.serial_port, baudrate=self.baudrate, timeout=0.1)
         try:
@@ -117,6 +118,19 @@ class DynamixelManager:
         time.sleep(max(0.0, settle))
         self._robust_clear()
         self._is_initialized = True
+        self._timing("initialize_bus", t0)
+
+    @staticmethod
+    def _timing_enabled() -> bool:
+        val = os.environ.get("NINA_TIMING", "1").strip().lower()
+        return val not in ("0", "false", "no", "off", "")
+
+    def _timing(self, label: str, t0: float, extra: str = "") -> None:
+        if not self._timing_enabled():
+            return
+        ms = (time.time() - t0) * 1000.0
+        suffix = f" ({extra})" if extra else ""
+        print(f"[timing] {label}: {ms:.0f} ms{suffix}")
 
     def _tune_for_latency(self) -> None:
         """Pick drain timings that match the FTDI latency_timer. With the
@@ -227,9 +241,12 @@ class DynamixelManager:
         what kept a noisy bus from turning startup into a 30 second hang.
         """
         self._require_initialized()
+        t0 = time.time()
         reachable: set = set()
         passes = max(1, int(passes))
+        passes_used = 0
         for pass_idx in range(passes):
+            passes_used = pass_idx + 1
             for sid in self.expected_motor_ids:
                 if sid in reachable:
                     continue
@@ -244,6 +261,11 @@ class DynamixelManager:
         missing = [sid for sid in self.expected_motor_ids if sid not in reachable]
         connected = len(missing) == 0
         detail = "All expected motors reachable." if connected else f"Missing motor IDs: {missing}"
+        self._timing(
+            "run_health_check",
+            t0,
+            f"passes={passes_used}, found={len(reachable)}/{len(self.expected_motor_ids)}",
+        )
         return HealthReport(
             connected=connected,
             detected_motors=len(reachable),
@@ -262,31 +284,70 @@ class DynamixelManager:
         return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
     def set_torque_all(self, enable: bool) -> List[int]:
-        """Enable or disable torque on every expected motor and verify by
-        reading the torque register back. Retries any motor that didn't
-        latch the new value. Returns the list of motor IDs that could NOT
-        be set after all retries (empty list = success).
+        """Enable or disable torque on every expected motor.
 
-        This matters most for release-before-recording: a single dropped
-        write would otherwise leave one motor rigid for the whole session
-        with no warning.
+        Fast path: a single SYNC_WRITE pushes the torque byte to all 11
+        motors in one ~30-byte packet (~0.3 ms on the wire), then we
+        verify with one read per motor. Any motor that didn't latch is
+        retried per-motor with a normal write+verify (which is bounded
+        and small).
+
+        Returns the list of motor IDs that could NOT be set after all
+        retries. This matters most for release-before-recording: a single
+        dropped write would otherwise leave one motor rigid for the
+        whole session with no warning.
         """
         self._require_initialized()
+        t0 = time.time()
         target = 1 if enable else 0
-        remaining = list(self.expected_motor_ids)
-        for _ in range(max(1, TORQUE_VERIFY_PASSES)):
+        ids = list(self.expected_motor_ids)
+        self._sync_write_byte(REG_TORQUE_ENABLE[0], {sid: target for sid in ids})
+        time.sleep(0.005)
+
+        still_wrong: List[int] = []
+        for sid in ids:
+            actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+            if actual is None or actual != target:
+                still_wrong.append(sid)
+        if not still_wrong:
+            self._timing("set_torque_all", t0, f"{'on' if enable else 'off'}, fast-path")
+            return []
+
+        remaining = still_wrong
+        for _ in range(max(1, TORQUE_VERIFY_PASSES - 1)):
             for sid in remaining:
                 self.write_reg(sid, *REG_TORQUE_ENABLE, target)
-            still_wrong: List[int] = []
+            failed: List[int] = []
             for sid in remaining:
                 actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
                 if actual is None or actual != target:
-                    still_wrong.append(sid)
-            if not still_wrong:
+                    failed.append(sid)
+            if not failed:
+                self._timing("set_torque_all", t0, f"{'on' if enable else 'off'}, retry-path")
                 return []
-            remaining = still_wrong
+            remaining = failed
             time.sleep(0.02)
+        self._timing(
+            "set_torque_all", t0,
+            f"{'on' if enable else 'off'}, FAILED on {remaining}",
+        )
         return remaining
+
+    def _sync_write_byte(self, addr: int, values: Dict[int, int]) -> None:
+        """Write a single byte at `addr` to many motors in one
+        Protocol-1.0 SYNC_WRITE packet. Used for torque enable, which
+        otherwise costs 11 individual round-trips.
+        """
+        if not values:
+            return
+        params: List[int] = [addr, 1]
+        for sid, val in values.items():
+            params.extend([sid & 0xFF, int(val) & 0xFF])
+        pkt = self._build(BROADCAST_ID, SYNC_WRITE, params)
+        self._serial.reset_input_buffer()
+        self._serial.write(pkt)
+        self._serial.flush()
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
 
     def execute_action_file(self, action_path: Path,
                             speed_scale: float = 1.0,
@@ -306,29 +367,62 @@ class DynamixelManager:
         recorded `speed` value (useful for debugging).
         """
         self._require_initialized()
+        t_total = time.time()
         action = json.loads(action_path.read_text(encoding="utf-8"))
         frames = action.get("frames", [])
         self._last_speed = None
         self._last_goal.clear()
         if smooth:
+            t_seed = time.time()
             self._seed_last_goal_from_present()
+            self._timing(
+                "seed_present_positions", t_seed,
+                f"{len(self._last_goal)}/{len(self.expected_motor_ids)} motors read",
+            )
 
         scale = max(0.05, float(speed_scale))
         next_deadline = time.time()
+        first_frame_sent_at: Optional[float] = None
         for frame in frames:
             if smooth:
                 next_deadline = self._execute_frame_smooth(
                     frame, scale=scale, deadline=next_deadline)
             else:
                 self._execute_frame(frame, speed_scale=speed_scale)
+            if first_frame_sent_at is None:
+                first_frame_sent_at = time.time()
+                self._timing(
+                    "first_frame_sent", t_total,
+                    f"{len(frames)} frames queued",
+                )
+        self._timing("execute_action_file_total", t_total, f"{len(frames)} frames")
 
     def _seed_last_goal_from_present(self) -> None:
         """Read every motor's current position so the first frame's
-        smooth-speed math has a real starting point."""
+        smooth-speed math has a real starting point. Best-effort with a
+        single attempt per motor - if a read drops, the next frame's
+        smoothing falls back to the recorded goal as the prior, which is
+        close enough that the user won't perceive it (and the prepended
+        neutral frame in every recording further covers this case)."""
         for sid in self.expected_motor_ids:
-            value = self.read_reg(sid, *REG_PRESENT_POS)
+            value = self._read_reg_once(sid, *REG_PRESENT_POS)
             if value is not None:
                 self._last_goal[sid] = self._clamp_pos(value)
+
+    def _read_reg_once(self, sid: int, addr: int, size: int) -> Optional[int]:
+        """Single-attempt register read, used where best-effort latency
+        is more important than guaranteed delivery (seeding playback,
+        capture priming)."""
+        pkt = self._build(sid, READ_DATA, [addr, size])
+        self._robust_clear()
+        self._serial.write(pkt)
+        self._serial.flush()
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+        resp = self._recv(sid, timeout=READ_TIMEOUT_SEC)
+        if resp is not None and len(resp[1]) >= size:
+            data = resp[1]
+            return data[0] if size == 1 else (data[0] | (data[1] << 8))
+        return None
 
     def _execute_frame_smooth(self, frame: Dict[str, Any],
                               scale: float, deadline: float) -> float:

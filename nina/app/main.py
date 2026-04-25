@@ -263,6 +263,7 @@ def main() -> None:
         return
 
     if args.command == "run-action":
+        cmd_started = time.time()
         try:
             health = ensure_motors_ready(dxl)
 
@@ -300,6 +301,7 @@ def main() -> None:
             scale_note = f" at {speed_scale}x" if speed_scale != 1.0 else ""
             mode_note = "" if smooth else " (raw speed mode)"
             print(f"Action '{args.name}' executed from {action_path}{scale_note}{mode_note}")
+            print(f"[timing] total command wall-clock: {(time.time() - cmd_started):.1f} s")
         finally:
             dxl.close()
         return
