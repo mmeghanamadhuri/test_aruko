@@ -289,6 +289,81 @@ class DynamixelManager:
         time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
         return self._recv(sid, timeout=PING_TIMEOUT_SEC) is not None
 
+    def scan_baudrates(self,
+                       baudrates: Optional[List[int]] = None,
+                       samples_per_baud: int = 5) -> Dict[int, Dict[str, Any]]:
+        """Try a list of common Dynamixel baudrates and ping every
+        expected motor at each one. Returns per-baudrate stats so the
+        caller can identify which baud the motors are actually using.
+
+        This is the diagnostic to run when bus-diag shows uniformly
+        terrible reliability across every motor: the symptom is what
+        you get when the host is talking at the wrong baud and just
+        catches occasional random byte-pattern matches in the noise.
+        """
+        self._require_initialized()
+        if baudrates is None:
+            baudrates = [
+                9600, 57600, 115200, 200000, 222222, 250000,
+                400000, 500000, 1_000_000, 2_000_000, 3_000_000,
+            ]
+        original_baud = self._serial.baudrate
+        results: Dict[int, Dict[str, Any]] = {}
+        try:
+            for baud in baudrates:
+                try:
+                    self._serial.baudrate = baud
+                except (ValueError, OSError):
+                    results[baud] = {"error": "unsupported by driver", "found": []}
+                    continue
+                time.sleep(0.05)
+                self._robust_clear()
+                found: List[int] = []
+                for sid in self.expected_motor_ids:
+                    hits = 0
+                    for _ in range(max(1, int(samples_per_baud))):
+                        if self._ping_once(sid):
+                            hits += 1
+                    if hits >= max(1, samples_per_baud // 2):
+                        found.append(sid)
+                results[baud] = {
+                    "found": found,
+                    "found_count": len(found),
+                }
+        finally:
+            try:
+                self._serial.baudrate = original_baud
+            except (ValueError, OSError):
+                pass
+            self._robust_clear()
+        return results
+
+    def echo_check(self, samples: int = 20) -> Dict[str, Any]:
+        """Send a ping to a bogus motor ID (99) and listen. If anything
+        comes back, the FTDI cable is echoing our own transmissions
+        onto the receive line - that means the echo can be parsed as a
+        fake 'success' response and confuse every ping. Robotis U2D2
+        suppresses echo in hardware; some generic FTDI cables do not.
+        """
+        self._require_initialized()
+        bogus_id = 99
+        echoes = 0
+        for _ in range(samples):
+            self._robust_clear()
+            pkt = self._build(bogus_id, PING)
+            self._serial.write(pkt)
+            self._serial.flush()
+            time.sleep(0.005)
+            if self._serial.in_waiting:
+                _ = self._serial.read(self._serial.in_waiting)
+                echoes += 1
+            time.sleep(0.005)
+        return {
+            "samples": samples,
+            "echoes_seen": echoes,
+            "echo_rate": echoes / samples,
+        }
+
     def bus_reliability_report(self, samples: int = 20) -> Dict[int, Dict[str, Any]]:
         """Ping each expected motor `samples` times and report success
         rate, average response time, and longest streak of consecutive

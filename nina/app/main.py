@@ -148,6 +148,24 @@ def main() -> None:
     )
     bus_diag.add_argument("--samples", type=int, default=30,
                           help="Pings per motor (default 30)")
+    sub.add_parser(
+        "bus-scan-baud",
+        help=(
+            "Try every common Dynamixel baudrate and report which one "
+            "actually finds motors. Run this when bus-diag shows "
+            "uniformly terrible reliability across all motors - the "
+            "host is probably at the wrong baud."
+        ),
+    )
+    sub.add_parser(
+        "bus-echo-check",
+        help=(
+            "Ping a bogus motor ID and check whether bytes come back. "
+            "If yes, the FTDI cable is echoing our transmissions and "
+            "every ping result is unreliable. Robotis U2D2 suppresses "
+            "echo; some generic FTDI cables don't."
+        ),
+    )
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
     run_action.add_argument(
@@ -329,6 +347,90 @@ def main() -> None:
         finally:
             dxl.close()
         return
+
+    if args.command == "bus-scan-baud":
+        try:
+            dxl.initialize_bus()
+            print(f"Scanning baudrates on {settings.serial_port}...")
+            print(f"(currently configured baud: {settings.baudrate})")
+            print()
+            results = dxl.scan_baudrates(samples_per_baud=4)
+            print(f"{'Baud':>10}  {'Found':>5}  IDs")
+            print("-" * 60)
+            best_baud = None
+            best_count = 0
+            for baud, info in results.items():
+                if "error" in info:
+                    print(f"{baud:>10}  {'-':>5}  ({info['error']})")
+                    continue
+                ids = info["found"]
+                count = info["found_count"]
+                ids_str = ",".join(str(s) for s in ids) if ids else "-"
+                print(f"{baud:>10}  {count:>5}  [{ids_str}]")
+                if count > best_count:
+                    best_count = count
+                    best_baud = baud
+            print()
+            if best_baud is None or best_count == 0:
+                print("NO baudrate found any motors. Likely problems:")
+                print("  * /dev/ttyUSB0 is not the Dynamixel adapter at all.")
+                print("    Check 'ls /dev/ttyUSB*' and 'dmesg | grep ttyUSB'.")
+                print("  * Motor power is off, or bus cable is unplugged.")
+                print("  * The motors are at a non-standard baud not in the list.")
+            elif best_baud != settings.baudrate:
+                print(
+                    f"Best match: {best_baud} baud (found {best_count}/"
+                    f"{len(DEFAULT_MOTOR_IDS)} motors)."
+                )
+                print(
+                    f"You are configured for {settings.baudrate}. "
+                    f"Update with: export NINA_DXL_BAUD={best_baud}"
+                )
+            else:
+                print(
+                    f"Currently configured baud {best_baud} is the best match "
+                    f"({best_count}/{len(DEFAULT_MOTOR_IDS)} motors)."
+                )
+            return
+        finally:
+            dxl.close()
+
+    if args.command == "bus-echo-check":
+        try:
+            dxl.initialize_bus()
+            print("Sending pings to bogus motor ID 99 and checking for echo...")
+            result = dxl.echo_check(samples=20)
+            print(
+                f"Echoes seen: {result['echoes_seen']}/{result['samples']} "
+                f"({result['echo_rate']*100:.0f}%)"
+            )
+            print()
+            if result["echo_rate"] > 0.5:
+                print(
+                    "ECHO DETECTED. Your FTDI cable is bouncing our own "
+                    "transmissions back onto the receive line, where they "
+                    "get parsed as fake 'success' responses. This makes "
+                    "every ping result unreliable."
+                )
+                print()
+                print("Options to fix:")
+                print(
+                    "  1. Use a Robotis U2D2 (suppresses echo in hardware)."
+                )
+                print(
+                    "  2. If your cable has a TXEN signal, wire it to RTS "
+                    "and use serial.rs485 mode."
+                )
+                print(
+                    "  3. As a software workaround we'd have to drain "
+                    "exactly len(packet) bytes after every send. Tell me "
+                    "if you want that and we'll add it."
+                )
+            else:
+                print("No echo detected - cable is wired correctly.")
+            return
+        finally:
+            dxl.close()
 
     if args.command == "bus-diag":
         try:
