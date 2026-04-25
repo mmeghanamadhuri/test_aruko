@@ -5,11 +5,39 @@ robot screen — Nina — with two tabs:
 
 - **Playback** lists every action registered in
   `nina/actions/manifest.json` and plays them with the smooth
-  interpolated pipeline (`DynamixelManager.play_smooth`).
+  interpolated pipeline (`DynamixelManager.play_smooth`). If the
+  manifest entry includes an `audio` clip, it is played alongside the
+  motion; an optional `audio_offset` (seconds) delays the clip so it
+  fires in sync with the gesture (e.g. when the hands meet during
+  Namaste).
 - **Record** releases torque, counts down, samples the arm at the
   requested rate, and saves the JSON under
   `nina/actions/recordings/`. A **Stop Recording** button cuts the
   capture early and saves whatever was already collected.
+
+## Action audio
+
+Manifest entries can be either a string (`"namaste.json"`) or a dict:
+
+```json
+{
+  "namaste": {
+    "file": "namaste.json",
+    "audio": "audio/namaste.mp3",
+    "audio_offset": 2.0
+  }
+}
+```
+
+Generate or tune audio with the helper script:
+
+```bash
+# Generate the MP3 with gTTS and register it in the manifest
+python3 scripts/generate-action-audio.py namaste
+
+# Tune the offset later without re-generating audio
+python3 scripts/generate-action-audio.py namaste --offset 2.5 --skip-tts
+```
 
 The launcher screen is intentionally future-proofed (greyed-out
 "Carbot" and "+ Add robot" tiles) so additional robots can be plugged

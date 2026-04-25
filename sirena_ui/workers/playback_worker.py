@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Optional
 
@@ -24,6 +25,7 @@ class PlaybackWorker(QThread):
         max_speed: int = 1023,
         speed: float = 0.5,
         audio_path: Optional[Path] = None,
+        audio_offset_sec: float = 0.0,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -34,13 +36,29 @@ class PlaybackWorker(QThread):
         self._max_speed = max_speed
         self._speed = speed
         self._audio_path = audio_path
+        self._audio_offset_sec = max(0.0, float(audio_offset_sec))
         self._audio_player = AudioPlayer()
+        self._audio_timer: Optional[threading.Timer] = None
+
+    def _schedule_audio(self) -> None:
+        if self._audio_path is None:
+            return
+        if self._audio_offset_sec <= 0.0:
+            self._audio_player.play(self._audio_path)
+            return
+        timer = threading.Timer(
+            self._audio_offset_sec,
+            self._audio_player.play,
+            args=(self._audio_path,),
+        )
+        timer.daemon = True
+        self._audio_timer = timer
+        timer.start()
 
     def run(self) -> None:
         try:
             with self._service.bus_lock:
-                if self._audio_path is not None:
-                    self._audio_player.play(self._audio_path)
+                self._schedule_audio()
                 self._service.action_runner.run_named_action(
                     self._action_name,
                     smooth=self._smooth,
@@ -50,4 +68,6 @@ class PlaybackWorker(QThread):
                 )
             self.finished_ok.emit(self._action_name)
         except Exception as exc:  # pragma: no cover - reported back to UI
+            if self._audio_timer is not None:
+                self._audio_timer.cancel()
             self.failed.emit(str(exc))

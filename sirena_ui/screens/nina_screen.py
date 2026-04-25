@@ -131,10 +131,19 @@ class NinaScreen(QWidget):
             return
         self._playback_panel.set_buttons_enabled(False)
         audio_path = self._service.action_audio_path(name)
-        suffix = " (with audio)" if audio_path else ""
+        audio_offset = self._service.action_audio_offset(name) if audio_path else 0.0
+        if audio_path and audio_offset > 0:
+            suffix = f" (audio +{audio_offset:.1f}s)"
+        elif audio_path:
+            suffix = " (with audio)"
+        else:
+            suffix = ""
         self._set_status(f"Status: Playing '{name}'{suffix} \u2026")
         self._playback_worker = PlaybackWorker(
-            self._service, name, audio_path=audio_path
+            self._service,
+            name,
+            audio_path=audio_path,
+            audio_offset_sec=audio_offset,
         )
         self._playback_worker.finished_ok.connect(self._on_play_done)
         self._playback_worker.failed.connect(self._on_play_failed)

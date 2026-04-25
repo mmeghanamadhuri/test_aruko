@@ -1,5 +1,6 @@
 import argparse
 import json
+import threading
 import time
 from pathlib import Path
 from typing import List
@@ -132,6 +133,15 @@ def main() -> None:
         action="store_true",
         help="Skip the audio clip associated with this action (if any).",
     )
+    run_action.add_argument(
+        "--audio-offset",
+        type=float,
+        default=None,
+        help=(
+            "Override the manifest audio_offset for this action (seconds to wait "
+            "after motion starts before firing the audio clip)."
+        ),
+    )
     sub.add_parser("list-actions", help="List available action names.")
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
@@ -204,6 +214,7 @@ def main() -> None:
         return
 
     if args.command == "run-action":
+        audio_timer: "threading.Timer | None" = None
         try:
             ensure_motors_ready(dxl)
             mode = "smooth" if not args.no_smooth else "stepped"
@@ -213,10 +224,26 @@ def main() -> None:
                 if (audio_rel and not args.no_audio)
                 else None
             )
+            audio_offset = (
+                args.audio_offset
+                if args.audio_offset is not None
+                else action_runner.get_action_audio_offset(args.name)
+            )
+            audio_offset = max(0.0, float(audio_offset))
+
             audio_note = ""
             if audio_path and audio_path.exists():
-                audio_note = f", audio={audio_path.name}"
-                AudioPlayer().play(audio_path)
+                offset_note = f" +{audio_offset:.2f}s" if audio_offset > 0 else ""
+                audio_note = f", audio={audio_path.name}{offset_note}"
+                player = AudioPlayer()
+                if audio_offset > 0:
+                    audio_timer = threading.Timer(
+                        audio_offset, player.play, args=(audio_path,)
+                    )
+                    audio_timer.daemon = True
+                    audio_timer.start()
+                else:
+                    player.play(audio_path)
             elif audio_rel and not args.no_audio:
                 audio_note = f", audio MISSING ({audio_rel})"
             print(
@@ -231,6 +258,10 @@ def main() -> None:
                 speed=args.speed,
             )
             print(f"Action '{args.name}' executed from {action_path}")
+        except Exception:
+            if audio_timer is not None:
+                audio_timer.cancel()
+            raise
         finally:
             dxl.close()
         return

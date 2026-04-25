@@ -91,3 +91,7 @@ class NinaService:
             if candidate.exists():
                 return candidate
         return None
+
+    def action_audio_offset(self, name: str) -> float:
+        """Per-action delay (seconds) before the audio clip is fired."""
+        return self.action_runner.get_action_audio_offset(name)

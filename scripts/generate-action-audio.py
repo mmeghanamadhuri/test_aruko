@@ -8,6 +8,10 @@ Examples:
     python3 scripts/generate-action-audio.py namaste
     python3 scripts/generate-action-audio.py namaste --text "Namaste, welcome"
     python3 scripts/generate-action-audio.py wave --lang en --tld co.in
+    # Set/clear the per-action audio offset (seconds the runtime waits
+    # after motion starts before firing the clip; tune to match the gesture).
+    python3 scripts/generate-action-audio.py namaste --offset 2.0
+    python3 scripts/generate-action-audio.py namaste --offset 0 --skip-tts
 
 Requirements (one-time):
     pip install --user gTTS
@@ -39,26 +43,43 @@ def main() -> int:
         action="store_true",
         help="Generate the file but skip updating the manifest entry.",
     )
+    parser.add_argument(
+        "--offset",
+        type=float,
+        default=None,
+        help=(
+            "Per-action audio offset in seconds (delay between motion start "
+            "and audio playback). Use 0 to clear an existing offset."
+        ),
+    )
+    parser.add_argument(
+        "--skip-tts",
+        action="store_true",
+        help="Skip generating the MP3 (useful when you only want to update --offset).",
+    )
     args = parser.parse_args()
-
-    try:
-        from gtts import gTTS
-    except ImportError:
-        print("gTTS is not installed. Run: pip install --user gTTS", file=sys.stderr)
-        return 1
 
     repo_root = Path(__file__).resolve().parents[1]
     actions_dir = repo_root / "nina" / "actions"
     audio_dir = actions_dir / "audio"
     manifest_path = actions_dir / "manifest.json"
 
-    audio_dir.mkdir(parents=True, exist_ok=True)
-    out_path = audio_dir / f"{args.action}.mp3"
+    if not args.skip_tts:
+        try:
+            from gtts import gTTS
+        except ImportError:
+            print("gTTS is not installed. Run: pip install --user gTTS", file=sys.stderr)
+            return 1
 
-    text = args.text or args.action.replace("_", " ").title()
-    print(f"Generating audio for action '{args.action}': '{text}' (lang={args.lang}, tld={args.tld})")
-    gTTS(text=text, lang=args.lang, tld=args.tld, slow=False).save(str(out_path))
-    print(f"Saved {out_path} ({out_path.stat().st_size} bytes)")
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        out_path = audio_dir / f"{args.action}.mp3"
+        text = args.text or args.action.replace("_", " ").title()
+        print(
+            f"Generating audio for action '{args.action}': '{text}' "
+            f"(lang={args.lang}, tld={args.tld})"
+        )
+        gTTS(text=text, lang=args.lang, tld=args.tld, slow=False).save(str(out_path))
+        print(f"Saved {out_path} ({out_path.stat().st_size} bytes)")
 
     if args.no_register:
         return 0
@@ -77,13 +98,35 @@ def main() -> int:
             "Add the action first (record-action --register) or pass --no-register."
         )
         return 0
+
     if isinstance(existing, dict):
-        existing["audio"] = rel_audio
-        actions[args.action] = existing
+        entry = dict(existing)
     else:
-        actions[args.action] = {"file": existing, "audio": rel_audio}
+        entry = {"file": existing}
+
+    if not args.skip_tts:
+        entry["audio"] = rel_audio
+    elif "audio" not in entry:
+        print(
+            "--skip-tts was set but the manifest entry has no existing audio mapping; "
+            "nothing to update.",
+            file=sys.stderr,
+        )
+
+    if args.offset is not None:
+        if args.offset > 0:
+            entry["audio_offset"] = float(args.offset)
+        else:
+            entry.pop("audio_offset", None)
+
+    actions[args.action] = entry
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    print(f"Updated manifest entry for '{args.action}' -> audio={rel_audio}")
+    audio_field = entry.get("audio", "<none>")
+    offset_field = entry.get("audio_offset", 0.0)
+    print(
+        f"Updated manifest entry for '{args.action}' -> audio={audio_field}, "
+        f"audio_offset={offset_field}"
+    )
     return 0
 
 

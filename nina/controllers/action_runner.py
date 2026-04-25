@@ -37,6 +37,19 @@ class ActionRunner:
                 return audio
         return None
 
+    def get_action_audio_offset(self, action_name: str) -> float:
+        """
+        Seconds to wait after the action starts before firing the audio
+        clip. Defaults to 0.0 (audio fires immediately).
+        """
+        manifest = self._load_manifest()
+        raw = manifest.get("actions", {}).get(action_name)
+        if isinstance(raw, dict):
+            offset = raw.get("audio_offset")
+            if isinstance(offset, (int, float)):
+                return max(0.0, float(offset))
+        return 0.0
+
     def run_named_action(
         self,
         action_name: str,
@@ -73,20 +86,31 @@ class ActionRunner:
         action_name: str,
         file_name: str,
         audio_name: Optional[str] = None,
+        audio_offset: Optional[float] = None,
     ) -> None:
         """
-        Add or update a manifest entry. If the existing entry already has
-        an audio mapping it is preserved unless `audio_name` is given.
+        Add or update a manifest entry. Existing audio / audio_offset values
+        are preserved unless the caller provides new ones.
         """
         manifest = self._load_manifest()
         actions = manifest.setdefault("actions", {})
         existing = actions.get(action_name)
         existing_audio: Optional[str] = None
+        existing_offset: Optional[float] = None
         if isinstance(existing, dict):
-            existing_audio = existing.get("audio") if isinstance(existing.get("audio"), str) else None
+            if isinstance(existing.get("audio"), str):
+                existing_audio = existing["audio"]
+            if isinstance(existing.get("audio_offset"), (int, float)):
+                existing_offset = float(existing["audio_offset"])
+
         audio_to_keep = audio_name if audio_name is not None else existing_audio
+        offset_to_keep = audio_offset if audio_offset is not None else existing_offset
+
         if audio_to_keep:
-            actions[action_name] = {"file": file_name, "audio": audio_to_keep}
+            entry: Dict[str, Any] = {"file": file_name, "audio": audio_to_keep}
+            if offset_to_keep is not None and offset_to_keep > 0:
+                entry["audio_offset"] = float(offset_to_keep)
+            actions[action_name] = entry
         else:
             actions[action_name] = file_name
         self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
