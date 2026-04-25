@@ -19,8 +19,9 @@ This folder contains the new application structure for **Nina**, a wheeled bot w
 - `controllers/action_runner.py`: action lookup and execution
 - `services/recording_service.py`: record/playback session management
 - `actions/manifest.json`: maps action names to JSON files
-- `actions/neutral.json`: default boot neutral motion
-- `actions/namaste.json`: example named motion
+- `actions/recordings/neutral.json`: default boot neutral motion
+- `actions/recordings/namaste.json`: example named motion
+- `actions/audio/`: optional MP3/WAV clips played alongside an action
 - `config/settings.py`: runtime config and paths
 - `systemd/nina-app.service`: startup service template for Jetson
 
@@ -36,5 +37,5 @@ python -m nina.app.main list-actions
 ## Notes
 
 - `DynamixelManager` now opens the serial bus, pings motors, toggles torque, reads positions, and plays action frames.
-- Recording samples live present positions and saves action JSON files under `nina/actions/recordings/`.
-- Tune `neutral.json` and `namaste.json` on hardware before using them as final robot motions.
+- Recording samples live present positions and saves action JSON files under `nina/actions/recordings/` (this is also where the bundled `neutral` and `namaste` actions live).
+- Tune `recordings/neutral.json` and `recordings/namaste.json` on hardware before using them as final robot motions.

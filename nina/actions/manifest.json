@@ -1,9 +1,9 @@
 {
   "robot": "nina",
   "actions": {
-    "neutral": "neutral.json",
+    "neutral": "recordings/neutral.json",
     "namaste": {
-      "file": "namaste.json",
+      "file": "recordings/namaste.json",
       "audio": "audio/namaste.mp3"
     }
   }

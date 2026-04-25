@@ -7,7 +7,7 @@ from nina.controllers.dynamixel_manager import DynamixelManager
 
 # Manifest entry can be either a plain string (the action's JSON file
 # relative to actions_dir) or a dict like
-#     {"file": "namaste.json", "audio": "audio/namaste.mp3"}
+#     {"file": "recordings/namaste.json", "audio": "audio/namaste.mp3"}
 # Both forms are read/written transparently so existing manifests keep
 # working.
 ManifestEntry = Union[str, Dict[str, Any]]

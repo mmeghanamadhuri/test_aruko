@@ -17,12 +17,14 @@ robot screen — Nina — with two tabs:
 
 ## Action audio
 
-Manifest entries can be either a string (`"namaste.json"`) or a dict:
+Action JSON files live in `nina/actions/recordings/` (the `Record`
+tab writes there too). Manifest entries can be either a string
+(`"recordings/namaste.json"`) or a dict:
 
 ```json
 {
   "namaste": {
-    "file": "namaste.json",
+    "file": "recordings/namaste.json",
     "audio": "audio/namaste.mp3",
     "audio_offset": 2.0
   }
