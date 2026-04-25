@@ -39,8 +39,14 @@ MAX_SMOOTH_SPEED = 1023
 # active drain (DRAIN_QUIET_SEC of silence) instead of a fixed sleep.
 BUS_SETTLE_SEC = 1.5
 FTDI_LATENCY_MS = 1
-DRAIN_QUIET_SEC = 0.003
-DRAIN_MAX_SEC = 0.030
+# Drain waits long enough that any in-flight FTDI byte arrives before the
+# next packet is sent. With latency_timer=1ms the FTDI flushes promptly and
+# 3ms of quiet is plenty. With the default 16ms latency a late response can
+# arrive ~16ms after our send, so we need a much longer quiet window.
+DRAIN_QUIET_SEC_FAST = 0.003
+DRAIN_QUIET_SEC_SLOW = 0.020
+DRAIN_MAX_SEC_FAST = 0.030
+DRAIN_MAX_SEC_SLOW = 0.080
 INTER_PACKET_SEC = 0.004
 INTER_PING_SEC = 0.008
 HEALTH_CHECK_PASSES = 3
@@ -70,6 +76,9 @@ class DynamixelManager:
         self._last_goal: Dict[int, int] = {}
         self._capture_miss_count: int = 0
         self._capture_total_reads: int = 0
+        self._latency_timer_ms: Optional[int] = None
+        self._drain_quiet_sec: float = DRAIN_QUIET_SEC_FAST
+        self._drain_max_sec: float = DRAIN_MAX_SEC_FAST
 
     def initialize_bus(self) -> None:
         if self._serial and getattr(self._serial, "is_open", False):
@@ -82,7 +91,12 @@ class DynamixelManager:
         except ValueError:
             latency_ms = FTDI_LATENCY_MS
         latency_set = self._set_ftdi_latency_timer(latency_ms)
-        self._latency_timer_ms = latency_ms if latency_set else None
+        if latency_set:
+            self._latency_timer_ms = latency_ms
+        else:
+            self._latency_timer_ms = self.read_ftdi_latency_timer()
+        self._tune_for_latency()
+        self._announce_bus_health(target_latency_ms=latency_ms, latency_set=latency_set)
         self._serial.reset_input_buffer()
         self._serial.reset_output_buffer()
         try:
@@ -93,6 +107,45 @@ class DynamixelManager:
         self._robust_clear()
         self._is_initialized = True
 
+    def _tune_for_latency(self) -> None:
+        """Pick drain timings that match the FTDI latency_timer. With the
+        kernel default of 16ms a late response can arrive 16ms after our
+        send, so we wait longer for the line to go quiet before sending
+        the next packet."""
+        actual = self._latency_timer_ms
+        if actual is None or actual > 4:
+            self._drain_quiet_sec = DRAIN_QUIET_SEC_SLOW
+            self._drain_max_sec = DRAIN_MAX_SEC_SLOW
+        else:
+            self._drain_quiet_sec = DRAIN_QUIET_SEC_FAST
+            self._drain_max_sec = DRAIN_MAX_SEC_FAST
+
+    def _announce_bus_health(self, target_latency_ms: int, latency_set: bool) -> None:
+        """Print a single, actionable line so the user always knows whether
+        the FTDI latency_timer is at the recommended value. The most
+        common cause of intermittent missing motors is running without
+        sudo, which leaves latency_timer at 16ms - this makes that
+        instantly visible from any command, not just health-check."""
+        actual = self._latency_timer_ms
+        if latency_set:
+            print(f"[bus] FTDI latency_timer = {actual} ms (recommended).")
+            return
+        if actual is None:
+            print(
+                "[bus] WARNING: could not read or set FTDI latency_timer. "
+                "Bus reads will be unreliable. Run with sudo, or install a "
+                "udev rule (see scripts/install-ftdi-udev.sh) so the timer "
+                "can be set without root."
+            )
+        else:
+            print(
+                f"[bus] WARNING: FTDI latency_timer = {actual} ms "
+                f"(target {target_latency_ms} ms). Without root we cannot "
+                "lower it. Intermittent missing motors are expected. Either "
+                "re-run with sudo, or run 'sudo bash "
+                "scripts/install-ftdi-udev.sh' once to fix this permanently."
+            )
+
     def _set_ftdi_latency_timer(self, value_ms: int) -> bool:
         """Set the FTDI USB-serial chip's latency_timer register.
 
@@ -100,9 +153,9 @@ class DynamixelManager:
         sit in the FTDI FIFO long enough to leak into the next request's
         response window. 1ms is the Robotis-recommended value.
 
-        We try the sysfs path (works for any FTDI on Linux). If that fails we
-        silently continue - the active drain in _robust_clear still helps.
-        Returns True if the timer was set, False otherwise.
+        Tries multiple sysfs paths because different kernels expose the
+        attribute at different locations. Returns True if the timer was set
+        (and was actually accepted by the kernel), False otherwise.
         """
         port = getattr(self._serial, "port", None) or self.serial_port
         if not port or not port.startswith("/dev/"):
@@ -110,15 +163,42 @@ class DynamixelManager:
         device_name = port.rsplit("/", 1)[-1]
         candidates = [
             f"/sys/bus/usb-serial/devices/{device_name}/latency_timer",
+            f"/sys/class/tty/{device_name}/device/latency_timer",
         ]
         for path in candidates:
             try:
                 with open(path, "w") as fh:
                     fh.write(str(int(value_ms)))
-                return True
+                try:
+                    with open(path, "r") as fh:
+                        actual = int(fh.read().strip())
+                    if actual == int(value_ms):
+                        return True
+                except (FileNotFoundError, PermissionError, OSError, ValueError):
+                    return True
             except (FileNotFoundError, PermissionError, OSError):
                 continue
         return False
+
+    def read_ftdi_latency_timer(self) -> Optional[int]:
+        """Read the current FTDI latency_timer value from sysfs without
+        modifying it. Returns the integer ms value, or None if no sysfs
+        path could be read."""
+        port = getattr(self._serial, "port", None) or self.serial_port
+        if not port or not port.startswith("/dev/"):
+            return None
+        device_name = port.rsplit("/", 1)[-1]
+        candidates = [
+            f"/sys/bus/usb-serial/devices/{device_name}/latency_timer",
+            f"/sys/class/tty/{device_name}/device/latency_timer",
+        ]
+        for path in candidates:
+            try:
+                with open(path, "r") as fh:
+                    return int(fh.read().strip())
+            except (FileNotFoundError, PermissionError, OSError, ValueError):
+                continue
+        return None
 
     @property
     def latency_timer_ms(self) -> Optional[int]:
@@ -504,9 +584,10 @@ class DynamixelManager:
         FTDI chip's internal FIFO. Bytes still in the chip can land in the
         OS buffer right after the flush and contaminate the next response.
         We poll for actual bytes and read them out; once the line has been
-        quiet for DRAIN_QUIET_SEC we do one final OS-side flush.
+        quiet for self._drain_quiet_sec (tuned to the latency_timer) we do
+        one final OS-side flush.
         """
-        deadline = time.time() + DRAIN_MAX_SEC
+        deadline = time.time() + self._drain_max_sec
         last_byte_seen_at = time.time()
         while time.time() < deadline:
             pending = self._serial.in_waiting
@@ -514,7 +595,7 @@ class DynamixelManager:
                 self._serial.read(pending)
                 last_byte_seen_at = time.time()
             else:
-                if time.time() - last_byte_seen_at >= DRAIN_QUIET_SEC:
+                if time.time() - last_byte_seen_at >= self._drain_quiet_sec:
                     break
                 time.sleep(0.0005)
         self._serial.reset_input_buffer()

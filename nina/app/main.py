@@ -123,6 +123,14 @@ def main() -> None:
     sub.add_parser("startup", help="Initialize motors, run health checks, and go neutral.")
     health_check = sub.add_parser("health-check", help="Ping every expected motor and print which IDs responded (no torque, no motion).")
     health_check.add_argument("--passes", type=int, default=3, help="Number of ping passes to attempt (default 3)")
+    sub.add_parser(
+        "setup-bus",
+        help=(
+            "Print instructions (and the exact command) to install the udev "
+            "rule that lets Nina lower the FTDI latency_timer to 1 ms "
+            "without sudo - the #1 cause of intermittent missing motors."
+        ),
+    )
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
     run_action.add_argument(
@@ -298,15 +306,6 @@ def main() -> None:
     if args.command == "health-check":
         try:
             dxl.initialize_bus()
-            timer = dxl.latency_timer_ms
-            if timer is not None:
-                print(f"FTDI latency_timer set to {timer} ms.")
-            else:
-                print(
-                    "[warn] Could not set FTDI latency_timer (may need root). "
-                    "Try: 'echo 1 | sudo tee /sys/bus/usb-serial/devices/ttyUSB0/latency_timer'. "
-                    "Default 16 ms causes intermittent Dynamixel read failures."
-                )
             health = dxl.run_health_check(passes=args.passes)
             print(
                 f"Motors found: {health.detected_motors}/{health.expected_motors}. {health.detail}"
@@ -315,6 +314,26 @@ def main() -> None:
                 raise SystemExit(1)
         finally:
             dxl.close()
+        return
+
+    if args.command == "setup-bus":
+        repo_root = Path(__file__).resolve().parents[2]
+        script = repo_root / "scripts" / "install-ftdi-udev.sh"
+        print("Random missing motors on every health check is almost always")
+        print("the FTDI latency_timer being stuck at the kernel default of 16 ms.")
+        print("Without root we cannot lower it, so each Nina command silently")
+        print("warns and proceeds with a slow bus.")
+        print()
+        print("To fix it permanently (one-shot), run:")
+        print()
+        print(f"    sudo bash {script}")
+        print()
+        print("Then unplug and replug the FTDI dongle (or reboot) and verify:")
+        print()
+        print("    cat /sys/bus/usb-serial/devices/ttyUSB0/latency_timer")
+        print("    # should print: 1")
+        print()
+        print("After that no Nina command needs sudo for bus reliability.")
         return
 
     if args.command == "list-actions":
