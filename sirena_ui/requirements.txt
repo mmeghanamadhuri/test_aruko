@@ -1,0 +1,8 @@
+# Sirena Control Center desktop app (PyQt5).
+#
+# Recommended on Jetson Nano: install via apt (no compile, fastest):
+#     sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg
+#
+# Pip alternative (if running inside a venv):
+PyQt5>=5.15
+Pillow>=8.0

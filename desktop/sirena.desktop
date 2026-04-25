@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Sirena
+GenericName=Sirena Control Center
+Comment=Control Sirena robots (Nina arm playback and recording)
+Exec=__EXEC__
+Icon=__ICON__
+Terminal=false
+Categories=Utility;Robotics;
+StartupNotify=true
+Keywords=robot;sirena;nina;dynamixel;
