@@ -100,6 +100,23 @@ def main() -> None:
     sub.add_parser("startup", help="Initialize motors, run health checks, and go neutral.")
     run_action = sub.add_parser("run-action", help="Run a named action from the manifest.")
     run_action.add_argument("name", type=str, help="Action name (example: namaste)")
+    run_action.add_argument(
+        "--no-smooth",
+        action="store_true",
+        help="Disable interpolated playback (use raw frame-by-frame stepping).",
+    )
+    run_action.add_argument(
+        "--sub-hz",
+        type=float,
+        default=50.0,
+        help="Interpolated update rate during smooth playback in Hz (default: 50).",
+    )
+    run_action.add_argument(
+        "--max-speed",
+        type=int,
+        default=1023,
+        help="Per-motor speed limit during smooth playback (0-1023, 1023 = max).",
+    )
     sub.add_parser("list-actions", help="List available action names.")
 
     record_action = sub.add_parser("record-action", help="Record a new action file from live motors.")
@@ -174,7 +191,17 @@ def main() -> None:
     if args.command == "run-action":
         try:
             ensure_motors_ready(dxl)
-            action_path = action_runner.run_named_action(args.name)
+            mode = "smooth" if not args.no_smooth else "stepped"
+            print(
+                f"Playing '{args.name}' ({mode} mode, sub_hz={args.sub_hz}, "
+                f"max_speed={args.max_speed})..."
+            )
+            action_path = action_runner.run_named_action(
+                args.name,
+                smooth=not args.no_smooth,
+                sub_hz=args.sub_hz,
+                max_speed=args.max_speed,
+            )
             print(f"Action '{args.name}' executed from {action_path}")
         finally:
             dxl.close()

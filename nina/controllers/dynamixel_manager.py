@@ -10,6 +10,8 @@ HEADER = 0xFF
 PING = 0x01
 READ_DATA = 0x02
 WRITE_DATA = 0x03
+SYNC_WRITE = 0x83
+BROADCAST_ID = 0xFE
 
 REG_TORQUE_ENABLE = (24, 1)
 REG_GOAL_POSITION = (30, 2)
@@ -83,6 +85,90 @@ class DynamixelManager:
         for frame in frames:
             self._execute_frame(frame)
 
+    def play_smooth(
+        self,
+        action_path: Path,
+        sub_hz: float = 50.0,
+        max_speed: int = 1023,
+        warmup_sec: float = 0.5,
+    ) -> None:
+        """
+        Smoothly play back a recorded action.
+
+        Between every pair of recorded keyframes we linearly interpolate goal
+        positions and push them as one SyncWrite per tick at `sub_hz` Hz.
+        The motor's internal trapezoidal profile is bypassed by raising
+        `Moving Speed` once at the start, so the trajectory shape is set by
+        the interpolated goal stream rather than by the per-frame "step + wait"
+        used in `execute_action_file`.
+        """
+        self._require_initialized()
+        action = json.loads(action_path.read_text(encoding="utf-8"))
+        frames = action.get("frames", [])
+        if not frames:
+            return
+
+        sub_hz = max(1.0, float(sub_hz))
+        sub_dt = 1.0 / sub_hz
+
+        self.set_moving_speed_all(max_speed)
+
+        present: Dict[int, int] = {}
+        for sid in self.expected_motor_ids:
+            v = self.read_reg(sid, *REG_PRESENT_POS)
+            if v is not None:
+                present[sid] = self._clamp_pos(v)
+
+        first_goals = self._frame_goals(frames[0])
+        warmup = max(float(warmup_sec), float(frames[0].get("duration", 0.0)))
+        if warmup > 0 and first_goals:
+            self._interpolate_segment(present, first_goals, warmup, sub_dt)
+        elif first_goals:
+            self.sync_write_goal_position(first_goals)
+
+        for i in range(len(frames) - 1):
+            a = frames[i]
+            b = frames[i + 1]
+            delay = float(b.get("delay", 0.0))
+            if delay > 0:
+                time.sleep(delay)
+            duration = max(0.001, float(b.get("duration", 0.05)))
+            a_goals = self._frame_goals(a) or first_goals
+            b_goals = self._frame_goals(b)
+            self._interpolate_segment(a_goals, b_goals, duration, sub_dt)
+
+    def sync_write(self, addr: int, size: int, payload: Dict[int, List[int]]) -> None:
+        """Broadcast SyncWrite to many servos at once. No status return."""
+        if not payload:
+            return
+        params: List[int] = [addr, size]
+        for sid, data in payload.items():
+            params.append(int(sid) & 0xFF)
+            for byte in data[:size]:
+                params.append(int(byte) & 0xFF)
+        pkt = self._build(BROADCAST_ID, SYNC_WRITE, params)
+        self._serial.write(pkt)
+        self._serial.flush()
+        time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
+
+    def sync_write_goal_position(self, positions: Dict[int, int]) -> None:
+        if not positions:
+            return
+        payload: Dict[int, List[int]] = {}
+        for sid, val in positions.items():
+            if sid not in self.expected_motor_ids:
+                continue
+            v = self._clamp_pos(int(val))
+            payload[sid] = [v & 0xFF, (v >> 8) & 0xFF]
+        self.sync_write(*REG_GOAL_POSITION, payload)
+
+    def set_moving_speed_all(self, speed: int) -> None:
+        speed = max(0, min(1023, int(speed)))
+        lo = speed & 0xFF
+        hi = (speed >> 8) & 0xFF
+        payload = {sid: [lo, hi] for sid in self.expected_motor_ids}
+        self.sync_write(*REG_MOVING_SPEED, payload)
+
     def capture_frame(self, duration: float, speed: int = 200, delay: float = 0.0) -> Dict[str, Any]:
         self._require_initialized()
         servos = {}
@@ -135,6 +221,63 @@ class DynamixelManager:
         time.sleep(max(INTER_PACKET_SEC, len(pkt) * 10.0 / self.baudrate))
         self._recv(sid, timeout=WRITE_STATUS_TIMEOUT_SEC)
         return True
+
+    def _interpolate_segment(
+        self,
+        a_goals: Dict[int, int],
+        b_goals: Dict[int, int],
+        duration: float,
+        sub_dt: float,
+    ) -> None:
+        ids = sorted(set(a_goals.keys()) | set(b_goals.keys()))
+        if not ids or duration <= 0:
+            if b_goals:
+                self.sync_write_goal_position(b_goals)
+            if duration > 0:
+                time.sleep(duration)
+            return
+
+        steps = max(1, int(round(duration / sub_dt)))
+        start = time.monotonic()
+        for k in range(1, steps):
+            t = k / steps
+            interp: Dict[int, int] = {}
+            for sid in ids:
+                av = a_goals.get(sid, b_goals.get(sid))
+                bv = b_goals.get(sid, av)
+                if av is None or bv is None:
+                    continue
+                interp[sid] = int(round(av + (bv - av) * t))
+            if interp:
+                self.sync_write_goal_position(interp)
+            target = start + k * sub_dt
+            sleep_for = target - time.monotonic()
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+
+        if b_goals:
+            self.sync_write_goal_position(b_goals)
+        target = start + duration
+        sleep_for = target - time.monotonic()
+        if sleep_for > 0:
+            time.sleep(sleep_for)
+
+    def _frame_goals(self, frame: Dict[str, Any]) -> Dict[int, int]:
+        goals: Dict[int, int] = {}
+        for raw_sid, spec in frame.get("servos", {}).items():
+            try:
+                sid = int(raw_sid)
+            except (TypeError, ValueError):
+                continue
+            if sid not in self.expected_motor_ids:
+                continue
+            if spec.get("type", "absolute") != "absolute":
+                continue
+            value = spec.get("value")
+            if value is None:
+                continue
+            goals[sid] = self._clamp_pos(int(value))
+        return goals
 
     def _execute_frame(self, frame: Dict[str, Any]) -> None:
         delay = float(frame.get("delay", 0.0))

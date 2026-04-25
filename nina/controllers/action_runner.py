@@ -15,14 +15,24 @@ class ActionRunner:
         manifest = self._load_manifest()
         return manifest.get("actions", {})
 
-    def run_named_action(self, action_name: str) -> Path:
+    def run_named_action(
+        self,
+        action_name: str,
+        *,
+        smooth: bool = True,
+        sub_hz: float = 50.0,
+        max_speed: int = 1023,
+    ) -> Path:
         actions = self.list_actions()
         if action_name not in actions:
             raise ValueError(f"Unknown action '{action_name}'.")
         action_path = self.actions_dir / actions[action_name]
         if not action_path.exists():
             raise FileNotFoundError(f"Action file not found: {action_path}")
-        self.dxl.execute_action_file(action_path)
+        if smooth:
+            self.dxl.play_smooth(action_path, sub_hz=sub_hz, max_speed=max_speed)
+        else:
+            self.dxl.execute_action_file(action_path)
         return action_path
 
     def _load_manifest(self) -> Dict:
