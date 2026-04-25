@@ -22,8 +22,9 @@ from sirena_ui.workers.nina_service import NinaService
 
 class _ActionRow(QFrame):
     play_clicked = pyqtSignal(str)
+    audio_clicked = pyqtSignal(str)
 
-    def __init__(self, name: str, meta: str, parent=None) -> None:
+    def __init__(self, name: str, meta: str, audio_meta: str, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("card")
         self._name = name
@@ -40,7 +41,17 @@ class _ActionRow(QFrame):
         self._meta = QLabel(meta)
         self._meta.setStyleSheet("color: #6e6e73; font-size: 12px;")
         text_col.addWidget(self._meta)
+        self._audio_meta = QLabel(audio_meta)
+        self._audio_meta.setStyleSheet("color: #6e6e73; font-size: 11px;")
+        text_col.addWidget(self._audio_meta)
         layout.addLayout(text_col, stretch=1)
+
+        self._audio = QPushButton("Audio")
+        self._audio.setObjectName("secondaryButton")
+        self._audio.setCursor(Qt.PointingHandCursor)
+        self._audio.setToolTip("Generate, tune, or remove the audio clip for this action.")
+        self._audio.clicked.connect(lambda: self.audio_clicked.emit(self._name))
+        layout.addWidget(self._audio)
 
         self._play = QPushButton("\u25B6")  # right-pointing triangle
         self._play.setObjectName("playButton")
@@ -50,10 +61,12 @@ class _ActionRow(QFrame):
 
     def set_enabled(self, enabled: bool) -> None:
         self._play.setEnabled(enabled)
+        self._audio.setEnabled(enabled)
 
 
 class PlaybackPanel(QWidget):
     play_requested = pyqtSignal(str)
+    audio_edit_requested = pyqtSignal(str)
 
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
@@ -101,8 +114,10 @@ class PlaybackPanel(QWidget):
             actions = {}
         for name, rel_path in sorted(actions.items()):
             meta = self._frame_meta(self._service.settings.actions_dir / rel_path)
-            row = _ActionRow(name, meta)
+            audio_meta = self._audio_meta(name)
+            row = _ActionRow(name, meta, audio_meta)
             row.play_clicked.connect(self.play_requested.emit)
+            row.audio_clicked.connect(self.audio_edit_requested.emit)
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
             self._rows.append(row)
         if not actions:
@@ -138,3 +153,17 @@ class PlaybackPanel(QWidget):
             return f"{total:.1f}s \u2022 {count} frames"
         except Exception:
             return "unknown"
+
+    def _audio_meta(self, name: str) -> str:
+        try:
+            info = self._service.get_action_audio_info(name)
+        except Exception:
+            return ""
+        rel = info.get("audio_rel")
+        path = info.get("audio_path")
+        offset = float(info.get("audio_offset") or 0.0)
+        if not rel:
+            return "Audio: none"
+        suffix = f" \u2022 +{offset:.2f}s" if offset > 0 else ""
+        missing = "" if path else " (missing)"
+        return f"Audio: {Path(rel).name}{missing}{suffix}"

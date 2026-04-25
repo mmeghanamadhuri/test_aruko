@@ -163,6 +163,53 @@ QPushButton#playButton:disabled {{
     color: #9a9a9f;
 }}
 
+QPushButton#secondaryButton {{
+    background-color: {BRAND_PANEL};
+    color: {BRAND_RED};
+    border: 1px solid {BRAND_RED};
+    border-radius: 16px;
+    padding: 6px 14px;
+    font-weight: 600;
+}}
+QPushButton#secondaryButton:hover {{
+    background-color: #fbe7eb;
+}}
+QPushButton#secondaryButton:disabled {{
+    background-color: #ececef;
+    color: #9a9a9f;
+    border-color: #d8d8db;
+}}
+
+QPushButton#primaryButton {{
+    background-color: {BRAND_RED};
+    color: {BRAND_WHITE};
+    border: none;
+    border-radius: 16px;
+    padding: 8px 18px;
+    font-weight: 700;
+}}
+QPushButton#primaryButton:hover {{
+    background-color: {BRAND_RED_HOVER};
+}}
+QPushButton#primaryButton:disabled {{
+    background-color: #d8d8db;
+    color: #9a9a9f;
+}}
+
+QDialog {{
+    background-color: {BRAND_BG};
+}}
+
+QComboBox {{
+    background-color: {BRAND_PANEL};
+    border: 1px solid {BRAND_BORDER};
+    border-radius: 8px;
+    padding: 6px 10px;
+}}
+QComboBox:focus {{
+    border: 1px solid {BRAND_RED};
+}}
+
 QPushButton#tabButton {{
     background-color: #ececef;
     color: {BRAND_MUTED};

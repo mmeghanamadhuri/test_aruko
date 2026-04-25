@@ -6,3 +6,7 @@
 # Pip alternative (if running inside a venv):
 PyQt5>=5.15
 Pillow>=8.0
+
+# Optional: enables the in-app "Audio" button to generate spoken
+# clips from text. Requires internet access at generation time.
+gTTS>=2.3

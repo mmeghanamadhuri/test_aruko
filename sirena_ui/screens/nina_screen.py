@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from sirena_ui.widgets.audio_editor_dialog import AudioEditorDialog
 from sirena_ui.widgets.nina_image_panel import NinaImagePanel
 from sirena_ui.widgets.playback_panel import PlaybackPanel
 from sirena_ui.widgets.record_panel import RecordPanel
@@ -53,6 +54,7 @@ class NinaScreen(QWidget):
         self._stack = QStackedWidget()
         self._playback_panel = PlaybackPanel(service)
         self._playback_panel.play_requested.connect(self._on_play)
+        self._playback_panel.audio_edit_requested.connect(self._on_edit_audio)
         self._record_panel = RecordPanel()
         self._record_panel.start_requested.connect(self._on_start_record)
         self._record_panel.stop_requested.connect(self._on_stop_record)
@@ -159,6 +161,27 @@ class NinaScreen(QWidget):
         self._set_status(f"Status: playback failed - {message}")
         self._playback_worker = None
         QMessageBox.warning(self, "Playback failed", message)
+
+    # ---------- audio editor ----------
+
+    def _on_edit_audio(self, name: str) -> None:
+        if self._playback_worker is not None and self._playback_worker.isRunning():
+            QMessageBox.information(
+                self, "Playback in progress",
+                "Wait for the current playback to finish before editing audio.",
+            )
+            return
+        if self._record_worker is not None and self._record_worker.isRunning():
+            QMessageBox.information(
+                self, "Recording in progress",
+                "Stop recording before editing audio.",
+            )
+            return
+        dialog = AudioEditorDialog(self._service, name, parent=self)
+        dialog.exec_()
+        # Refresh either way: dialog may have edited offset / removed audio
+        # even when the user hits "Close".
+        self._playback_panel.refresh()
 
     # ---------- recording ----------
 

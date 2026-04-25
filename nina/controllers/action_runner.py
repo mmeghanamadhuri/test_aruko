@@ -81,6 +81,47 @@ class ActionRunner:
             raise FileNotFoundError(f"Manifest not found: {self.manifest_path}")
         return json.loads(self.manifest_path.read_text(encoding="utf-8"))
 
+    def set_action_audio(
+        self,
+        action_name: str,
+        audio_name: Optional[str],
+        audio_offset: Optional[float] = None,
+    ) -> None:
+        """
+        Update only the audio fields of an existing manifest entry.
+
+        - The action's `file` is left untouched.
+        - `audio_name=None` (or empty) removes the audio mapping (and the
+          offset) and collapses the entry back to a plain string.
+        - `audio_offset=None` preserves any existing offset; passing 0
+          (or a negative number) clears it.
+        """
+        manifest = self._load_manifest()
+        actions = manifest.setdefault("actions", {})
+        existing = actions.get(action_name)
+        if existing is None:
+            raise ValueError(f"Action '{action_name}' is not in the manifest.")
+
+        if isinstance(existing, dict):
+            file_name = str(existing.get("file", ""))
+            existing_offset = existing.get("audio_offset")
+        else:
+            file_name = str(existing)
+            existing_offset = None
+
+        if not audio_name or not str(audio_name).strip():
+            actions[action_name] = file_name
+        else:
+            entry: Dict[str, Any] = {"file": file_name, "audio": str(audio_name)}
+            if audio_offset is not None:
+                if audio_offset > 0:
+                    entry["audio_offset"] = float(audio_offset)
+            elif isinstance(existing_offset, (int, float)) and float(existing_offset) > 0:
+                entry["audio_offset"] = float(existing_offset)
+            actions[action_name] = entry
+
+        self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
     def register_action(
         self,
         action_name: str,

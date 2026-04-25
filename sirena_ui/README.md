@@ -29,7 +29,30 @@ Manifest entries can be either a string (`"namaste.json"`) or a dict:
 }
 ```
 
-Generate or tune audio with the helper script:
+### From the GUI
+
+Each row in the **Playback** tab shows the action's current audio
+("Audio: namaste.mp3 - +2.00s" or "Audio: none") and exposes an
+**Audio** button. The audio editor lets you:
+
+- Type the words to speak (defaults to the action name).
+- Pick a voice preset (Indian English female, US, UK, Hindi, etc.).
+- Set the **audio offset** (seconds the runtime waits after motion
+  starts before firing the clip).
+- **Preview** the existing clip, **Generate & Save** a new one,
+  **Save offset only** without re-generating, or **Remove** the audio.
+
+The MP3 is rendered with gTTS (needs internet on the Jetson the first
+time you click *Generate*), saved to
+`nina/actions/audio/<action>.mp3`, and the manifest is updated
+atomically. Install gTTS with:
+
+```bash
+pip install --user gTTS
+sudo apt install -y mpg123    # so the generated MP3 can be played
+```
+
+### From the CLI
 
 ```bash
 # Generate the MP3 with gTTS and register it in the manifest
@@ -97,4 +120,7 @@ sirena_ui/
     nina_service.py     # DynamixelManager + ActionRunner facade
     playback_worker.py
     record_worker.py
+    audio_gen_worker.py # gTTS rendering off the UI thread
+  widgets/
+    audio_editor_dialog.py  # in-app audio author / tuner
 ```
