@@ -20,7 +20,7 @@ class ActionRunner:
         action_name: str,
         *,
         smooth: bool = True,
-        sub_hz: float = 60.0,
+        sub_hz: float = 50.0,
         max_speed: int = 1023,
     ) -> Path:
         actions = self.list_actions()
