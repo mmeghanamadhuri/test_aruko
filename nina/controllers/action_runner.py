@@ -15,14 +15,14 @@ class ActionRunner:
         manifest = self._load_manifest()
         return manifest.get("actions", {})
 
-    def run_named_action(self, action_name: str, speed_scale: float = 1.0) -> Path:
+    def run_named_action(self, action_name: str) -> Path:
         actions = self.list_actions()
         if action_name not in actions:
             raise ValueError(f"Unknown action '{action_name}'.")
         action_path = self.actions_dir / actions[action_name]
         if not action_path.exists():
             raise FileNotFoundError(f"Action file not found: {action_path}")
-        self.dxl.execute_action_file(action_path, speed_scale=speed_scale)
+        self.dxl.execute_action_file(action_path)
         return action_path
 
     def _load_manifest(self) -> Dict:
