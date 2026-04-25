@@ -21,14 +21,21 @@ class StartupService:
 
         health = self.dxl.run_health_check()
         if not health.connected:
-            return StartupResult(
-                success=False,
-                message=(
-                    f"Startup health check failed ({health.detected_motors}/{health.expected_motors} motors). "
-                    f"{health.detail}"
-                ),
+            print(
+                f"[warn] Startup health check: {health.detected_motors}/"
+                f"{health.expected_motors} motors responded. {health.detail} "
+                "(continuing; missing motors will simply not move)"
             )
 
         self.dxl.set_torque_all(True)
         self.action_runner.run_named_action(self.neutral_action_name)
-        return StartupResult(success=True, message="Startup complete. Motors healthy and neutral pose applied.")
+        if health.connected:
+            return StartupResult(success=True, message="Startup complete. Motors healthy and neutral pose applied.")
+        return StartupResult(
+            success=True,
+            message=(
+                f"Startup complete with partial bus ({health.detected_motors}/"
+                f"{health.expected_motors} motors). Neutral pose applied to "
+                "responsive motors."
+            ),
+        )

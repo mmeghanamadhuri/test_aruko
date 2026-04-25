@@ -22,8 +22,10 @@ def ensure_motors_ready(dxl: DynamixelManager) -> None:
     dxl.initialize_bus()
     health = dxl.run_health_check()
     if not health.connected:
-        raise SystemExit(
-            f"Motor health check failed ({health.detected_motors}/{health.expected_motors} motors). {health.detail}"
+        print(
+            f"[warn] Motor health check: {health.detected_motors}/"
+            f"{health.expected_motors} motors responded. {health.detail} "
+            "(continuing; missing motors will simply not move)"
         )
     dxl.set_torque_all(True)
 
