@@ -9,6 +9,7 @@ from typing import Optional
 from PyQt5.QtCore import QThread, pyqtSignal
 
 from nina.services.audio_player import AudioPlayer
+from sirena_ui.workers.error_hints import explain_error
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -70,4 +71,4 @@ class PlaybackWorker(QThread):
         except Exception as exc:  # pragma: no cover - reported back to UI
             if self._audio_timer is not None:
                 self._audio_timer.cancel()
-            self.failed.emit(str(exc))
+            self.failed.emit(explain_error(exc, self._service.settings))

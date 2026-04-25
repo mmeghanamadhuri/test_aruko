@@ -74,6 +74,35 @@ sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg
 pip install -r sirena_ui/requirements.txt
 ```
 
+## One-time permissions (no `sudo` at runtime)
+
+The app deliberately avoids `sudo` - running a Qt GUI as root breaks
+your X11/Wayland session, leaves root-owned files in your home, and
+defeats the security model. Instead, do these once:
+
+```bash
+# Serial port (Dynamixel bus on /dev/ttyUSB0)
+sudo usermod -aG dialout $USER
+
+# Optional: drops FTDI latency_timer to 1ms so reads are reliable
+sudo bash scripts/install-ftdi-udev.sh
+
+# Make sure the repo is owned by your user (not root from a sudo-clone)
+sudo chown -R $USER:$USER ~/Nvidia-jetson-platform
+```
+
+Then **log out and log back in** (a reboot is the simplest test) so
+the new `dialout` group membership applies to your desktop session.
+Verify with:
+
+```bash
+groups | grep dialout
+ls -l /dev/ttyUSB0       # should show "crw-rw---- root dialout"
+```
+
+If recording or playback ever shows "Permission denied", the
+in-app error message now tells you exactly which fix to apply.
+
 ## Add the icon to the Jetson home screen
 
 ```bash

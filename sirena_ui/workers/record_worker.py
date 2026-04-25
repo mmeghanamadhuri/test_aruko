@@ -15,6 +15,7 @@ from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
+from sirena_ui.workers.error_hints import explain_error
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -95,7 +96,7 @@ class RecordWorker(QThread):
 
             self.finished_ok.emit(self._name, len(frames))
         except Exception as exc:  # pragma: no cover - reported back to UI
-            self.failed.emit(str(exc))
+            self.failed.emit(explain_error(exc, self._service.settings))
 
     def _abort(self, reason: str) -> None:
         try:

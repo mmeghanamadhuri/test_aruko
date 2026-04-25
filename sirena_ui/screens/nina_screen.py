@@ -18,6 +18,7 @@ from sirena_ui.widgets.audio_editor_dialog import AudioEditorDialog
 from sirena_ui.widgets.nina_image_panel import NinaImagePanel
 from sirena_ui.widgets.playback_panel import PlaybackPanel
 from sirena_ui.widgets.record_panel import RecordPanel
+from sirena_ui.workers.error_hints import explain_error
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.playback_worker import PlaybackWorker
 from sirena_ui.workers.record_worker import RecordWorker
@@ -109,7 +110,11 @@ class NinaScreen(QWidget):
         try:
             health = self._service.ensure_bus()
         except Exception as exc:
-            QMessageBox.critical(self, "Bus error", f"Could not initialize Dynamixel bus:\n{exc}")
+            hint = explain_error(exc, self._service.settings)
+            QMessageBox.critical(
+                self, "Bus error",
+                f"Could not initialize Dynamixel bus:\n\n{hint}",
+            )
             self._set_status("Status: bus error")
             return
         if health["connected"]:
