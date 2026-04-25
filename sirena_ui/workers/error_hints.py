@@ -33,6 +33,27 @@ def explain_error(exc: Exception, settings: "NinaSettings") -> str:
     looks_like_serial = (
         serial_port in raw or "ttyUSB" in raw or "ttyACM" in raw or "/dev/tty" in raw
     )
+
+    # 1) FTDI cable missing / different device name
+    no_such = (
+        "No such file or directory" in raw
+        or "could not open port" in raw
+        or "FileNotFound" in raw
+    )
+    if no_such and looks_like_serial:
+        return (
+            f"Cannot open {serial_port} - the kernel does not see that device.\n\n"
+            "Most likely the FTDI cable to the Dynamixel bus is unplugged or "
+            "enumerated under a different name. Diagnose on the Jetson:\n\n"
+            "    lsusb | grep -i ftdi          # does the OS see the adapter?\n"
+            "    ls /dev/ttyUSB* /dev/ttyACM*  # which serial nodes exist?\n"
+            "    dmesg | tail -20              # last USB events\n\n"
+            "If it came up as a different name (e.g. /dev/ttyUSB1), tell the "
+            "app to use it before launching:\n"
+            "    export NINA_DXL_PORT=/dev/ttyUSB1"
+        )
+
+    # 2) Permission denied on the serial port -> dialout group
     if "Permission" in raw and looks_like_serial:
         hint = (
             f"Permission denied on {serial_port}. Add your user to the "
@@ -49,6 +70,7 @@ def explain_error(exc: Exception, settings: "NinaSettings") -> str:
             )
         return hint
 
+    # 3) Permission denied writing the recording / manifest -> chown
     if isinstance(exc, PermissionError):
         target = raw
         for path in (settings.recordings_dir, settings.manifest_path):
