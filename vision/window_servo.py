@@ -78,8 +78,6 @@ class Phase(Enum):
     DONE = auto()
 
 
-<<<<<<< HEAD
-=======
 class PerfTracker:
     def __init__(self, report_every: int = 120):
         self.report_every = max(1, int(report_every))
@@ -149,7 +147,6 @@ class PerfTracker:
         log.info(msg)
 
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
 def _best(dets) -> Optional[object]:
@@ -227,25 +224,12 @@ def run(
     from .config import VisionConfig
     from .detector import build_detector, filter_by_allowlist, filter_by_confidence
     from .motion_client import close_motion_rpc_connection, motion_rpc
-<<<<<<< HEAD
-    from .types import ButtonDetection
-=======
     from .types import BoundingBox, ButtonDetection
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
     vcfg = VisionConfig.from_env()
 
-<<<<<<< HEAD
-
-    # Warm-up detector before OpenCV/GStreamer init (avoids heap collision on Jetson)
-    detector = build_detector(vcfg)
-    log.info("Warming up detector ...")
-    detector.infer(_np.zeros((480, 640, 3), dtype=_np.uint8), camera_id=0)
-    log.info("Detector ready.")
-=======
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
     from .annotate import draw_detections, encode_jpeg
@@ -263,15 +247,12 @@ def run(
         mjpeg = MJPEGServer(host=preview_host, port=preview_port)
         mjpeg.start_background()
 
-<<<<<<< HEAD
-=======
     # Warm-up detector after camera/MJPEG startup so the preview endpoint is available sooner.
     detector = build_detector(vcfg)
     log.info("Warming up detector ...")
     detector.infer(_np.zeros((480, 640, 3), dtype=_np.uint8), camera_id=0)
     log.info("Detector ready.")
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
     # ── Config ────────────────────────────────────────────────────────────────
     pan  = int(os.environ.get("VISION_PAN_SERVO",  "6"))
@@ -296,11 +277,6 @@ def run(
     max_delta   = int(os.environ.get("VISION_MAX_DELTA",          "200"))
     dead_px     = float(os.environ.get("VISION_DEADZONE_PX",      "20"))
     smooth_a    = float(os.environ.get("VISION_SMOOTH_ALPHA",     "0.35"))
-<<<<<<< HEAD
-    stable_need = int(os.environ.get("VISION_ALIGN_STABLE_FRAMES", "2"))  # ÷1.5 vs prior (min 1 enforced by caller env)
-    lost_max    = int(os.environ.get("VISION_LOST_FRAMES",        "25"))
-    infer_ivl   = float(os.environ.get("VISION_INFER_INTERVAL_SEC", "0.0666667"))  # ÷1.5 vs prior
-=======
     stable_need = int(os.environ.get("VISION_ALIGN_STABLE_FRAMES", "1"))
     lost_max    = int(os.environ.get("VISION_LOST_FRAMES",        "25"))
     infer_ivl   = float(os.environ.get("VISION_INFER_INTERVAL_SEC", "0.05"))
@@ -331,16 +307,11 @@ def run(
             ),
         ),
     )
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
     # ── Approach config ───────────────────────────────────────────────────────
     # Stop when bounding-box fills this fraction of the frame.
-<<<<<<< HEAD
-    app_area = float(os.environ.get("VISION_APPROACH_AREA_FRAC", "0.18"))
-=======
     app_area = float(os.environ.get("VISION_APPROACH_AREA_FRAC", "0.05"))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
     # If detections disappear during APPROACH, optionally snap to POST_H when the last
     # bbox area (%) was at least this. Default = full standoff (app_area*100); a looser
     # value (e.g. app_area*100 - 2) re-enables early snap but can skip the arm on shaky
@@ -383,8 +354,6 @@ def run(
     # Inference ticks to wait after an arm step before allowing the next one.
     # Gives the arm time to settle and the image to stabilise.
     step_cooldown = int(os.environ.get("VISION_APPROACH_STEP_COOLDOWN", "1"))  # ÷1.5 vs prior (min 1)
-<<<<<<< HEAD
-=======
     status_poll_sleep = float(os.environ.get("VISION_STATUS_POLL_SLEEP_SEC", "0.02"))
     loop_idle_sleep = float(os.environ.get("VISION_LOOP_IDLE_SLEEP_SEC", "0.006"))
     search_sleep = float(os.environ.get("VISION_SEARCH_SLEEP_SEC", "0.025"))
@@ -392,7 +361,6 @@ def run(
     done_sleep = float(os.environ.get("VISION_DONE_SLEEP_SEC", "0.05"))
     perf_report_every = int(os.environ.get("VISION_PERF_REPORT_EVERY", "120"))
     perf = PerfTracker(report_every=perf_report_every)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
     jpeg_q = int(os.environ.get("VISION_PREVIEW_JPEG_QUALITY", "75")) #75
@@ -412,12 +380,9 @@ def run(
     last_positions: Dict[str, int] = {}
     arm_cooldown_ticks = 0   # ticks remaining before next arm step
     approach_arm_steps_sent = 0
-<<<<<<< HEAD
-=======
     tracked_target: Optional[ButtonDetection] = None
     track_hold_left = 0
     target_lock_active = False
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
     post_h_ticks = 0
     post_v_start: Optional[float] = None
     post_v_stage = 0
@@ -429,10 +394,7 @@ def run(
     post_v_act0 = "extend"
     revert_armed = False
     post_exit_armed = False
-<<<<<<< HEAD
-=======
     perf.start_phase(phase, time.monotonic())
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
     # Bilateral SEARCH: anchor tilt raw after short (memorised) or from first status. Sweep
     # legs use default relative moves for S7; homing between legs uses relative delta to
@@ -443,22 +405,14 @@ def run(
         "yes",
         "on",
     )
-<<<<<<< HEAD
-    search_sweep_sec = float(os.environ.get("VISION_SEARCH_SWEEP_SEC", "19.4444445"))  # ÷1.5 vs prior
-=======
     search_sweep_sec = float(os.environ.get("VISION_SEARCH_SWEEP_SEC", "12.0"))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
     search_right_sign = (
         -1 if os.environ.get("VISION_SEARCH_SWEEP_RIGHT_SIGN", "1").strip() == "-1" else 1
     )
     # After each sweep leg, wait until tilt telemetry matches captured anchor (homing move
     # needs time; starting the next relative leg immediately was cancelling convergence).
     search_home_tol_raw = int(os.environ.get("VISION_SEARCH_HOME_TOL_RAW", "12"))
-<<<<<<< HEAD
-    search_home_wait_sec = float(os.environ.get("VISION_SEARCH_HOME_WAIT_SEC", "16.6666667"))  # ÷1.5 vs prior
-=======
     search_home_wait_sec = float(os.environ.get("VISION_SEARCH_HOME_WAIT_SEC", "10.0"))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
     _home_spd_def = min(1023, int(round(min(search_spd, 380) * 1.8)))
     search_home_speed = int(
         os.environ.get(
@@ -524,19 +478,11 @@ def run(
         while time.monotonic() < deadline:
             r = rpc({"cmd": "status"})
             if not r or not isinstance(r.get("positions"), dict):
-<<<<<<< HEAD
-                time.sleep(0.05)
-                continue
-            cur = r["positions"].get(sk)
-            if cur is None:
-                time.sleep(0.05)
-=======
                 time.sleep(status_poll_sleep)
                 continue
             cur = r["positions"].get(sk)
             if cur is None:
                 time.sleep(status_poll_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
             err = _raw_goal_abs_error(int(cur), g)
             last_err = err
@@ -554,11 +500,7 @@ def run(
                     return
             else:
                 stable = 0
-<<<<<<< HEAD
-            time.sleep(0.05)
-=======
             time.sleep(status_poll_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
         log.warning(
             "Servo S%s anchor wait timeout (goal=%d last_err=%s tol=%d)",
             sk,
@@ -574,26 +516,16 @@ def run(
         while time.monotonic() < deadline:
             r = rpc({"cmd": "status"})
             if not r or r.get("status") != "ok":
-<<<<<<< HEAD
-                time.sleep(0.03)
-=======
                 time.sleep(status_poll_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
             playing = bool(r.get("is_playing"))
             if playing:
                 saw_playing = True
             elif saw_playing:
                 return True
-<<<<<<< HEAD
-            time.sleep(0.03)
-        if not saw_playing:
-            time.sleep(0.18)
-=======
             time.sleep(status_poll_sleep)
         if not saw_playing:
             time.sleep(max(0.08, status_poll_sleep * 3))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
             r = rpc({"cmd": "status"})
             if r and r.get("status") == "ok" and not r.get("is_playing", True):
                 return True
@@ -613,20 +545,12 @@ def run(
             log.info("POST_EXIT dry_motion — skipping hardware; would play %s", rel_back)
             return
 
-<<<<<<< HEAD
-        pre_pause = float(os.environ.get("VISION_POST_EXIT_PRE_PAUSE_SEC", "0.5"))
-=======
         pre_pause = float(os.environ.get("VISION_POST_EXIT_PRE_PAUSE_SEC", "0.2"))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
         y_sid = int(os.environ.get("VISION_POST_EXIT_Y_SERVO", str(tilt)))
         d_neg = int(os.environ.get("VISION_POST_EXIT_Y_DELTA_NEG", "-2000"))
         ext_mm = float(os.environ.get("VISION_POST_EXIT_EXTEND_MM", "55"))
         d_pos = int(os.environ.get("VISION_POST_EXIT_Y_DELTA_POS", "6300"))
-<<<<<<< HEAD
-        mid_pause = float(os.environ.get("VISION_POST_EXIT_AFTER_EXTEND_PAUSE_SEC", "1.0"))
-=======
         mid_pause = float(os.environ.get("VISION_POST_EXIT_AFTER_EXTEND_PAUSE_SEC", "0.35"))
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
         retract_legs = max(1, int(os.environ.get("VISION_POST_EXIT_RETRACT_LEGS", "2")))
         y_spd = int(
             os.environ.get(
@@ -641,11 +565,7 @@ def run(
 
         log.info("POST_EXIT: S%d relative %+d @ speed %d (Y −ve)", y_sid, d_neg, y_spd)
         rpc({"cmd": "servo_move", "servo_id": y_sid, "value": d_neg, "speed": y_spd})
-<<<<<<< HEAD
-        time.sleep(0.25)
-=======
         time.sleep(0.1)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
         log.info("POST_EXIT: actuator %s %.1f mm", act0, ext_mm)
         r_ex = rpc({"cmd": "actuator", "action": act0, "distance_mm": ext_mm})
@@ -654,11 +574,7 @@ def run(
 
         log.info("POST_EXIT: S%d relative %+d @ speed %d (Y +ve)", y_sid, d_pos, y_spd)
         rpc({"cmd": "servo_move", "servo_id": y_sid, "value": d_pos, "speed": y_spd})
-<<<<<<< HEAD
-        time.sleep(0.2)
-=======
         time.sleep(0.08)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
         log.info("POST_EXIT: %.3fs pause before retract", mid_pause)
         time.sleep(max(0.0, mid_pause))
@@ -690,23 +606,14 @@ def run(
             if curt is not None:
                 dt = _delta_raw_rel_to_goal(int(curt), int(gh) & 0xFFFF)
                 if dt != 0:
-<<<<<<< HEAD
-                    log.info("POST_EXIT: tilt S%d rel %+d → home raw=%d", y_sid, dt, gh)
-=======
                     log.info("POST_EXIT: tilt S%d abs home raw=%d (telemetry was %s)", y_sid, gh, curt)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                     rpc(
                         {
                             "cmd": "servo_move",
                             "servo_id": y_sid,
-<<<<<<< HEAD
-                            "value": int(dt),
-                            "speed": y_spd,
-=======
                             "value": int(gh) & 0xFFFF,
                             "speed": y_spd,
                             "mode": "abs",
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                         }
                     )
                     wait_servo_at_anchor(y_sid, int(gh) & 0xFFFF)
@@ -732,19 +639,6 @@ def run(
             vcfg.pre_press_wrist_abs is not None
             or vcfg.pre_press_wrist_delta is not None
         ):
-<<<<<<< HEAD
-            phase = Phase.POST_WRIST
-            post_wrist_armed = False
-        elif post_back:
-            phase = Phase.POST_EXIT
-            post_exit_armed = False
-            press_armed = False
-        elif vcfg.revert_json_rel:
-            phase = Phase.REVERT
-            press_armed = False
-        else:
-            phase = Phase.PRESS
-=======
             set_phase(Phase.POST_WRIST)
             post_wrist_armed = False
         elif post_back:
@@ -756,7 +650,6 @@ def run(
             press_armed = False
         else:
             set_phase(Phase.PRESS)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
             press_armed = False
 
 
@@ -984,8 +877,6 @@ def run(
         "on",
     )
 
-<<<<<<< HEAD
-=======
     def set_phase(new_phase: Phase) -> None:
         nonlocal phase, prev_phase, tracked_target, track_hold_left, target_lock_active
         if new_phase == phase:
@@ -1060,7 +951,6 @@ def run(
         track_hold_left = track_hold_frames
         return tracked_target
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
     def exit_for_carbot_shell(msg: str) -> None:
         """
         Hard-exit immediately so ``carbot.sh`` can run ``pick_button`` (``back.json`` already ran in POST_EXIT).
@@ -1096,10 +986,7 @@ def run(
             inferred = False
 
 
-<<<<<<< HEAD
-=======
             used_track_hold = False
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
             if now - last_infer >= infer_ivl:
                 last_infer = now
                 inferred   = True
@@ -1170,22 +1057,14 @@ def run(
                             approach_min_arm_steps,
                         )
                         if vcfg.offset_after_approach:
-<<<<<<< HEAD
-                            phase = Phase.POST_H
-=======
                             set_phase(Phase.POST_H)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                             post_h_ticks = 0
                             post_v_start = None
                             post_v_stage = 0
                             press_armed = False
                         else:
                             rpc({"cmd": "freeze"})
-<<<<<<< HEAD
-                            phase = Phase.DONE
-=======
                             set_phase(Phase.DONE)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                         lost = 0
 
 
@@ -1215,11 +1094,7 @@ def run(
                                 approach_min_arm_steps,
                             )
                             lost = 0
-<<<<<<< HEAD
-                            phase = Phase.POST_H
-=======
                             set_phase(Phase.POST_H)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                             post_h_ticks = 0
                             post_v_start = None
                             post_v_stage = 0
@@ -1233,11 +1108,7 @@ def run(
                                 approach_min_arm_steps,
                             )
                             rpc({"cmd": "stop"})
-<<<<<<< HEAD
-                            phase = Phase.SEARCH
-=======
                             set_phase(Phase.SEARCH)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                             stable_ct = 0
                             ema_dx = ema_dy = 0.0
                             post_wrist_armed = False
@@ -1247,11 +1118,7 @@ def run(
                         else:
                             log.info("Target lost for %d frames — SEARCH", lost)
                             rpc({"cmd": "stop"})
-<<<<<<< HEAD
-                            phase     = Phase.SEARCH
-=======
                             set_phase(Phase.SEARCH)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                             stable_ct = 0
                             ema_dx = ema_dy = 0.0
                             post_wrist_armed = False
@@ -1386,12 +1253,8 @@ def run(
                         finish_post_v_actuator()
                 elif post_v_stage == 3 and now_t - post_v_start >= vcfg.offset_v_extra_wait_sec:
                     finish_post_v_actuator()
-<<<<<<< HEAD
-                time.sleep(0.05)
-=======
                 perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
                 time.sleep(post_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
 
 
@@ -1444,21 +1307,12 @@ def run(
                 elif now_tw - post_wrist_start >= vcfg.pre_press_wrist_wait_sec:
                     post_back = os.environ.get("VISION_POST_CYCLE_BACK_JSON", "").strip()
                     if post_back:
-<<<<<<< HEAD
-                        phase = Phase.POST_EXIT
-                        post_exit_armed = False
-                    elif vcfg.revert_json_rel:
-                        phase = Phase.REVERT
-                    else:
-                        phase = Phase.PRESS
-=======
                         set_phase(Phase.POST_EXIT)
                         post_exit_armed = False
                     elif vcfg.revert_json_rel:
                         set_phase(Phase.REVERT)
                     else:
                         set_phase(Phase.PRESS)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                     press_armed = False
                     revert_armed = False
                     post_wrist_armed = False
@@ -1475,16 +1329,10 @@ def run(
                         exit_for_carbot_shell(
                             "POST_EXIT complete — exiting (launcher: pick button; back.json already played)"
                         )
-<<<<<<< HEAD
-                    phase = Phase.DONE
-                    log.info("POST_EXIT complete (CARBOT_SHELL_LOOP off — staying in vision DONE)")
-                time.sleep(0.05)
-=======
                     set_phase(Phase.DONE)
                     log.info("POST_EXIT complete (CARBOT_SHELL_LOOP off — staying in vision DONE)")
                 perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
                 time.sleep(post_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
 
 
@@ -1515,14 +1363,8 @@ def run(
                                     dp = _delta_raw_rel_to_goal(int(curp), gh_p)
                                     if dp != 0:
                                         log.info(
-<<<<<<< HEAD
-                                            "REVERT pre-move: pan S%d rel %+d → home raw=%d, then %s",
-                                            pan,
-                                            dp,
-=======
                                             "REVERT pre-move: pan S%d abs home raw=%d, then %s",
                                             pan,
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                                             gh_p,
                                             rel,
                                         )
@@ -1530,14 +1372,9 @@ def run(
                                             {
                                                 "cmd": "servo_move",
                                                 "servo_id": pan,
-<<<<<<< HEAD
-                                                "value": int(dp),
-                                                "speed": search_home_speed,
-=======
                                                 "value": gh_p,
                                                 "speed": search_home_speed,
                                                 "mode": "abs",
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                                             }
                                         )
                                         wait_servo_at_anchor(pan, gh_p)
@@ -1554,14 +1391,8 @@ def run(
                                     dt = _delta_raw_rel_to_goal(int(curt), gh)
                                     if dt != 0:
                                         log.info(
-<<<<<<< HEAD
-                                            "REVERT pre-move: tilt S%d rel %+d → home raw=%d, then %s",
-                                            tilt,
-                                            dt,
-=======
                                             "REVERT pre-move: tilt S%d abs home raw=%d, then %s",
                                             tilt,
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                                             gh,
                                             rel,
                                         )
@@ -1569,14 +1400,9 @@ def run(
                                             {
                                                 "cmd": "servo_move",
                                                 "servo_id": tilt,
-<<<<<<< HEAD
-                                                "value": int(dt),
-                                                "speed": search_home_speed,
-=======
                                                 "value": gh,
                                                 "speed": search_home_speed,
                                                 "mode": "abs",
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                                             }
                                         )
                                         wait_servo_at_anchor(tilt, gh)
@@ -1616,14 +1442,9 @@ def run(
                     log.info(
                         "REVERT finished — staying in vision (set CARBOT_SHELL_LOOP=1 when using carbot.sh)"
                     )
-<<<<<<< HEAD
-                    phase = Phase.DONE
-                time.sleep(0.05)
-=======
                     set_phase(Phase.DONE)
                 perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
                 time.sleep(post_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
 
 
@@ -1656,12 +1477,8 @@ def run(
                     exit_for_carbot_shell(
                         "Sequence complete (DONE) — exiting for launcher (pick button)"
                     )
-<<<<<<< HEAD
-                time.sleep(0.1)
-=======
                 perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
                 time.sleep(done_sleep)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 continue
 
 
@@ -1670,149 +1487,6 @@ def run(
                 time.sleep(loop_idle_sleep)
                 continue
 
-<<<<<<< HEAD
-
-            # ── SEARCH ───────────────────────────────────────────────────────
-            # Must run when there is NO target — bilateral tilt-only sweep (or legacy pattern).
-            if phase == Phase.SEARCH:
-                if target is None:
-                    if search_bilateral:
-                        if search_need_reanchor or anchor_tilt_u16 is None:
-                            st = rpc({"cmd": "status"})
-                            if st and isinstance(st.get("positions"), dict):
-                                pos = st["positions"]
-                                ap = pos.get(str(pan))
-                                at = pos.get(str(tilt))
-                                if tilt_short_home_for_revert_u16 is not None:
-                                    anchor_tilt_u16 = int(tilt_short_home_for_revert_u16) & 0xFFFF
-                                    anchor_pan_u16 = (
-                                        int(ap) & 0xFFFF if ap is not None else None
-                                    )
-                                    search_need_reanchor = False
-                                    sweep_slot = 0
-                                    sweep_leg_t0 = now
-                                    log.info(
-                                        "SEARCH sweep anchor S%d raw=%d (same as post-short "
-                                        "memorised home; legs %.0fs each; pan not swept) S%d=%s",
-                                        tilt,
-                                        anchor_tilt_u16,
-                                        search_sweep_sec,
-                                        pan,
-                                        str(anchor_pan_u16) if anchor_pan_u16 is not None else "?",
-                                    )
-                                elif at is not None:
-                                    anchor_tilt_u16 = int(at) & 0xFFFF
-                                    anchor_pan_u16 = (
-                                        int(ap) & 0xFFFF if ap is not None else None
-                                    )
-                                    search_need_reanchor = False
-                                    sweep_slot = 0
-                                    sweep_leg_t0 = now
-                                    log.info(
-                                        "SEARCH captured live tilt S%d raw=%d (one-shot sweep "
-                                        "home; legs %.0fs each, then rel home to this raw; pan "
-                                        "not swept) S%d=%s",
-                                        tilt,
-                                        anchor_tilt_u16,
-                                        search_sweep_sec,
-                                        pan,
-                                        str(anchor_pan_u16) if anchor_pan_u16 is not None else "?",
-                                    )
-                                else:
-                                    time.sleep(0.05)
-                                    continue
-                            else:
-                                time.sleep(0.05)
-                                continue
-
-                        if sweep_slot in (1, 3):
-                            st2 = rpc({"cmd": "status"})
-                            cur_raw: Optional[int] = None
-                            if st2 and isinstance(st2.get("positions"), dict):
-                                ct = st2["positions"].get(str(tilt))
-                                if ct is not None:
-                                    cur_raw = int(ct) & 0xFFFF
-                            if anchor_tilt_u16 is not None:
-                                goal = int(anchor_tilt_u16) & 0xFFFF
-                                if cur_raw is not None:
-                                    dhome = _delta_raw_rel_to_goal(int(cur_raw), goal)
-                                    if dhome != 0:
-                                        rpc(
-                                            {
-                                                "cmd": "servo_move",
-                                                "servo_id": tilt,
-                                                "value": int(dhome),
-                                                "speed": search_home_speed,
-                                            }
-                                        )
-                                    log.info(
-                                        "SEARCH homing tilt S%d rel %+d → anchor raw=%d "
-                                        "(telemetry was %s) after %s leg; waiting settle tol=%d raw",
-                                        tilt,
-                                        dhome,
-                                        goal,
-                                        str(cur_raw) if cur_raw is not None else "?",
-                                        "first" if sweep_slot == 1 else "second",
-                                        search_home_tol_raw,
-                                    )
-                                else:
-                                    log.warning(
-                                        "SEARCH homing: no tilt telemetry — skipping rel home "
-                                        "before next leg (anchor raw=%d)",
-                                        goal,
-                                    )
-                                if not dry_motion and cur_raw is not None:
-                                    wait_servo_at_anchor(tilt, goal)
-                            sweep_slot = (sweep_slot + 1) % 4
-                            sweep_leg_t0 = time.monotonic()
-                            time.sleep(0.05)
-                            continue
-
-                        if now - sweep_leg_t0 >= search_sweep_sec:
-                            sweep_slot += 1
-                            time.sleep(0.05)
-                            continue
-
-                        step_mag = max(1, int(search_step))
-                        if sweep_slot == 0:
-                            tilt_delta = step_mag * search_right_sign
-                        else:
-                            tilt_delta = -step_mag * search_right_sign
-                        rpc(
-                            {
-                                "cmd": "servo_move",
-                                "servo_id": tilt,
-                                "value": int(tilt_delta),
-                                "speed": search_spd,
-                            }
-                        )
-                    else:
-                        sid, delta = moves[move_i % len(moves)]
-                        move_i += 1
-                        rpc(
-                            {
-                                "cmd": "servo_move",
-                                "servo_id": sid,
-                                "value": int(delta),
-                                "speed": search_spd,
-                            }
-                        )
-                        log.info(
-                            "SEARCH sweep: S%d delta=%+d (move %d)",
-                            sid,
-                            delta,
-                            move_i,
-                        )
-                time.sleep(0.05)
-                continue
-
-
-            # No target — ALIGN / APPROACH have nothing to act on
-            if target is None:
-                time.sleep(0.01)
-                continue
-
-=======
 
             # ── SEARCH ───────────────────────────────────────────────────────
             # Must run when there is NO target — bilateral tilt-only sweep (or legacy pattern).
@@ -1952,7 +1626,6 @@ def run(
                 perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
                 time.sleep(search_sleep)
                 continue
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
             # No target — ALIGN / APPROACH have nothing to act on.
@@ -1990,24 +1663,14 @@ def run(
                     stable_ct = 0
                     arm_cooldown_ticks = 1   # was 2 — ~÷1.2 faster first approach step
                     approach_arm_steps_sent = 0
-<<<<<<< HEAD
-                    phase = Phase.APPROACH
-=======
                     if lock_target_after_align and tracked_target is not None:
                         target_lock_active = True
                     set_phase(Phase.APPROACH)
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
             # ── APPROACH ─────────────────────────────────────────────────────
             elif phase == Phase.APPROACH:
-<<<<<<< HEAD
-
-
-                # 1. Stopping criterion — purely visual, works at any height/distance
-=======
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 area = (target.bbox.w * target.bbox.h) / max(1.0, float(w_px * h_px))
                 if (
                     area >= app_area
@@ -2040,12 +1703,6 @@ def run(
                         rpc({"cmd": "freeze"})
                         set_phase(Phase.DONE)
                     continue
-<<<<<<< HEAD
-
-
-                # 1b. Bbox already large but arm not advanced enough for area exit — keep stepping.
-=======
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 if (
                     area >= app_area
                     and approach_arm_steps_sent < approach_min_arm_steps_for_area
@@ -2057,34 +1714,13 @@ def run(
                         approach_arm_steps_sent,
                         approach_min_arm_steps_for_area,
                     )
-<<<<<<< HEAD
-
-
-                # 2. Pan/tilt micro-correction — keeps button in frame while arm moves.
-                #    Always runs (independent of arm step cooldown) so tracking never stops.
                 if abs(ex) > pan_thr or abs(ey) > pan_thr:
                     pan_tilt_correct(ex, ey, spd=track_spd, max_d=max_pan_ap)
                     log.debug("Pan/tilt micro-correct: ex=%.1f ey=%.1f err=%.1f", ex, ey, err)
-
-
-                # 3. Cooldown — wait for arm to settle after previous step
-=======
-                if abs(ex) > pan_thr or abs(ey) > pan_thr:
-                    pan_tilt_correct(ex, ey, spd=track_spd, max_d=max_pan_ap)
-                    log.debug("Pan/tilt micro-correct: ex=%.1f ey=%.1f err=%.1f", ex, ey, err)
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 if arm_cooldown_ticks > 0:
                     arm_cooldown_ticks -= 1
                     log.debug("Arm cooldown: %d ticks remaining", arm_cooldown_ticks)
                     continue
-<<<<<<< HEAD
-
-
-                # 4. Arm step — fires only when button is well-centred.
-                #    If it drifted (err > arm_thr), pan/tilt above re-centres first;
-                #    the arm will step on the next tick once err drops below arm_thr.
-=======
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
                 if err <= arm_thr:
                     fired = fire_arm_step()
                     if fired:
@@ -2099,13 +1735,9 @@ def run(
                     )
 
 
-<<<<<<< HEAD
-            time.sleep(0.01)
-=======
             perf.mark_frame((time.monotonic() - frame_t0) * 1000.0, infer_ms)
             time.sleep(loop_idle_sleep)
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
     except KeyboardInterrupt:

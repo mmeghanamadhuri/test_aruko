@@ -14,13 +14,10 @@ BUTTONS=(front_left_window front_right_window rear_left_window rear_right_window
 
 
 # ── Defaults (edit these to tune your robot) ─────────────────────────────────
-<<<<<<< HEAD
-=======
 # Speed profiles:
 #   CARBOT_SPEED_PROFILE=fast   -> ~20-30% faster, safer default
 #   CARBOT_SPEED_PROFILE=faster -> ~30-40% faster, still conservative guards
 CARBOT_SPEED_PROFILE="${CARBOT_SPEED_PROFILE:-fast}"
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 TRACK_SPEED=1023          # was 2000 (×1.2→2400) — clamped 1023 MX moving speed
 SEARCH_SPEED=1023          # was 2200 (×1.2→2640) — clamped 1023
 KP_X=0.65
@@ -29,21 +26,12 @@ KP_FAR=0.85
 KP_MID=0.85
 KP_NEAR=0.85
 SMOOTH_ALPHA=0.90
-<<<<<<< HEAD
-MAX_DELTA=400             # was 260  — larger single-step corrections allowed
-DEADZONE=40               # was 50   — tighter convergence zone (still stable)
-CONFIDENCE=0.6
-INVERT_PAN=1
-INVERT_TILT=1
-INFER_INTERVAL=0.0277778  # ÷1.5 vs prior — faster control period
-=======
 MAX_DELTA=400             # larger single-step corrections allowed
 DEADZONE=40               # tighter convergence zone (still stable)
 CONFIDENCE=0.7
 INVERT_PAN=1
 INVERT_TILT=1
 INFER_INTERVAL=0.0277778  # matches prior stable control period
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 ALIGN_STABLE_FRAMES=1     # min 1 — cannot reduce further
 PREVIEW=true              # set false to disable MJPEG stream
 REALIGN_PX=80             # Eye (6,7) waits unless error > 80px
@@ -60,41 +48,20 @@ MOTION_PORT=5000
 # Revert (VISION_REVERT_JSON / revert_short.json) runs inside vision only — not replayed by carbot.sh.
 # Requires motion_server running with MOTIONS_DIR containing these paths
 # (typically start motion_server from carbot_main/).
-<<<<<<< HEAD
-STARTUP_JSON_DELAY_SEC=0.5555555 # ÷1.5 vs prior between startup clips
-=======
 STARTUP_JSON_DELAY_SEC=0.5555555
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 STARTUP_JSON_FILES="actions/short.json"
 # Startup robustness (play_startup_sequence.py)
 STARTUP_SERVER_WAIT_SEC=30 #90
 STARTUP_PLAY_RETRIES=6
 STARTUP_PLAYBACK_TIMEOUT_SEC=180
-<<<<<<< HEAD
-STARTUP_POST_STOP_DELAY_SEC=0.1111111 # ÷1.5 vs prior
-# Pause after vision exits before short.json + next button selection
-POST_CYCLE_DELAY_SEC=0.5555555 # ÷1.5 vs prior
-=======
 STARTUP_POST_STOP_DELAY_SEC=0.1111111
 # Pause after vision exits before short.json + next button selection
 POST_CYCLE_DELAY_SEC=0.5555555
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 # Multi-joint Approach Vector (Motors 1,2,3,4 reach forward)
 # DIRECTIONS: S1(+), S2(-), S3(+), S4(+)
 # Servo 5, 6, and 7 are now reserved for TRIPLE-AXIS TRACKING.
 APPROACH_SERVOS="1,2,3,4"
 APPROACH_DELTAS="15,-20,50,40"  
-<<<<<<< HEAD
-APPROACH_DIR=1
-APPROACH_AREA=0.12
-APPROACH_SPD=1023         # ×1.5 vs prior (capped 1023)
-APPROACH_PAUSE=0.2222222 # ÷1.5 vs prior settle between approach steps
-VISION_OFFSET_AFTER_APPROACH=1
-VISION_OFFSET_V_ACTUATOR=extend   # or retract — whichever pushes toward the button
-VISION_OFFSET_V_MM=70            # linear actuator: extend (mm), then wait, then retract same mm
-VISION_OFFSET_V_WAIT_SEC=3.3333333 # ÷1.5 vs prior dwell at full extension (sec)
-VISION_OFFSET_V_EXTRA_MM=0        # optional second actuator leg (mm); 0 = extend+dwell+retract only
-=======
 APPROACH_WRIST_LOCK_RAW=1310
 APPROACH_DIR=1
 APPROACH_AREA=0.05
@@ -109,7 +76,6 @@ VISION_OFFSET_V_ACTUATOR=extend   # or retract — whichever pushes toward the b
 VISION_OFFSET_V_MM=100          # linear actuator: extend (mm), then wait, then retract same mm
 VISION_OFFSET_V_WAIT_SEC=3.3333333
 VISION_OFFSET_V_EXTRA_MM=1     # optional second actuator leg (mm); 0 = extend+dwell+retract only
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 # Before POST_V actuator extend: relative raw move on tilt servo (default S7, -600 ≈ 1 cm for many rigs)
 VISION_PRE_ACTUATOR_TILT_DELTA=-2200
 VISION_PRE_ACTUATOR_TILT_SERVO=7
@@ -119,9 +85,6 @@ VISION_PRESS_JSON=""              # empty = no press.json after approach
 # revert_short is not played at end of vision when POST_CYCLE_BACK_JSON is set — use menu ``7. neutral``.
 VISION_REVERT_JSON=""
 VISION_POST_CYCLE_BACK_JSON="actions/back.json"
-<<<<<<< HEAD
-VISION_SEARCH_SWEEP_SEC=8.3333333 # ÷1.5 vs prior per-direction tilt sweep (sec)
-=======
 VISION_POST_EXIT_PRE_PAUSE_SEC=0.2
 VISION_POST_EXIT_EXTEND_MM=55
 VISION_POST_EXIT_Y_DELTA_NEG=-2000
@@ -139,7 +102,6 @@ fi
 VISION_TRT_ENGINE_PATH="${VISION_TRT_ENGINE_PATH:-best.engine}"
 VISION_TRT_AUTO_EXPORT="${VISION_TRT_AUTO_EXPORT:-0}"
 VISION_TRT_PRECISION="${VISION_TRT_PRECISION:-fp16}"
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 VISION_SEARCH_BILATERAL=1         # 0 = legacy pan/tilt pattern
 
 
@@ -192,8 +154,6 @@ APPROACH_MAX_PAN=70
 # Higher = slower but more stable.  1 tick @ 0.05s interval = ~50ms settle.
 APPROACH_STEP_COOLDOWN=1  # was 3 — 3 ticks × 100ms = 300ms dead wait per step. 1 tick = 50ms.
 
-<<<<<<< HEAD
-=======
 # Internal loop pacing (window_servo.py); keep these bounded for stability.
 VISION_STATUS_POLL_SLEEP_SEC=0.02
 VISION_LOOP_IDLE_SLEEP_SEC=0.006
@@ -225,14 +185,11 @@ if [[ "$CARBOT_SPEED_PROFILE" == "faster" ]]; then
   VISION_SEARCH_HOME_WAIT_SEC=8.0
 fi
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
 
 cd "$(dirname "$0")"
 
-<<<<<<< HEAD
-=======
 SYSTEM_PYTHON_DIST_PACKAGES="/usr/lib/python3.10/dist-packages"
 if [[ -n "${PYTHONPATH:-}" ]]; then
   CARBOT_PYTHONPATH="${SYSTEM_PYTHON_DIST_PACKAGES}:${PYTHONPATH}"
@@ -240,7 +197,6 @@ else
   CARBOT_PYTHONPATH="${SYSTEM_PYTHON_DIST_PACKAGES}"
 fi
 
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
 
 
 
@@ -330,16 +286,11 @@ launch() {
 
 
   VISION_LABEL_ALLOWLIST="$button" \
-<<<<<<< HEAD
-  VISION_RUNTIME="yolo" \
-  VISION_MODEL_PATH="${VISION_MODEL_PATH:-best.pt}" \
-=======
   VISION_RUNTIME="$VISION_RUNTIME_MODE" \
   VISION_MODEL_PATH="${VISION_MODEL_PATH:-best.pt}" \
   VISION_TRT_ENGINE_PATH="$VISION_TRT_ENGINE_PATH" \
   VISION_TRT_AUTO_EXPORT="$VISION_TRT_AUTO_EXPORT" \
   VISION_TRT_PRECISION="$VISION_TRT_PRECISION" \
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
   VISION_INVERT_PAN="$INVERT_PAN" \
   VISION_INVERT_TILT="$INVERT_TILT" \
   VISION_KP_X="$KP_X" \
@@ -370,13 +321,10 @@ launch() {
   VISION_APPROACH_MAX_PAN="$APPROACH_MAX_PAN" \
   VISION_APPROACH_STEP_COOLDOWN="$APPROACH_STEP_COOLDOWN" \
   VISION_OFFSET_AFTER_APPROACH="1" \
-<<<<<<< HEAD
-=======
   VISION_CAMERA_PRESS_OFFSET_H_MM="$VISION_CAMERA_PRESS_OFFSET_H_MM" \
   VISION_OFFSET_H_SERVOS="$VISION_OFFSET_H_SERVOS" \
   VISION_OFFSET_H_RAW_DELTA="$VISION_OFFSET_H_RAW_DELTA" \
   VISION_OFFSET_H_FLIP="$VISION_OFFSET_H_FLIP" \
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
   VISION_OFFSET_V_ACTUATOR="$VISION_OFFSET_V_ACTUATOR" \
   VISION_CAMERA_PRESS_OFFSET_V_MM="$VISION_OFFSET_V_MM" \
   VISION_OFFSET_V_WAIT_SEC="$VISION_OFFSET_V_WAIT_SEC" \
@@ -388,10 +336,6 @@ launch() {
   VISION_PRESS_JSON="$VISION_PRESS_JSON" \
   VISION_REVERT_JSON="$VISION_REVERT_JSON" \
   VISION_POST_CYCLE_BACK_JSON="$VISION_POST_CYCLE_BACK_JSON" \
-<<<<<<< HEAD
-  VISION_SEARCH_SWEEP_SEC="$VISION_SEARCH_SWEEP_SEC" \
-  VISION_SEARCH_BILATERAL="$VISION_SEARCH_BILATERAL" \
-=======
   VISION_POST_EXIT_PRE_PAUSE_SEC="$VISION_POST_EXIT_PRE_PAUSE_SEC" \
   VISION_POST_EXIT_EXTEND_MM="$VISION_POST_EXIT_EXTEND_MM" \
   VISION_POST_EXIT_Y_DELTA_NEG="$VISION_POST_EXIT_Y_DELTA_NEG" \
@@ -408,16 +352,12 @@ launch() {
   VISION_LOST_FRAMES="$VISION_LOST_FRAMES" \
   VISION_SEARCH_HOME_WAIT_SEC="$VISION_SEARCH_HOME_WAIT_SEC" \
   VISION_PERF_REPORT_EVERY="$VISION_PERF_REPORT_EVERY" \
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
   VISION_AIM_OFFSET_X="$VISION_AIM_OFFSET_X" \
   VISION_AIM_OFFSET_Y="$VISION_AIM_OFFSET_Y" \
   MOTION_HOST="$MOTION_HOST" \
   MOTION_PORT="$MOTION_PORT" \
   CARBOT_SHELL_LOOP=1 \
-<<<<<<< HEAD
-=======
   PYTHONPATH="$CARBOT_PYTHONPATH" \
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
   PYTHONUNBUFFERED=1 \
   python3 -u -m vision.window_servo $PREVIEW_FLAG \
     --motion-host "$MOTION_HOST" \
@@ -470,8 +410,3 @@ while true; do
   sleep "$POST_CYCLE_DELAY_SEC"
   pick_button
 done
-<<<<<<< HEAD
-
-
-=======
->>>>>>> b478ef8 (TensorRT driven and overall faster system)
