@@ -11,3 +11,6 @@ venv/
 .ruff_cache/
 .DS_Store
 Thumbs.db
+
+# Auto-downloaded vision model weights (YuNet ONNX, YOLO .pt, TensorRT engines)
+nina/models/weights/

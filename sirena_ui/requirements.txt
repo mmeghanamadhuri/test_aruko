@@ -10,3 +10,24 @@ Pillow>=8.0
 # Optional: enables the in-app "Audio" button to generate spoken
 # clips from text. Requires internet access at generation time.
 gTTS>=2.3
+
+# ── Vision screen (USB camera + face/object detection) ────────────
+#
+# Face detection uses YuNet (cv2.FaceDetectorYN), which ships with
+# OpenCV >= 4.5.4 - no extra weights to install. The ONNX file is
+# auto-cached under nina/models/weights/ on first use.
+#
+# Object detection uses Ultralytics YOLOv8n. On Jetson with CUDA the
+# pipeline auto-exports a TensorRT FP16 engine on first run so
+# inference runs on the GPU; on dev hosts (or any machine without
+# CUDA) it falls back to the PyTorch backend.
+#
+# These deps are optional - the GUI starts without them and the
+# Vision screen surfaces a clear "Vision unavailable" pill so it's
+# obvious what to install.
+opencv-python-headless>=4.5.4
+# Object detection (heavier; pulls in torch). Skip on Jetson if you
+# already have a vendor-supplied torch wheel installed - then run
+# `pip install --no-deps ultralytics` so we don't try to reinstall
+# torch from the wrong index.
+ultralytics>=8.0.0

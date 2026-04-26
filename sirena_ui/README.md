@@ -21,15 +21,26 @@ consumer cockpit.
 +-- Health      Donut + 13-row subsystem table, Run-all-checks
 ```
 
-The first release ships fully working **Home**, **Actions**, **Drive**
-and **Health** flows. **Drive** is wired to the real JYQD_V7.3E2 BLDC
-drivers via `workers/drive_controller.py` (a Qt facade over
-`nina.controllers.navigation_manager.NavigationManager`); on dev hosts
-without `Jetson.GPIO` it gracefully falls back to a "Simulation" pill
-so the UI keeps working. **Vision**, **Map**, **Settings** and the
-non-Dynamixel rows on **Health** remain polished UI scaffolds with
-in-process stubs so the firmware team can swap each stub for a real
-driver without touching the UI.
+The first release ships fully working **Home**, **Actions**, **Drive**,
+**Vision** and **Health** flows.
+
+- **Drive** is wired to the real JYQD_V7.3E2 BLDC drivers via
+  `workers/drive_controller.py` (a Qt facade over
+  `nina.controllers.navigation_manager.NavigationManager`); on dev hosts
+  without `Jetson.GPIO` it gracefully falls back to a "Simulation" pill.
+- **Vision** is wired to a USB camera and runs face detection
+  (**YuNet** via `cv2.FaceDetectorYN`) and object detection
+  (**Ultralytics YOLOv8n**, auto-exported to **TensorRT FP16** on
+  Jetson so it runs on the GPU) through `workers/vision_pipeline.py` +
+  `workers/vision_worker.py`. On hosts without OpenCV /
+  Ultralytics / a camera the screen surfaces a clear "Vision
+  unavailable" pill with the exact reason. Face _recognition_
+  (identity matching) and person tracking are tagged for the next
+  iteration.
+
+**Map**, **Settings** and the non-Dynamixel rows on **Health** remain
+polished UI scaffolds with in-process stubs so the firmware team can
+swap each stub for a real driver without touching the UI.
 
 ## Action audio
 
@@ -81,6 +92,40 @@ python3 scripts/generate-action-audio.py namaste
 # Tune the offset later without re-generating audio
 python3 scripts/generate-action-audio.py namaste --offset 2.5 --skip-tts
 ```
+
+## Vision pipeline
+
+The Vision screen drives a USB camera and runs two GPU-accelerated
+detectors that the operator toggles independently:
+
+- **Face detection** - YuNet (`cv2.FaceDetectorYN`). Ships with
+  OpenCV >= 4.5.4. The 340 KB ONNX model is downloaded once to
+  `nina/models/weights/face_detection_yunet_2023mar.onnx`.
+- **Object detection** - Ultralytics YOLOv8n (COCO 80 classes). On
+  Jetson the pipeline auto-exports a TensorRT FP16 engine on first
+  run (`nina/models/weights/yolov8n.engine`); thereafter inference
+  runs on the GPU. On dev hosts the same code falls back to PyTorch.
+
+Useful env vars:
+
+```bash
+# /dev/video<N> the camera lives on (default: 0)
+export NINA_VISION_CAMERA=0
+
+# Disable the TensorRT path even on a Jetson (defaults to on)
+export NINA_VISION_TRT=0
+
+# Override the YOLO weights file (defaults to nina/models/weights/yolov8n.pt)
+export NINA_VISION_YOLO_WEIGHTS=/path/to/your.pt
+```
+
+The first time **Object detection** is toggled on a Jetson the
+TensorRT export takes ~2-3 minutes and the screen shows a "Loading
+object detector..." pill so the user knows to wait. Subsequent toggles
+load the cached engine in seconds.
+
+Snapshots from the **Snapshot** button save to
+`~/Pictures/nina-snapshots/`.
 
 ## Install dependencies on Jetson Nano
 
@@ -158,8 +203,8 @@ sirena_ui/
   screens/
     home_screen.py        # dashboard
     actions_screen.py     # Playback / Record / Audio sub-tabs
-    drive_screen.py       # BLDC manual control (stub)
-    vision_screen.py      # camera + recognition (stub)
+    drive_screen.py       # BLDC manual control (live)
+    vision_screen.py      # USB camera + face/object recognition (live)
     map_screen.py         # SLAM (stub)
     settings_screen.py    # sub-sidebar with 9 categories
     health_screen.py      # donut + 13-row subsystem table
@@ -181,6 +226,9 @@ sirena_ui/
     record_worker.py
     audio_gen_worker.py   # gTTS rendering off the UI thread
     drive_controller.py   # Qt facade over NavigationManager (BLDC)
+    vision_pipeline.py    # camera + YuNet face + YOLOv8 object pipeline
+    vision_worker.py      # Qt facade running the vision pipeline on a thread
+    vision_types.py       # Detection / VisionStatus dataclasses
     health_collector.py   # subsystem statuses for the Health screen
     error_hints.py        # turn raw errors into actionable Jetson tips
 ```

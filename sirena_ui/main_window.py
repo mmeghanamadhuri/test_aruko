@@ -100,6 +100,18 @@ class MainWindow(QMainWindow):
             widget = self._build_screen(key)
             self._screens[key] = widget
             self._stack.addWidget(widget)
+
+        # Notify the outgoing screen so screens that own background
+        # workers (e.g. Vision releases the camera) can stand down.
+        previous = self._stack.currentWidget()
+        if previous is not None and previous is not widget:
+            on_leave = getattr(previous, "on_leave", None)
+            if callable(on_leave):
+                try:
+                    on_leave()
+                except Exception:
+                    pass
+
         self._stack.setCurrentWidget(widget)
         self._header.set_title(self._titles.get(key, "Nina"))
         on_enter = getattr(widget, "on_enter", None)

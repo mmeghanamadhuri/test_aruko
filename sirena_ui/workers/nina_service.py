@@ -23,6 +23,7 @@ from nina.controllers.navigation_manager import (
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.drive_controller import DriveController
+from sirena_ui.workers.vision_worker import VisionWorker
 
 
 DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -48,6 +49,7 @@ class NinaService:
         self._bus_ready = False
         self._motor_count = len(DEFAULT_MOTOR_IDS)
         self._drive: Optional[DriveController] = None
+        self._vision: Optional[VisionWorker] = None
 
     @property
     def expected_motor_count(self) -> int:
@@ -83,6 +85,18 @@ class NinaService:
             self._drive = DriveController(nav_config)
         return self._drive
 
+    @property
+    def vision(self) -> VisionWorker:
+        """Lazy singleton for the camera + face/object detection worker.
+
+        Created on first access so the GUI doesn't pay the
+        OpenCV/Ultralytics import + camera-open cost until the user
+        actually navigates to the Vision screen.
+        """
+        if self._vision is None:
+            self._vision = VisionWorker()
+        return self._vision
+
     def _build_navigation_config(self) -> NavigationConfig:
         nav = self.settings.navigation
         # DEFAULT_PINS already honours NINA_NAV_*_PIN env overrides at
@@ -104,6 +118,12 @@ class NinaService:
 
     def shutdown(self) -> None:
         with self.bus_lock:
+            if self._vision is not None:
+                try:
+                    self._vision.shutdown()
+                except Exception:
+                    pass
+                self._vision = None
             if self._drive is not None:
                 try:
                     self._drive.shutdown()
