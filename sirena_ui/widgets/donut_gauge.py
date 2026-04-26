@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QRect
+from PyQt5.QtCore import Qt, QRect, QRectF
 from PyQt5.QtGui import QColor, QPainter, QPen, QBrush, QPixmap
 from PyQt5.QtWidgets import QWidget
 
@@ -73,7 +73,7 @@ class DonutGauge(QWidget):
             p.save()
             from PyQt5.QtGui import QPainterPath
             path = QPainterPath()
-            path.addEllipse(inner)
+            path.addEllipse(QRectF(inner))
             p.setClipPath(path)
             p.drawPixmap(x, y, scaled)
             p.restore()
