@@ -22,7 +22,9 @@ from nina.controllers.navigation_manager import (
 )
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
+from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
+from sirena_ui.workers.slam_worker import SlamWorker
 from sirena_ui.workers.vision_worker import VisionWorker
 
 
@@ -50,6 +52,8 @@ class NinaService:
         self._motor_count = len(DEFAULT_MOTOR_IDS)
         self._drive: Optional[DriveController] = None
         self._vision: Optional[VisionWorker] = None
+        self._slam: Optional[SlamWorker] = None
+        self._autonomy: Optional[AutonomyController] = None
 
     @property
     def expected_motor_count(self) -> int:
@@ -97,6 +101,34 @@ class NinaService:
             self._vision = VisionWorker()
         return self._vision
 
+    @property
+    def slam(self) -> SlamWorker:
+        """Lazy singleton for the lidar + SLAM worker.
+
+        Created on first access so the GUI doesn't pay the BreezySLAM
+        import / RPLIDAR USB-serial probe cost until the user opens
+        the Map screen or enables autonomous mode.
+        """
+        if self._slam is None:
+            self._slam = SlamWorker(self.settings.slam)
+        return self._slam
+
+    @property
+    def autonomy(self) -> AutonomyController:
+        """Lazy singleton for the autonomous-navigation controller.
+
+        Owns the short-range sensors (HC-SR04 ring, GP2Y0E02B IR,
+        RealSense D435) and the AutonomousPilot. Lidar scans come from
+        `self.slam` so we don't double-open the serial port.
+        """
+        if self._autonomy is None:
+            self._autonomy = AutonomyController(
+                drive=self.drive,
+                slam=self.slam,
+                settings=self.settings.autonomy,
+            )
+        return self._autonomy
+
     def _build_navigation_config(self) -> NavigationConfig:
         nav = self.settings.navigation
         # DEFAULT_PINS already honours NINA_NAV_*_PIN env overrides at
@@ -118,6 +150,20 @@ class NinaService:
 
     def shutdown(self) -> None:
         with self.bus_lock:
+            # Order matters: autonomy depends on slam (lidar) and drive,
+            # so it has to come down first - that also parks the wheels.
+            if self._autonomy is not None:
+                try:
+                    self._autonomy.shutdown()
+                except Exception:
+                    pass
+                self._autonomy = None
+            if self._slam is not None:
+                try:
+                    self._slam.shutdown()
+                except Exception:
+                    pass
+                self._slam = None
             if self._vision is not None:
                 try:
                     self._vision.shutdown()

@@ -183,6 +183,50 @@ class DriveController(QObject):
         self._emit_state()
         self._enqueue(self._do_stop)
 
+    def drive_wheels(
+        self,
+        left_dir: str,
+        left_speed: int,
+        right_dir: str,
+        right_speed: int,
+    ) -> None:
+        """Continuous, non-blocking wheel control.
+
+        Used by the autonomous pilot - calling this at 5-20 Hz steers
+        the robot smoothly without each call blocking on the timed-turn
+        sleep that `drive('left')` / `drive('right')` use.
+
+        `left_dir` / `right_dir` are 'forward' or 'back'; speeds are
+        0..100. Brake state is honoured: if the operator engaged the
+        brake, this call is a no-op.
+        """
+        for d in (left_dir, right_dir):
+            if d not in (_DIR_FORWARD, _DIR_BACK):
+                log.warning("drive_wheels: unknown direction '%s'", d)
+                return
+        with self._lock:
+            if self._state["brake"]:
+                return
+        ls = max(0, min(100, int(left_speed)))
+        rs = max(0, min(100, int(right_speed)))
+        # Reflect direction in state so the screen pill shows what
+        # autonomy is actually doing right now.
+        with self._lock:
+            if ls == 0 and rs == 0:
+                self._state["direction"] = "idle"
+            elif left_dir == right_dir:
+                self._state["direction"] = (
+                    "forward" if left_dir == _DIR_FORWARD else "back"
+                )
+            else:
+                self._state["direction"] = (
+                    "left" if left_dir == _DIR_BACK else "right"
+                )
+        self._emit_state()
+        self._enqueue(
+            lambda: self._do_drive_wheels(left_dir, ls, right_dir, rs)
+        )
+
     # ------------------------------------------------------------------
     # Worker thread
     # ------------------------------------------------------------------
@@ -286,6 +330,38 @@ class DriveController(QObject):
             self._nav.stop()
         except Exception as exc:
             log.exception("stop() failed: %s", exc)
+
+    def _do_drive_wheels(
+        self,
+        left_dir: str,
+        left_speed: int,
+        right_dir: str,
+        right_speed: int,
+    ) -> None:
+        if self._nav is None:
+            return
+        try:
+            ldir = (
+                self._nav.DIR_FORWARD
+                if left_dir == _DIR_FORWARD
+                else self._nav.DIR_BACKWARD
+            )
+            rdir = (
+                self._nav.DIR_FORWARD
+                if right_dir == _DIR_FORWARD
+                else self._nav.DIR_BACKWARD
+            )
+            self._nav.set_wheels(
+                left_dir=ldir,
+                left_speed=left_speed,
+                right_dir=rdir,
+                right_speed=right_speed,
+            )
+        except Exception as exc:
+            log.exception(
+                "drive_wheels(%s/%s, %s/%s) failed: %s",
+                left_dir, left_speed, right_dir, right_speed, exc,
+            )
 
     # ------------------------------------------------------------------
     # Internal

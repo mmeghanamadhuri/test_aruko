@@ -22,12 +22,15 @@ consumer cockpit.
 ```
 
 The first release ships fully working **Home**, **Actions**, **Drive**,
-**Vision** and **Health** flows.
+**Vision**, **Map** and **Health** flows.
 
 - **Drive** is wired to the real JYQD_V7.3E2 BLDC drivers via
   `workers/drive_controller.py` (a Qt facade over
   `nina.controllers.navigation_manager.NavigationManager`); on dev hosts
   without `Jetson.GPIO` it gracefully falls back to a "Simulation" pill.
+  An **Autonomous mode** toggle on the Drive screen mirrors the same
+  toggle on the Map screen and disables the manual D-pad while autonomy
+  is in charge of the wheels.
 - **Vision** is wired to a USB camera and runs face detection
   (**YuNet** via `cv2.FaceDetectorYN`) and object detection
   (**Ultralytics YOLOv8n**, auto-exported to **TensorRT FP16** on
@@ -37,10 +40,26 @@ The first release ships fully working **Home**, **Actions**, **Drive**,
   unavailable" pill with the exact reason. Face _recognition_
   (identity matching) and person tracking are tagged for the next
   iteration.
+- **Map** is wired to a real lidar-driven SLAM stack:
+  - `nina/sensors/` ships drivers for the **RPLIDAR A1M8** (head),
+    **HC-SR04** ultrasonic ring (chassis), **Sharp GP2Y0E02B** IR
+    cliff sensor (front bumper), and **Intel RealSense D435** depth
+    camera (front of chassis, ~10 deg downtilt).
+  - `nina/slam/` wraps **BreezySLAM** (CoreSLAM port) into a thread-
+    safe `SlamEngine` that publishes a 2D occupancy grid + pose.
+  - `nina/navigation/autonomous_pilot.py` is a reactive sensor-fusion
+    pilot: when the **Autonomous mode** toggle is on, the obstacle
+    field combines lidar, ultrasonic, IR and depth into per-sector
+    minimum distances and steers the BLDCs accordingly. The IR sensor
+    is treated as a hard cliff alarm.
+  - All four sensors degrade independently - if `pyrealsense2` /
+    `rplidar` / `smbus2` is missing, or the device file isn't there,
+    the relevant pill switches to "sim" and the pilot keeps running on
+    whatever sensors are alive.
 
-**Map**, **Settings** and the non-Dynamixel rows on **Health** remain
-polished UI scaffolds with in-process stubs so the firmware team can
-swap each stub for a real driver without touching the UI.
+**Settings** and the non-Dynamixel rows on **Health** remain polished
+UI scaffolds with in-process stubs so the firmware team can swap each
+stub for a real driver without touching the UI.
 
 ## Action audio
 
@@ -126,6 +145,74 @@ load the cached engine in seconds.
 
 Snapshots from the **Snapshot** button save to
 `~/Pictures/nina-snapshots/`.
+
+## Map / SLAM / autonomous nav
+
+Hardware:
+
+| Role         | Part           | Notes                                                |
+| ------------ | -------------- | ---------------------------------------------------- |
+| 360 lidar    | RPLIDAR A1M8   | Head-mounted; USB serial, default `/dev/ttyUSB0`     |
+| Depth camera | RealSense D435 | Front of chassis, ~10 deg downtilt, USB 3            |
+| IR cliff     | GP2Y0E02B      | Front bumper, downward; I2C bus 1, default 0x40      |
+| Ultrasonics  | 4x HC-SR04     | Chassis ring; FL/FR/RL/RR. BCM pins are env-overridable |
+
+The **Autonomous mode** toggle is mirrored on the **Map** screen and
+the **Drive** screen. Turning it on:
+
+1. Starts the SLAM worker (lidar + BreezySLAM) so the occupancy grid
+   builds while autonomy runs.
+2. Opens the HC-SR04 ring, the IR cliff sensor, and the D435.
+3. Spawns the `AutonomousPilot` reactive controller (5 Hz default).
+
+Pilot behaviour (V1 - "safe wander"):
+
+- Forward when `forward >= NINA_AUTO_FWD_CLEAR_MM` (default 700 mm)
+  AND both side margins exceed `NINA_AUTO_SIDE_CLEAR_MM` (350 mm).
+- Otherwise commit a brief in-place turn toward the clearer side for
+  `NINA_AUTO_TURN_MS` ms (default 350) and re-evaluate.
+- If any sector drops below `NINA_AUTO_ESTOP_MM` (300 mm) **or** the
+  IR sensor fires the cliff alarm, reverse for
+  `NINA_AUTO_BACKOFF_MS` ms and re-pick a direction.
+
+While autonomy is on, the Drive screen disables the D-pad / brake /
+reverse / speed slider so the operator can't fight it on the wheels.
+Toggle off to take back manual control - the wheels park on the way
+out.
+
+Useful env vars:
+
+```bash
+# RPLIDAR
+export NINA_LIDAR_PORT=/dev/ttyUSB0
+export NINA_LIDAR_BAUD=115200
+
+# HC-SR04 ring (BCM pin numbers); set NINA_HCSR04_DISABLE=1 to skip
+export NINA_HCSR04_FL_TRIG=23   NINA_HCSR04_FL_ECHO=24
+export NINA_HCSR04_FR_TRIG=7    NINA_HCSR04_FR_ECHO=8
+
+# IR (i2c bus / address)
+export NINA_IR_I2C_BUS=1
+export NINA_IR_I2C_ADDR=0x40
+
+# Depth camera; NINA_DEPTH_DISABLE=1 to skip the D435
+export NINA_DEPTH_FPS=15
+
+# Pilot tuning
+export NINA_AUTO_TICK_HZ=5
+export NINA_AUTO_CRUISE_PCT=18
+export NINA_AUTO_FWD_CLEAR_MM=700
+export NINA_AUTO_ESTOP_MM=300
+export NINA_AUTO_CLIFF_MIN_MM=60
+
+# SLAM map sizing
+export NINA_SLAM_PIXELS=800
+export NINA_SLAM_METERS=20
+```
+
+The Map screen also exposes **Start mapping** (SLAM only, no
+autonomy), **Save map** (PGM dump of the current grid) and **Clear**
+(reset the grid + replay live scans into a fresh map).
 
 ## Install dependencies on Jetson Nano
 
@@ -229,6 +316,25 @@ sirena_ui/
     vision_pipeline.py    # camera + YuNet face + YOLOv8 object pipeline
     vision_worker.py      # Qt facade running the vision pipeline on a thread
     vision_types.py       # Detection / VisionStatus dataclasses
+    slam_worker.py        # Qt facade: lidar + BreezySLAM
+    autonomy_controller.py# Qt facade: HC-SR04 + IR + D435 + AutonomousPilot
     health_collector.py   # subsystem statuses for the Health screen
     error_hints.py        # turn raw errors into actionable Jetson tips
+```
+
+The non-UI side of the SLAM / autonomy stack lives under `nina/`:
+
+```
+nina/
+  sensors/
+    types.py              # LidarScan / UltrasonicReading / IRReading / DepthFrame
+    rplidar_a1.py         # SLAMTEC RPLIDAR A1M8 USB-serial driver
+    hcsr04.py             # HC-SR04 ultrasonic ring (BCM GPIO)
+    gp2y0e02b.py          # Sharp GP2Y0E02B IR cliff sensor (I2C)
+    realsense_d435.py     # Intel RealSense D435 depth camera
+  slam/
+    engine.py             # BreezySLAM RMHC_SLAM wrapper + occupancy grid
+  navigation/
+    obstacle_field.py     # Multi-sensor fusion -> per-sector min distances
+    autonomous_pilot.py   # Reactive 'safe wander' pilot driving the BLDCs
 ```

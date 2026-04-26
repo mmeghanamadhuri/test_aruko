@@ -38,7 +38,9 @@ class DriveScreen(QWidget):
         super().__init__(parent)
         self._service = service
         self._drive = service.drive
+        self._autonomy = service.autonomy
         self._drive.state_changed.connect(self._render_state)
+        self._autonomy.enabled_changed.connect(self._on_autonomy_enabled)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -48,6 +50,8 @@ class DriveScreen(QWidget):
         top.setSpacing(8)
         top.addWidget(Breadcrumb("Nina", "Drive"))
         top.addStretch(1)
+        self._auto_pill = Pill("Autonomous: OFF", Pill.KIND_NEUTRAL)
+        top.addWidget(self._auto_pill)
         self._conn_pill = Pill("BLDC not connected", Pill.KIND_NEUTRAL)
         top.addWidget(self._conn_pill)
         outer.addLayout(top)
@@ -131,6 +135,23 @@ class DriveScreen(QWidget):
         card.add(CardTitle("Manual Control"))
         card.add(MutedLabel("Hold a direction to drive \u00b7 release to stop"))
 
+        # Autonomous-mode toggle. Mirrors the same control on the Map
+        # screen - both feed into `service.autonomy.set_enabled()`.
+        self._autonomy_btn = QPushButton("Autonomous mode: OFF")
+        self._autonomy_btn.setObjectName("primaryButton")
+        self._autonomy_btn.setCursor(Qt.PointingHandCursor)
+        self._autonomy_btn.setCheckable(True)
+        self._autonomy_btn.toggled.connect(self._on_autonomy_toggle)
+        card.add(self._autonomy_btn)
+
+        self._auto_banner = MutedLabel(
+            "Manual D-pad below is active. Toggle Autonomous mode to "
+            "let Nina drive herself using lidar + ultrasonic + IR + "
+            "depth-camera obstacle avoidance."
+        )
+        self._auto_banner.setWordWrap(True)
+        card.add(self._auto_banner)
+
         self._dpad = DPad()
         self._dpad.direction_pressed.connect(self._drive.drive)
         self._dpad.direction_released.connect(lambda _d: self._drive.stop())
@@ -196,18 +217,69 @@ class DriveScreen(QWidget):
         self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
 
+    def _on_autonomy_toggle(self, on: bool) -> None:
+        try:
+            self._autonomy.set_enabled(on)
+        except Exception as exc:
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Autonomous mode failed",
+                f"Could not toggle autonomy: {exc}",
+            )
+
+    def _on_autonomy_enabled(self, on: bool) -> None:
+        self._autonomy_btn.blockSignals(True)
+        self._autonomy_btn.setChecked(on)
+        self._autonomy_btn.setText(
+            f"Autonomous mode: {'ON' if on else 'OFF'}"
+        )
+        self._autonomy_btn.blockSignals(False)
+
+        self._auto_pill.setText(
+            f"Autonomous: {'ON' if on else 'OFF'}"
+        )
+        self._auto_pill.set_kind(Pill.KIND_OK if on else Pill.KIND_NEUTRAL)
+
+        # Disable the manual D-pad / brake / reverse while autonomy is
+        # in charge so the operator can't fight it on the wheels.
+        self._dpad.set_enabled(not on)
+        self._brake_btn.setEnabled(not on)
+        self._reverse_btn.setEnabled(not on)
+        self._speed_slider.setEnabled(not on)
+
+        if on:
+            self._auto_banner.setText(
+                "Autonomous mode active \u2014 Nina is driving herself. "
+                "Manual controls are disabled. Toggle off to take back "
+                "control."
+            )
+        else:
+            self._auto_banner.setText(
+                "Manual D-pad below is active. Toggle Autonomous mode "
+                "to let Nina drive herself using lidar + ultrasonic + "
+                "IR + depth-camera obstacle avoidance."
+            )
+
     def on_enter(self) -> None:
         """Lazily initialise the BLDC drivers the first time the user
         opens the Drive screen. Re-entry is cheap; the controller
         dedupes inside its worker."""
         self._drive.ensure_hardware()
+        # Reflect the current autonomy state in case the user toggled
+        # it from the Map screen.
+        self._on_autonomy_enabled(self._autonomy.is_enabled())
 
     def _render_state(self, state: dict) -> None:
         self._hud_speed._value_label.setText(f"{state['speed_pct']}%")
         self._hud_heading._value_label.setText(f"{state['heading_deg']}\u00b0")
         self._hud_distance._value_label.setText(f"{state['distance_m']:.1f} m")
         self._speed_pill.setText(f"{state['speed_pct']}%")
-        self._dpad.set_enabled(not state["brake"])
+        # Autonomy lock takes priority over the brake-lock for D-pad
+        # enablement: while autonomy is on, the D-pad stays disabled
+        # regardless of the manual brake state.
+        if not self._autonomy.is_enabled():
+            self._dpad.set_enabled(not state["brake"])
 
         message = state.get("driver_message", "")
         if state["connected"]:

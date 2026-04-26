@@ -31,3 +31,26 @@ opencv-python-headless>=4.5.4
 # `pip install --no-deps ultralytics` so we don't try to reinstall
 # torch from the wrong index.
 ultralytics>=8.0.0
+
+# ── Map / SLAM / autonomous nav ──────────────────────────────────
+#
+# All four sensor stacks are optional - if a dependency or its
+# corresponding device is missing, the autonomy controller marks
+# that source unavailable and the pilot keeps running on whatever
+# remains.
+#
+# Lidar (SLAMTEC RPLIDAR A1M8) - USB serial:
+rplidar>=0.9.5
+# 2D occupancy-grid SLAM (CoreSLAM port; no ROS dep, runs on Nano):
+breezyslam>=0.5.0
+# I2C for the Sharp GP2Y0E02B IR cliff sensor:
+smbus2>=0.4.0
+# Intel RealSense D435 depth camera. On x86/Mac this wheel works
+# directly. On Jetson Nano you need to build librealsense from
+# source against JetPack first; see librealsense's
+# doc/installation_jetson.md.
+pyrealsense2>=2.50; platform_machine != "aarch64"
+#
+# numpy is already a dependency of opencv-python-headless and
+# ultralytics, but the depth camera summariser uses it directly:
+numpy>=1.20

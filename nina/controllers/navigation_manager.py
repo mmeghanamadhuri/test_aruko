@@ -220,6 +220,25 @@ class NavigationManager:
         time.sleep(self.config.settle_delay_sec)
         log.info("stop")
 
+    def set_wheels(
+        self,
+        *,
+        left_dir: str,
+        left_speed: int,
+        right_dir: str,
+        right_speed: int,
+    ) -> None:
+        """Apply per-wheel direction + speed without any settle / kick-start
+        / timed-turn behaviour. Returns immediately so a closed-loop
+        autonomy controller can call this at 5-20 Hz without each call
+        blocking on internal sleeps.
+
+        Speeds are 0..100 (deadband-corrected just like `forward()` /
+        `backward()`). Pass speed=0 to coast that wheel.
+        """
+        self._control_speed(self.SIDE_LEFT, True, left_speed, left_dir)
+        self._control_speed(self.SIDE_RIGHT, True, right_speed, right_dir)
+
     def emergency_stop(self) -> None:
         log.warning("EMERGENCY STOP requested")
         try:
