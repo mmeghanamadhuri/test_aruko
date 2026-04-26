@@ -1,26 +1,43 @@
-"""Top-level Sirena Control Center window."""
+"""Top-level Sirena Control Center window.
+
+Layout:
+
+  +-------------------------------------------------------+
+  |              red header (centered title)              |
+  +---------+---------------------------------------------+
+  |         |                                             |
+  | sidebar |              screen stack                   |
+  |         |                                             |
+  +---------+---------------------------------------------+
+  |                  charcoal status bar                  |
+  +-------------------------------------------------------+
+
+Each screen is created lazily on first navigation. The
+`MainWindow` owns the single shared `NinaService` and routes
+nav clicks to the right widget.
+"""
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QPixmap
+import getpass
+import socket
+from typing import Dict, Optional
+
+from PyQt5.QtCore import QTimer
 from PyQt5.QtWidgets import (
-    QFrame,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
-    QPushButton,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from sirena_ui.screens.launcher_screen import LauncherScreen
-from sirena_ui.screens.nina_screen import NinaScreen
-from sirena_ui.styles import asset_path
+from sirena_ui.widgets.header_bar import HeaderBar
+from sirena_ui.widgets.sidebar import NAV_ITEMS, Sidebar
+from sirena_ui.widgets.status_bar import StatusBar
 from sirena_ui.workers.nina_service import NinaService
 
-APP_VERSION = "0.1"
+APP_VERSION = "0.4"
 
 
 class MainWindow(QMainWindow):
@@ -29,6 +46,18 @@ class MainWindow(QMainWindow):
         self._service = service
         self.setWindowTitle("Sirena Control Center")
         self.resize(1280, 800)
+        self.setMinimumSize(1100, 720)
+
+        self._screens: Dict[str, QWidget] = {}
+        self._titles: Dict[str, str] = {
+            "home": "Nina \u00b7 Home",
+            "drive": "Nina \u00b7 Drive",
+            "vision": "Nina \u00b7 Vision",
+            "map": "Nina \u00b7 Map (SLAM)",
+            "actions": "Nina \u00b7 Actions",
+            "settings": "Nina \u00b7 Settings",
+            "health": "Nina \u00b7 Health Check",
+        }
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -36,84 +65,107 @@ class MainWindow(QMainWindow):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        self._header_title = QLabel()
-        self._header_title.setObjectName("headerTitle")
-        self._header_back = QPushButton("\u2190 Back")
-        self._header_back.setObjectName("headerBack")
-        self._header_back.setCursor(Qt.PointingHandCursor)
-        self._header_back.clicked.connect(self._show_launcher)
-        outer.addWidget(self._build_header())
+        self._header = HeaderBar()
+        outer.addWidget(self._header)
+
+        body = QHBoxLayout()
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(0)
+        outer.addLayout(body, stretch=1)
+
+        host = self._host_label()
+        self._sidebar = Sidebar(version_label=f"v{APP_VERSION}", host_label=host)
+        self._sidebar.nav_changed.connect(self.navigate)
+        body.addWidget(self._sidebar)
 
         self._stack = QStackedWidget()
-        outer.addWidget(self._stack, stretch=1)
+        body.addWidget(self._stack, stretch=1)
 
-        outer.addWidget(self._build_footer())
+        self._status_bar = StatusBar()
+        outer.addWidget(self._status_bar)
 
-        self._launcher = LauncherScreen()
-        self._launcher.robot_selected.connect(self._on_robot_selected)
-        self._stack.addWidget(self._launcher)
+        # Initial state
+        self.navigate("home")
+        self._sidebar.select("home")
 
-        self._nina_screen = NinaScreen(self._service)
-        self._stack.addWidget(self._nina_screen)
+        # Try to bring up the bus shortly after the window appears so the
+        # status bar shows accurate dots without blocking the UI.
+        QTimer.singleShot(150, self._initialize_bus)
 
-        self._show_launcher()
+    # ---------- navigation ----------
 
-    # ---- header / footer ----
+    def navigate(self, key: str) -> None:
+        widget = self._screens.get(key)
+        if widget is None:
+            widget = self._build_screen(key)
+            self._screens[key] = widget
+            self._stack.addWidget(widget)
+        self._stack.setCurrentWidget(widget)
+        self._header.set_title(self._titles.get(key, "Nina"))
+        on_enter = getattr(widget, "on_enter", None)
+        if callable(on_enter):
+            try:
+                on_enter()
+            except Exception:
+                pass
 
-    def _build_header(self) -> QFrame:
-        bar = QFrame()
-        bar.setObjectName("headerBar")
-        bar.setFixedHeight(72)
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(20, 8, 20, 8)
-        h.setSpacing(14)
+    def _build_screen(self, key: str) -> QWidget:
+        if key == "home":
+            from sirena_ui.screens.home_screen import HomeScreen
+            screen = HomeScreen(self._service)
+            screen.navigate_requested.connect(self._on_nav_request)
+            return screen
+        if key == "drive":
+            from sirena_ui.screens.drive_screen import DriveScreen
+            return DriveScreen(self._service)
+        if key == "vision":
+            from sirena_ui.screens.vision_screen import VisionScreen
+            return VisionScreen(self._service)
+        if key == "map":
+            from sirena_ui.screens.map_screen import MapScreen
+            return MapScreen(self._service)
+        if key == "actions":
+            from sirena_ui.screens.actions_screen import ActionsScreen
+            screen = ActionsScreen(self._service)
+            screen.bus_status_changed.connect(self._status_bar.set_right_text)
+            return screen
+        if key == "settings":
+            from sirena_ui.screens.settings_screen import SettingsScreen
+            return SettingsScreen(self._service)
+        if key == "health":
+            from sirena_ui.screens.health_screen import HealthScreen
+            return HealthScreen(self._service)
+        raise ValueError(f"Unknown screen key: {key}")
 
-        logo = QLabel()
-        pix = QPixmap(asset_path("sirena_logo.png"))
-        if not pix.isNull():
-            logo.setPixmap(pix.scaledToHeight(48, Qt.SmoothTransformation))
-        h.addWidget(logo)
+    def _on_nav_request(self, key: str) -> None:
+        self.navigate(key)
+        self._sidebar.select(key)
 
-        h.addStretch(1)
-        self._header_title.setAlignment(Qt.AlignCenter)
-        h.addWidget(self._header_title)
-        h.addStretch(1)
+    # ---------- bus / footer ----------
 
-        h.addWidget(self._header_back)
-        return bar
+    def _initialize_bus(self) -> None:
+        try:
+            health = self._service.ensure_bus()
+        except Exception:
+            self._status_bar.set_dot("bus", ok=False)
+            self._status_bar.set_right_text("Bus offline \u2014 check serial cable")
+            return
+        self._status_bar.set_dot("bus", ok=True)
+        self._status_bar.set_dot("wifi", ok=True)
+        self._status_bar.set_dot("battery", ok=True)
+        self._status_bar.set_dot("voice", ok=False, warn=True)  # ESP voice not yet wired
+        detected = health.get("detected", 0)
+        expected = health.get("expected", 0)
+        self._status_bar.set_right_text(
+            f"Motors {detected}/{expected} \u00b7 Bus ready"
+        )
 
-    def _build_footer(self) -> QFrame:
-        bar = QFrame()
-        bar.setObjectName("footerBar")
-        bar.setFixedHeight(28)
-        h = QHBoxLayout(bar)
-        h.setContentsMargins(16, 0, 16, 0)
-        version = QLabel(f"v{APP_VERSION}")
-        version.setStyleSheet("color: #6e6e73; font-size: 12px;")
-        h.addWidget(version)
-        h.addStretch(1)
-        self._bus_status = QLabel("\u25CF Bus: not initialized")
-        self._bus_status.setStyleSheet("color: #6e6e73; font-size: 12px;")
-        h.addWidget(self._bus_status)
-        return bar
-
-    # ---- navigation ----
-
-    def _show_launcher(self) -> None:
-        self._stack.setCurrentWidget(self._launcher)
-        self._header_title.setText("Sirena Control Center")
-        self._header_back.setVisible(False)
-        self._bus_status.setText("\u25CF Bus: idle")
-        self._bus_status.setStyleSheet("color: #6e6e73; font-size: 12px;")
-
-    def _on_robot_selected(self, robot_id: str) -> None:
-        if robot_id == "nina":
-            self._stack.setCurrentWidget(self._nina_screen)
-            self._header_title.setText("Nina")
-            self._header_back.setVisible(True)
-            self._nina_screen.on_enter()
-            self._bus_status.setText("\u25CF Bus: connected")
-            self._bus_status.setStyleSheet("color: #2ecc71; font-size: 12px;")
+    @staticmethod
+    def _host_label() -> str:
+        try:
+            return f"{getpass.getuser()}@{socket.gethostname()}"
+        except Exception:
+            return ""
 
     def closeEvent(self, event) -> None:
         try:
@@ -121,3 +173,7 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
         super().closeEvent(event)
+
+
+# Keep `NAV_ITEMS` re-exported so screens can reuse the same labels.
+__all__ = ["MainWindow", "NAV_ITEMS"]

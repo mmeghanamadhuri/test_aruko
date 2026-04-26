@@ -1,4 +1,10 @@
-"""Nina control screen with Playback / Record tabs."""
+"""
+Actions screen with Playback / Record / Audio sub-tabs.
+
+This is the new home for everything that used to live on the
+old `NinaScreen`. It keeps the same behaviour but fits inside the
+v2 app shell (persistent sidebar + header + footer).
+"""
 
 from __future__ import annotations
 
@@ -7,6 +13,7 @@ from PyQt5.QtWidgets import (
     QButtonGroup,
     QFrame,
     QHBoxLayout,
+    QLabel,
     QMessageBox,
     QPushButton,
     QStackedWidget,
@@ -14,7 +21,8 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from sirena_ui.widgets.audio_editor_dialog import AudioEditorDialog
+from sirena_ui.widgets.audio_panel import AudioPanel
+from sirena_ui.widgets.common import Breadcrumb, Pill
 from sirena_ui.widgets.nina_image_panel import NinaImagePanel
 from sirena_ui.widgets.playback_panel import PlaybackPanel
 from sirena_ui.widgets.record_panel import RecordPanel
@@ -24,8 +32,8 @@ from sirena_ui.workers.playback_worker import PlaybackWorker
 from sirena_ui.workers.record_worker import RecordWorker
 
 
-class NinaScreen(QWidget):
-    back_requested = pyqtSignal()
+class ActionsScreen(QWidget):
+    bus_status_changed = pyqtSignal(str)
 
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
@@ -33,101 +41,136 @@ class NinaScreen(QWidget):
         self._playback_worker: PlaybackWorker | None = None
         self._record_worker: RecordWorker | None = None
         self._health_text = "Status: Idle"
+        self._bus_initialized = False
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(0)
+        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setSpacing(12)
 
-        outer.addLayout(self._build_tab_bar())
+        # Top breadcrumb + status pill row
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        self._breadcrumb = Breadcrumb("Nina", "Actions")
+        top.addWidget(self._breadcrumb)
+        top.addStretch(1)
+        self._status_pill = Pill("Bus: idle", Pill.KIND_NEUTRAL)
+        top.addWidget(self._status_pill)
+        outer.addLayout(top)
 
+        # Sub-tab bar
+        outer.addLayout(self._build_subtabs())
+
+        # Body: Nina image left, content stack right
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(0)
+        body.setSpacing(16)
 
         self._image_panel = NinaImagePanel()
-        body.addWidget(self._image_panel, stretch=45)
-
-        divider = QFrame()
-        divider.setFrameShape(QFrame.VLine)
-        divider.setStyleSheet("color: #e3e3e6;")
-        body.addWidget(divider)
+        body.addWidget(self._image_panel, stretch=42)
 
         self._stack = QStackedWidget()
         self._playback_panel = PlaybackPanel(service)
         self._playback_panel.play_requested.connect(self._on_play)
-        self._playback_panel.audio_edit_requested.connect(self._on_edit_audio)
+        self._playback_panel.audio_edit_requested.connect(self._on_edit_audio_inline)
         self._record_panel = RecordPanel()
         self._record_panel.start_requested.connect(self._on_start_record)
         self._record_panel.stop_requested.connect(self._on_stop_record)
+        self._audio_panel = AudioPanel(service)
+        self._audio_panel.audio_changed.connect(self._on_audio_changed)
         self._stack.addWidget(self._playback_panel)
         self._stack.addWidget(self._record_panel)
-        body.addWidget(self._stack, stretch=55)
+        self._stack.addWidget(self._audio_panel)
+        body.addWidget(self._stack, stretch=58)
 
         outer.addLayout(body, stretch=1)
 
-    # ---------- header tabs ----------
+    # ---------- sub-tabs ----------
 
-    def _build_tab_bar(self):
+    def _build_subtabs(self) -> QHBoxLayout:
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(0)
+
         self._tab_group = QButtonGroup(self)
         self._tab_group.setExclusive(True)
 
-        self._tab_play = QPushButton("Playback")
-        self._tab_play.setObjectName("tabButton")
-        self._tab_play.setCheckable(True)
-        self._tab_play.setChecked(True)
-        self._tab_play.setCursor(Qt.PointingHandCursor)
-        self._tab_play.clicked.connect(lambda: self._switch_tab(0))
-        self._tab_group.addButton(self._tab_play)
-        row.addWidget(self._tab_play, stretch=1)
+        labels = [("Playback", 0), ("Record", 1), ("Audio", 2)]
+        for label, idx in labels:
+            btn = QPushButton(label)
+            btn.setObjectName("subTabButton")
+            btn.setCheckable(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(lambda _checked=False, i=idx: self._switch_tab(i))
+            self._tab_group.addButton(btn)
+            row.addWidget(btn)
 
-        self._tab_rec = QPushButton("Record")
-        self._tab_rec.setObjectName("tabButton")
-        self._tab_rec.setCheckable(True)
-        self._tab_rec.setCursor(Qt.PointingHandCursor)
-        self._tab_rec.clicked.connect(lambda: self._switch_tab(1))
-        self._tab_group.addButton(self._tab_rec)
-        row.addWidget(self._tab_rec, stretch=1)
+        # Default selected tab
+        first = self._tab_group.buttons()[0]
+        first.setChecked(True)
 
+        # Subtle bottom rule under the tab strip
+        row.addStretch(1)
         return row
 
     def _switch_tab(self, idx: int) -> None:
-        if self._record_worker is not None and self._record_worker.isRunning() and idx == 0:
+        if (
+            self._record_worker is not None
+            and self._record_worker.isRunning()
+            and idx != 1
+        ):
             QMessageBox.information(
                 self, "Recording in progress",
-                "Stop the current recording before switching to Playback.",
+                "Stop the current recording before switching tabs.",
             )
-            self._tab_rec.setChecked(True)
+            self._tab_group.buttons()[1].setChecked(True)
             return
         self._stack.setCurrentIndex(idx)
+        if idx == 2:
+            self._audio_panel.refresh()
 
     # ---------- lifecycle ----------
 
     def on_enter(self) -> None:
-        """Called whenever this screen becomes visible."""
-        try:
-            health = self._service.ensure_bus()
-        except Exception as exc:
-            hint = explain_error(exc, self._service.settings)
-            QMessageBox.critical(
-                self, "Bus error",
-                f"Could not initialize Dynamixel bus:\n\n{hint}",
-            )
-            self._set_status("Status: bus error")
-            return
-        if health["connected"]:
-            self._health_text = (
-                f"Status: Idle | Motors {health['detected']}/{health['expected']} healthy | Torque ON"
-            )
-        else:
-            self._health_text = (
-                f"Status: Idle | Motors {health['detected']}/{health['expected']} responded | "
-                "missing motors will not move"
-            )
-        self._set_status(self._health_text)
+        if not self._bus_initialized:
+            try:
+                health = self._service.ensure_bus()
+                self._bus_initialized = True
+            except Exception as exc:
+                hint = explain_error(exc, self._service.settings)
+                QMessageBox.critical(
+                    self, "Bus error",
+                    f"Could not initialize Dynamixel bus:\n\n{hint}",
+                )
+                self._set_status("Status: bus error")
+                self._status_pill.setText("Bus: error")
+                self._status_pill.set_kind(Pill.KIND_ERROR)
+                self.bus_status_changed.emit("Bus offline")
+                return
+            if health["connected"]:
+                self._health_text = (
+                    f"Status: Idle | Motors {health['detected']}/{health['expected']}"
+                    f" healthy | Torque ON"
+                )
+                self._status_pill.setText(
+                    f"Bus connected \u00b7 {health['detected']}/{health['expected']} motors"
+                )
+                self._status_pill.set_kind(Pill.KIND_OK)
+                self.bus_status_changed.emit(
+                    f"Motors {health['detected']}/{health['expected']} \u00b7 Bus ready"
+                )
+            else:
+                self._health_text = (
+                    f"Status: Idle | Motors {health['detected']}/{health['expected']}"
+                    " responded | missing motors will not move"
+                )
+                self._status_pill.setText(
+                    f"Bus partial \u00b7 {health['detected']}/{health['expected']} motors"
+                )
+                self._status_pill.set_kind(Pill.KIND_WARN)
+                self.bus_status_changed.emit("Bus partial")
+            self._set_status(self._health_text)
         self._playback_panel.refresh()
+        self._audio_panel.refresh()
 
     # ---------- playback ----------
 
@@ -156,7 +199,7 @@ class NinaScreen(QWidget):
         self._playback_worker.failed.connect(self._on_play_failed)
         self._playback_worker.start()
 
-    def _on_play_done(self, name: str) -> None:
+    def _on_play_done(self, _name: str) -> None:
         self._playback_panel.set_buttons_enabled(True)
         self._set_status(self._health_text)
         self._playback_worker = None
@@ -169,7 +212,8 @@ class NinaScreen(QWidget):
 
     # ---------- audio editor ----------
 
-    def _on_edit_audio(self, name: str) -> None:
+    def _on_edit_audio_inline(self, name: str) -> None:
+        """Switch to the Audio sub-tab with the given action pre-selected."""
         if self._playback_worker is not None and self._playback_worker.isRunning():
             QMessageBox.information(
                 self, "Playback in progress",
@@ -182,10 +226,11 @@ class NinaScreen(QWidget):
                 "Stop recording before editing audio.",
             )
             return
-        dialog = AudioEditorDialog(self._service, name, parent=self)
-        dialog.exec_()
-        # Refresh either way: dialog may have edited offset / removed audio
-        # even when the user hits "Close".
+        self._tab_group.buttons()[2].setChecked(True)
+        self._switch_tab(2)
+        self._audio_panel.select_action(name)
+
+    def _on_audio_changed(self, _name: str) -> None:
         self._playback_panel.refresh()
 
     # ---------- recording ----------
@@ -238,6 +283,7 @@ class NinaScreen(QWidget):
         self._record_worker = None
         self._set_status(f"Status: saved '{name}' ({frame_count} frames)")
         self._playback_panel.refresh()
+        self._audio_panel.refresh()
 
     def _on_record_failed(self, message: str) -> None:
         self._record_panel.set_recording(False)

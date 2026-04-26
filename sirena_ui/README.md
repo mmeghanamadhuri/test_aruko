@@ -1,24 +1,36 @@
 # Sirena Control Center
 
-Desktop app (PyQt5) that fronts the Sirena robots. Today it ships one
-robot screen — Nina — with two tabs:
+Desktop app (PyQt5) that fronts the Nina robot on the Jetson's 10.1"
+touchscreen. It uses a persistent left sidebar, a centred red header,
+and a charcoal status bar so the experience feels like a polished
+consumer cockpit.
 
-- **Playback** lists every action registered in
-  `nina/actions/manifest.json` and plays them with the smooth
-  interpolated pipeline (`DynamixelManager.play_smooth`). If the
-  manifest entry includes an `audio` clip, it is played alongside the
-  motion; an optional `audio_offset` (seconds) delays the clip so it
-  fires in sync with the gesture (e.g. when the hands meet during
-  Namaste).
-- **Record** releases torque, counts down, samples the arm at the
-  requested rate, and saves the JSON under
-  `nina/actions/recordings/`. A **Stop Recording** button cuts the
-  capture early and saves whatever was already collected.
+## Information architecture
+
+```
++-- Home        Quick-action dashboard with Nina photo, status strip
++-- Drive       Manual BLDC control: virtual D-pad, speed slider, brake
++-- Vision      USB camera feed + face / object recognition controls
++-- Map         SLAM occupancy grid, sensor health, auto-dock
++-- Actions     Existing record / play / audio - now in one screen
+|     +-- Playback   list registered actions, smooth replay (+ optional audio)
+|     +-- Record     release torque, capture frames, save into manifest
+|     +-- Audio      gTTS author / tune / remove per-action audio clips
++-- Settings    Sub-sidebar: General / Network / Display / Audio / Privacy
+|                Autodock / Voice (ESP) / Power / OTA Update
++-- Health      Donut + 13-row subsystem table, Run-all-checks
+```
+
+The first release ships fully working **Home**, **Actions** and
+**Health** flows. **Drive**, **Vision**, **Map**, **Settings** and
+the non-Dynamixel rows on **Health** are polished UI scaffolds with
+in-process stubs (`workers/drive_stub.py`, etc.) so the firmware
+team can swap each stub for a real driver without touching the UI.
 
 ## Action audio
 
 Action JSON files live in `nina/actions/recordings/` (the `Record`
-tab writes there too). Manifest entries can be either a string
+sub-tab writes there too). Manifest entries can be either a string
 (`"recordings/namaste.json"`) or a dict:
 
 ```json
@@ -31,18 +43,20 @@ tab writes there too). Manifest entries can be either a string
 }
 ```
 
-### From the GUI
+### From the GUI (Actions -> Audio)
 
-Each row in the **Playback** tab shows the action's current audio
-("Audio: namaste.mp3 - +2.00s" or "Audio: none") and exposes an
-**Audio** button. The audio editor lets you:
+Pick an action from the dropdown and:
 
 - Type the words to speak (defaults to the action name).
 - Pick a voice preset (US English by default, plus UK, Australian, Indian, Hindi, etc.).
 - Set the **audio offset** (seconds the runtime waits after motion
   starts before firing the clip).
 - **Preview** the existing clip, **Generate & Save** a new one,
-  **Save offset only** without re-generating, or **Remove** the audio.
+  **Save offset** without re-generating, or **Remove** the audio.
+
+The Playback sub-tab still shows the audio summary on each row and
+exposes an **Audio** shortcut that jumps straight to the editor with
+the right action pre-selected.
 
 The MP3 is rendered with gTTS (needs internet on the Jetson the first
 time you click *Generate*), saved to
@@ -63,10 +77,6 @@ python3 scripts/generate-action-audio.py namaste
 # Tune the offset later without re-generating audio
 python3 scripts/generate-action-audio.py namaste --offset 2.5 --skip-tts
 ```
-
-The launcher screen is intentionally future-proofed (greyed-out
-"Carbot" and "+ Add robot" tiles) so additional robots can be plugged
-in by adding a new screen and a launcher tile.
 
 ## Install dependencies on Jetson Nano
 
@@ -130,28 +140,43 @@ PYTHONPATH=. python3 -m sirena_ui
   port.
 - The UI never touches the bus directly; it only signals workers to
   start/stop and reads progress over Qt signals.
+- Lazy screen construction: each screen is built the first time a
+  user navigates to it, so launch is fast.
 
 ## File layout
 
 ```
 sirena_ui/
-  __main__.py           # entry point
-  main_window.py        # header bar / footer bar / screen stack
-  styles.py             # Qt stylesheet (Sirena red + white)
-  assets/               # logo, Nina render, generated app icon
+  __main__.py             # entry point
+  main_window.py          # red header / charcoal sidebar / charcoal footer
+  styles.py               # v2 theme tokens + Qt stylesheet
+  assets/                 # logo, Nina photo, app icon
   screens/
-    launcher_screen.py  # "Choose a robot"
-    nina_screen.py      # Playback + Record tabs
+    home_screen.py        # dashboard
+    actions_screen.py     # Playback / Record / Audio sub-tabs
+    drive_screen.py       # BLDC manual control (stub)
+    vision_screen.py      # camera + recognition (stub)
+    map_screen.py         # SLAM (stub)
+    settings_screen.py    # sub-sidebar with 9 categories
+    health_screen.py      # donut + 13-row subsystem table
   widgets/
-    robot_tile.py
-    nina_image_panel.py
+    sidebar.py            # persistent dark nav
+    header_bar.py         # red top bar with clock / wifi / battery
+    status_bar.py         # charcoal footer with status dots
+    common.py             # Card, CardTitle, Pill, Breadcrumb, ...
+    nina_image_panel.py   # left rail of the Actions screen
     playback_panel.py
     record_panel.py
+    audio_panel.py        # action picker + audio editor
+    audio_editor_dialog.py# voice presets shared with the panel
+    dpad.py               # virtual D-pad on the Drive screen
+    donut_gauge.py        # health donut with Nina photo in the hole
   workers/
-    nina_service.py     # DynamixelManager + ActionRunner facade
+    nina_service.py       # DynamixelManager + ActionRunner facade
     playback_worker.py
     record_worker.py
-    audio_gen_worker.py # gTTS rendering off the UI thread
-  widgets/
-    audio_editor_dialog.py  # in-app audio author / tuner
+    audio_gen_worker.py   # gTTS rendering off the UI thread
+    drive_stub.py         # in-process state machine until BLDC lands
+    health_collector.py   # subsystem statuses for the Health screen
+    error_hints.py        # turn raw errors into actionable Jetson tips
 ```
