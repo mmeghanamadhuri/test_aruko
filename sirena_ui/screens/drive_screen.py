@@ -1,8 +1,11 @@
 """Drive screen: front camera placeholder + manual control cockpit.
 
-The BLDC firmware is being integrated separately; this screen ships
-with a working UI and a `DriveStub` so the user can see exactly how
-the experience will feel once the driver lands.
+The screen talks to the real BLDC drivers through
+`NinaService.drive`, a Qt facade over `NavigationManager`. Hardware
+init happens lazily on first navigation to this screen, and
+gracefully falls back to "simulation" mode on dev hosts where
+`Jetson.GPIO` is unavailable - the UI still reacts to button presses,
+just without any PWM going out.
 """
 
 from __future__ import annotations
@@ -27,7 +30,6 @@ from sirena_ui.widgets.common import (
     SectionLabel,
 )
 from sirena_ui.widgets.dpad import DPad
-from sirena_ui.workers.drive_stub import DriveStub
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -35,7 +37,7 @@ class DriveScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
-        self._drive = DriveStub(self)
+        self._drive = service.drive
         self._drive.state_changed.connect(self._render_state)
 
         outer = QVBoxLayout(self)
@@ -194,15 +196,28 @@ class DriveScreen(QWidget):
         self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
 
+    def on_enter(self) -> None:
+        """Lazily initialise the BLDC drivers the first time the user
+        opens the Drive screen. Re-entry is cheap; the controller
+        dedupes inside its worker."""
+        self._drive.ensure_hardware()
+
     def _render_state(self, state: dict) -> None:
         self._hud_speed._value_label.setText(f"{state['speed_pct']}%")
         self._hud_heading._value_label.setText(f"{state['heading_deg']}\u00b0")
         self._hud_distance._value_label.setText(f"{state['distance_m']:.1f} m")
         self._speed_pill.setText(f"{state['speed_pct']}%")
         self._dpad.set_enabled(not state["brake"])
+
+        message = state.get("driver_message", "")
         if state["connected"]:
-            self._conn_pill.setText("BLDC L+R connected")
+            self._conn_pill.setText(message or "BLDC L+R connected")
             self._conn_pill.set_kind(Pill.KIND_OK)
+        elif message and message.startswith("Simulation"):
+            # GPIO backend missing - dev mode; show a warn pill so the
+            # operator understands button presses don't move wheels.
+            self._conn_pill.setText(message)
+            self._conn_pill.set_kind(Pill.KIND_WARN)
         else:
-            self._conn_pill.setText("BLDC not connected (preview)")
+            self._conn_pill.setText("BLDC not connected")
             self._conn_pill.set_kind(Pill.KIND_NEUTRAL)

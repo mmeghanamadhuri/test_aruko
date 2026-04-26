@@ -21,11 +21,15 @@ consumer cockpit.
 +-- Health      Donut + 13-row subsystem table, Run-all-checks
 ```
 
-The first release ships fully working **Home**, **Actions** and
-**Health** flows. **Drive**, **Vision**, **Map**, **Settings** and
-the non-Dynamixel rows on **Health** are polished UI scaffolds with
-in-process stubs (`workers/drive_stub.py`, etc.) so the firmware
-team can swap each stub for a real driver without touching the UI.
+The first release ships fully working **Home**, **Actions**, **Drive**
+and **Health** flows. **Drive** is wired to the real JYQD_V7.3E2 BLDC
+drivers via `workers/drive_controller.py` (a Qt facade over
+`nina.controllers.navigation_manager.NavigationManager`); on dev hosts
+without `Jetson.GPIO` it gracefully falls back to a "Simulation" pill
+so the UI keeps working. **Vision**, **Map**, **Settings** and the
+non-Dynamixel rows on **Health** remain polished UI scaffolds with
+in-process stubs so the firmware team can swap each stub for a real
+driver without touching the UI.
 
 ## Action audio
 
@@ -176,7 +180,7 @@ sirena_ui/
     playback_worker.py
     record_worker.py
     audio_gen_worker.py   # gTTS rendering off the UI thread
-    drive_stub.py         # in-process state machine until BLDC lands
+    drive_controller.py   # Qt facade over NavigationManager (BLDC)
     health_collector.py   # subsystem statuses for the Health screen
     error_hints.py        # turn raw errors into actionable Jetson tips
 ```

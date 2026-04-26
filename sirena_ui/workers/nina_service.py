@@ -16,8 +16,13 @@ from typing import Any, Dict, List, Optional
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
+from nina.controllers.navigation_manager import (
+    DEFAULT_PINS,
+    NavigationConfig,
+)
 from nina.services.audio_generator import AudioGenerator
 from nina.services.audio_player import AudioPlayer
+from sirena_ui.workers.drive_controller import DriveController
 
 
 DEFAULT_MOTOR_IDS: List[int] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
@@ -42,6 +47,7 @@ class NinaService:
         self.bus_lock = threading.RLock()
         self._bus_ready = False
         self._motor_count = len(DEFAULT_MOTOR_IDS)
+        self._drive: Optional[DriveController] = None
 
     @property
     def expected_motor_count(self) -> int:
@@ -62,8 +68,48 @@ class NinaService:
                 "detail": health.detail,
             }
 
+    @property
+    def drive(self) -> DriveController:
+        """Lazy singleton for the BLDC drive controller.
+
+        Created on first access so the GUI doesn't pay the GPIO cost
+        until the user actually navigates to the Drive screen.
+        Configured from the same `NavigationSettings` used by the CLI
+        navigation tools, so behaviour stays identical across entry
+        points.
+        """
+        if self._drive is None:
+            nav_config = self._build_navigation_config()
+            self._drive = DriveController(nav_config)
+        return self._drive
+
+    def _build_navigation_config(self) -> NavigationConfig:
+        nav = self.settings.navigation
+        # DEFAULT_PINS already honours NINA_NAV_*_PIN env overrides at
+        # module import; we just pull the rest of the tunables out of
+        # NavigationSettings so the GUI matches the CLI tools.
+        return NavigationConfig(
+            pins=DEFAULT_PINS,
+            backend_name=nav.backend_name,
+            pwm_frequency_hz=nav.pwm_frequency_hz,
+            default_speed_percent=nav.default_speed_percent,
+            turn_duration_sec=nav.turn_duration_sec,
+            min_duty_percent=nav.min_duty_percent,
+            max_duty_percent=nav.max_duty_percent,
+            kick_start_duty_percent=nav.kick_start_duty_percent,
+            kick_start_duration_sec=nav.kick_start_duration_sec,
+            invert_left_dir=nav.invert_left_dir,
+            invert_right_dir=nav.invert_right_dir,
+        )
+
     def shutdown(self) -> None:
         with self.bus_lock:
+            if self._drive is not None:
+                try:
+                    self._drive.shutdown()
+                except Exception:
+                    pass
+                self._drive = None
             try:
                 self.dxl.close()
             finally:
