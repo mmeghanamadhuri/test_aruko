@@ -35,6 +35,8 @@ from sirena_ui.workers.record_worker import RecordWorker
 class ActionsScreen(QWidget):
     bus_status_changed = pyqtSignal(str)
 
+    SUBTAB_INDEX = {"playback": 0, "record": 1, "audio": 2}
+
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
@@ -128,6 +130,24 @@ class ActionsScreen(QWidget):
         self._stack.setCurrentIndex(idx)
         if idx == 2:
             self._audio_panel.refresh()
+
+    def set_subtab(self, name: str) -> None:
+        """Programmatically switch to a sub-tab by name.
+
+        Used by deep-link navigation from other screens (e.g. the Home
+        tile grid) so a "Record" tile actually lands on the Record
+        tab instead of falling through to the default Playback view.
+        Unknown names are ignored on purpose.
+        """
+        if not isinstance(name, str):
+            return
+        idx = self.SUBTAB_INDEX.get(name.strip().lower())
+        if idx is None:
+            return
+        button = self._tab_group.buttons()[idx]
+        if not button.isChecked():
+            button.setChecked(True)
+        self._switch_tab(idx)
 
     # ---------- lifecycle ----------
 

@@ -28,10 +28,13 @@ from sirena_ui.workers.nina_service import NinaService
 
 
 # (key, label, glyph, blurb)
+# Keys that contain a ":" are deep links of the form "screen:subtab".
+# They are routed by `MainWindow.navigate` to the right screen and
+# then to the right inner tab via that screen's `set_subtab(name)`.
 QUICK_ACTIONS: List[Tuple[str, str, str, str]] = [
-    ("actions", "Play action", "\u25B6", "Run a saved motion"),
-    ("actions", "Record", "\u25CF", "Capture a new pose"),
-    ("actions", "Audio", "\u266B", "Voice clips"),
+    ("actions:playback", "Play action", "\u25B6", "Run a saved motion"),
+    ("actions:record", "Record", "\u25CF", "Capture a new pose"),
+    ("actions:audio", "Audio", "\u266B", "Voice clips"),
     ("drive", "Drive", "\u2B95", "Manual control"),
     ("vision", "Vision", "\u25CE", "Camera & faces"),
     ("map", "Map", "\u25A6", "SLAM & dock"),
@@ -163,14 +166,18 @@ class HomeScreen(QWidget):
         play_btn.setObjectName("primaryButton")
         play_btn.setCursor(Qt.PointingHandCursor)
         play_btn.setMinimumWidth(200)
-        play_btn.clicked.connect(lambda: self.navigate_requested.emit("actions"))
+        play_btn.clicked.connect(
+            lambda: self.navigate_requested.emit("actions:playback")
+        )
         cta_col.addWidget(play_btn)
 
         record_btn = QPushButton("Record new")
         record_btn.setObjectName("secondaryButton")
         record_btn.setCursor(Qt.PointingHandCursor)
         record_btn.setMinimumWidth(200)
-        record_btn.clicked.connect(lambda: self.navigate_requested.emit("actions"))
+        record_btn.clicked.connect(
+            lambda: self.navigate_requested.emit("actions:record")
+        )
         cta_col.addWidget(record_btn)
 
         return card

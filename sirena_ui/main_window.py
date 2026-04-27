@@ -95,10 +95,17 @@ class MainWindow(QMainWindow):
     # ---------- navigation ----------
 
     def navigate(self, key: str) -> None:
-        widget = self._screens.get(key)
+        # Accept "screen:subtab" deep links (e.g. "actions:record")
+        # so tiles on the Home screen and similar shortcuts can land
+        # the user directly on the right inner tab.
+        screen_key, _, subtab = key.partition(":")
+        if not screen_key:
+            return
+
+        widget = self._screens.get(screen_key)
         if widget is None:
-            widget = self._build_screen(key)
-            self._screens[key] = widget
+            widget = self._build_screen(screen_key)
+            self._screens[screen_key] = widget
             self._stack.addWidget(widget)
 
         # Notify the outgoing screen so screens that own background
@@ -113,13 +120,21 @@ class MainWindow(QMainWindow):
                     pass
 
         self._stack.setCurrentWidget(widget)
-        self._header.set_title(self._titles.get(key, "Nina"))
+        self._header.set_title(self._titles.get(screen_key, "Nina"))
         on_enter = getattr(widget, "on_enter", None)
         if callable(on_enter):
             try:
                 on_enter()
             except Exception:
                 pass
+
+        if subtab:
+            set_subtab = getattr(widget, "set_subtab", None)
+            if callable(set_subtab):
+                try:
+                    set_subtab(subtab)
+                except Exception:
+                    pass
 
     def _build_screen(self, key: str) -> QWidget:
         if key == "home":
@@ -151,7 +166,10 @@ class MainWindow(QMainWindow):
 
     def _on_nav_request(self, key: str) -> None:
         self.navigate(key)
-        self._sidebar.select(key)
+        # Sidebar items are addressed by the screen key alone
+        # ("actions"), not the deep-link form ("actions:record").
+        screen_key = key.partition(":")[0]
+        self._sidebar.select(screen_key)
 
     # ---------- bus / footer ----------
 
