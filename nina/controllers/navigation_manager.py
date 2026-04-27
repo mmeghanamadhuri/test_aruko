@@ -1,32 +1,42 @@
 """
 NavigationManager for Nina (5ft wheeled bot).
 
-Drives 2x JYQD_V7.3E2 BLDC drivers (one per wheel) directly from the Jetson Nano.
+Drives 2x JYQD_V7.3E2 BLDC drivers (one per wheel) directly from the Jetson
+Nano. The pinout below mirrors the known-good Raspberry Pi build that is
+already shipping on the bot, so the same physical wiring harness moves
+between Pi and Jetson without resoldering.
 
-The pinout and per-side direction polarity below mirror the known-good
-Raspberry Pi build (carbot navigation_bldc.py) so the Jetson behaves
-identically:
-
-  Left wheel : L_EN=BCM18  L_DIR=BCM25  PWM_L=BCM12 (HW PWM0)
-  Right wheel: R_EN=BCM10  R_DIR=BCM22  PWM_R=BCM13 (HW PWM2)
-  Status LED : RED=BCM21   GREEN=BCM20  BLUE=BCM16
+  Left wheel : L_EN=BCM18 L_DIR=BCM25 L_SIGNAL=BCM23 L_PWM=BCM12 (HW PWM0)
+  Right wheel: R_EN=BCM10 R_DIR=BCM22 R_SIGNAL=BCM27 R_PWM=BCM13 (HW PWM2)
+  Status LED : RED=BCM21  GREEN=BCM20 BLUE=BCM16
   E-stop     : ESTOP1=BCM17 ESTOP2=BCM5
+
+JYQD_V7.3E2 "set" header layout (top -> bottom on the silkscreen):
+  5V, EL, Signal, Z/F, VR, GND.
+
+This build runs the JYQD in *VR-with-Signal-gate* mode (the same mode the
+Pi build uses):
+
+- EL     -> per-side digital enable. LOW = brake / freewheel; HIGH = run.
+- Z/F    -> per-side direction. HIGH/LOW selects rotation.
+- VR     -> per-side analog speed input. We feed it Jetson hardware PWM on
+            BCM 12 / BCM 13 and the JYQD's input filter averages it into a
+            quasi-DC speed reference (0% duty = stop, 100% duty = max speed).
+- Signal -> per-side digital run-gate. **Must be HIGH for the chip to
+            commutate** even when EL=HIGH and VR has a voltage on it. We
+            drive it via BCM 23 (left) and BCM 27 (right). With this pin
+            floating the JYQD ignores Z/F changes and runs in a single
+            "limp" direction - this was the root cause of the long-running
+            "wheels only spin one way" debug saga in early-2026.
+
+The Pi build uses 3.3V GPIOs (no level shifter) and works fine: the JYQD's
+opto-isolated inputs trigger reliably at 3.3V. The Jetson Nano is also
+3.3V, so the same wires can land directly on the JYQD's "set" header
+without any shifter in line.
 
 Direction polarity (matches the Pi):
   Left  forward => L_DIR HIGH
   Right forward => R_DIR LOW   (right side is mirrored, so opposite level)
-
-JYQD_V7.3E2 control pins (per channel):
-- EL  (enable)   : digital input on JYQD, we drive it HIGH to enable
-- ZF / DIR       : digital input on JYQD, HIGH/LOW selects rotation
-- VR  (speed)    : PWM input on JYQD, 0..100% duty maps to motor speed
-- M / BRK        : optional digital input, NOT wired in this build
-- Signal (PG)    : pulse OUTPUT from JYQD (Hall feedback), unused
-
-There is NO separate F/R input on this driver. Direction goes through the
-single direction pin (called ZF on some silkscreens, DIR on others).
-There is no software brake unless the BRK pin is wired, so "brake" here
-means disable EL and let the motor coast to a stop.
 
 Hardware PWM on Jetson Nano is only available on:
 - BCM 12 (physical pin 32) -> PWM0
@@ -54,12 +64,17 @@ class NavigationPins:
     l_dir / r_dir map to the JYQD's ZF pin (direction). The legacy l_zf /
     r_zf fields are kept so older configs / env overrides keep working,
     but they're aliases for the same physical pin.
+
+    l_signal / r_signal map to the JYQD's "Signal" run-gate pin (the chip
+    needs them HIGH to commutate, see the module docstring).
     """
     l_en: int
     l_dir: int
+    l_signal: int
     pwm_l: int
     r_en: int
     r_dir: int
+    r_signal: int
     pwm_r: int
     led_red: int
     led_green: int
@@ -111,9 +126,11 @@ class NavigationConfig:
 DEFAULT_PINS = NavigationPins(
     l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
     l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
+    l_signal=int(os.environ.get("NINA_NAV_L_SIGNAL", "23")),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
     r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "22"))),
+    r_signal=int(os.environ.get("NINA_NAV_R_SIGNAL", "27")),
     pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,
     led_green=20,
@@ -153,25 +170,33 @@ class NavigationManager:
                 log.debug("E-stop pin %s left as input", pin)
 
         for pin in (pins.led_red, pins.led_green, pins.led_blue,
-                    pins.l_en, pins.l_dir,
-                    pins.r_en, pins.r_dir):
+                    pins.l_en, pins.l_dir, pins.l_signal,
+                    pins.r_en, pins.r_dir, pins.r_signal):
             self._backend.configure_output(pin)
 
         self._backend.configure_pwm(pins.pwm_l, self.config.pwm_frequency_hz)
         self._backend.configure_pwm(pins.pwm_r, self.config.pwm_frequency_hz)
 
+        # Park everything safely braked: direction default (forward) latched,
+        # both EL and Signal LOW so the JYQD treats the chip as
+        # disabled+gated-off until something explicitly calls release_brake()
+        # or _control_speed(..., enable=True).
         self._backend.write(pins.l_dir, 0)
         self._backend.write(pins.r_dir, 0)
         self._backend.write(pins.l_en, 0)
         self._backend.write(pins.r_en, 0)
+        self._backend.write(pins.l_signal, 0)
+        self._backend.write(pins.r_signal, 0)
 
         self._is_initialized = True
         log.info(
-            "NavigationManager initialized backend=%s pins: L_EN=BCM%d L_ZF/DIR=BCM%d L_PWM=BCM%d "
-            "R_EN=BCM%d R_ZF/DIR=BCM%d R_PWM=BCM%d invert_left=%s invert_right=%s",
+            "NavigationManager initialized backend=%s pins: "
+            "L_EN=BCM%d L_ZF/DIR=BCM%d L_SIGNAL=BCM%d L_PWM=BCM%d "
+            "R_EN=BCM%d R_ZF/DIR=BCM%d R_SIGNAL=BCM%d R_PWM=BCM%d "
+            "invert_left=%s invert_right=%s",
             self._backend.name,
-            pins.l_en, pins.l_dir, pins.pwm_l,
-            pins.r_en, pins.r_dir, pins.pwm_r,
+            pins.l_en, pins.l_dir, pins.l_signal, pins.pwm_l,
+            pins.r_en, pins.r_dir, pins.r_signal, pins.pwm_r,
             self.config.invert_left_dir, self.config.invert_right_dir,
         )
 
@@ -299,12 +324,16 @@ class NavigationManager:
         log.info("brake (EL disable) engaged - motors will coast to stop")
 
     def release_brake(self) -> None:
-        """Re-enable EL on both drivers (does not start motion - VR/PWM
-        still drives the speed)."""
+        """Re-enable EL + Signal on both drivers so the JYQD can commutate
+        as soon as a non-zero PWM duty appears on VR. This does NOT spin
+        the motors by itself - it just removes the brake/gate; speed is
+        still 0% until _control_speed() is called with a target speed."""
         pins = self.config.pins
         self._backend.write(pins.l_en, 1)
         self._backend.write(pins.r_en, 1)
-        log.info("brake released (EL re-enabled)")
+        self._backend.write(pins.l_signal, 1)
+        self._backend.write(pins.r_signal, 1)
+        log.info("brake released (EL + Signal re-enabled)")
 
     def set_status(self, mode: str) -> None:
         if not self._is_initialized:
@@ -366,12 +395,20 @@ class NavigationManager:
         duty_percent = self._apply_deadband(speed_percent)
         pins = self.config.pins
 
+        # The JYQD's Signal run-gate has to be HIGH for the chip to commutate;
+        # we mirror EL so any caller that toggles "enable" gets both pins
+        # updated atomically. Driving Signal LOW alongside EL=LOW is what
+        # actually stops the motor (EL alone leaves the chip half-running on
+        # this V7.3E2 rev when fed via VR mode).
         self._set_direction(side, direction)
+        gate_level = 1 if enable else 0
         if side == self.SIDE_LEFT:
-            self._backend.write(pins.l_en, 1 if enable else 0)
+            self._backend.write(pins.l_en, gate_level)
+            self._backend.write(pins.l_signal, gate_level)
             self._backend.set_duty(pins.pwm_l, duty_percent)
         else:
-            self._backend.write(pins.r_en, 1 if enable else 0)
+            self._backend.write(pins.r_en, gate_level)
+            self._backend.write(pins.r_signal, gate_level)
             self._backend.set_duty(pins.pwm_r, duty_percent)
 
     def _set_direction(self, side: str, direction: str) -> None:
@@ -424,9 +461,19 @@ class NavigationManager:
         return lo + (speed_percent / 100.0) * (hi - lo)
 
     def _set_enable(self, side: str, enable: bool) -> None:
+        """Drive both EL and Signal for the requested side. We keep these
+        two in lock-step everywhere because the JYQD V7.3E2 only commutates
+        when EL=HIGH AND Signal=HIGH; toggling just one leaves the chip in
+        a half-state that ignores Z/F changes."""
         pins = self.config.pins
-        pin = pins.l_en if side == self.SIDE_LEFT else pins.r_en
-        self._backend.write(pin, 1 if enable else 0)
+        en_pin, sig_pin = (
+            (pins.l_en, pins.l_signal)
+            if side == self.SIDE_LEFT
+            else (pins.r_en, pins.r_signal)
+        )
+        level = 1 if enable else 0
+        self._backend.write(en_pin, level)
+        self._backend.write(sig_pin, level)
 
     def _set_status_led(self, red: bool = False,
                         green: bool = False, blue: bool = False) -> None:

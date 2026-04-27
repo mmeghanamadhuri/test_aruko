@@ -106,15 +106,16 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
     )
     pins = nav.config.pins
     side_pins = (
-        (pins.l_dir, pins.l_en, pins.pwm_l)
+        (pins.l_dir, pins.l_en, pins.l_signal, pins.pwm_l)
         if side == NavigationManager.SIDE_LEFT
-        else (pins.r_dir, pins.r_en, pins.pwm_r)
+        else (pins.r_dir, pins.r_en, pins.r_signal, pins.pwm_r)
     )
-    dir_pin, en_pin, pwm_pin = side_pins
+    dir_pin, en_pin, sig_pin, pwm_pin = side_pins
 
     print(
         f"\n=== {side.upper()} wheel test "
-        f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, PWM=BCM{pwm_pin}) ==="
+        f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, SIGNAL=BCM{sig_pin}, "
+        f"PWM=BCM{pwm_pin}) ==="
     )
 
     for label, direction in (
