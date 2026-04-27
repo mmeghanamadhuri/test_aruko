@@ -1,0 +1,192 @@
+"""
+Speaks a greeting ("Hello <name>") when Nina recognises a familiar
+face.
+
+Design goals:
+
+  * Greet at most once per person within a configurable cooldown
+    window. Walking past Nina shouldn't trigger a barrage of "Hello
+    hari, Hello hari, Hello hari".
+  * Cache one MP3 per name on disk so the second time we see the
+    same person we don't need internet (gTTS is a network call).
+  * Synthesis runs on a background QThread so we never stall the
+    Vision worker / GUI thread on the gTTS HTTP request.
+  * Playback uses the existing `AudioPlayer` (mpg123 / aplay /
+    ffplay), so no new system deps.
+
+Public API:
+
+    greeter = FaceGreeter()
+    greeter.greet("hari")     # idempotent; no-op during cooldown
+
+That's it. The class internalises everything else.
+"""
+
+from __future__ import annotations
+
+import logging
+import re
+import threading
+import time
+from pathlib import Path
+from typing import Dict, Optional
+
+from PyQt5.QtCore import QObject, QThread, pyqtSignal
+
+from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
+from nina.services.audio_player import AudioPlayer
+
+
+log = logging.getLogger("sirena_ui.face_greeter")
+
+
+def _safe_filename(name: str) -> str:
+    """Map an arbitrary display name to a safe-on-disk filename stem."""
+    cleaned = re.sub(r"[^A-Za-z0-9_\-]+", "_", name.strip())
+    cleaned = cleaned.strip("_")
+    return cleaned or "anon"
+
+
+class _GenerateClipWorker(QThread):
+    """Synthesise one greeting MP3 in the background."""
+
+    finished_with_path = pyqtSignal(str, object)  # name, Path | None
+
+    def __init__(self, name: str, text: str, out_path: Path, parent=None) -> None:
+        super().__init__(parent)
+        self._name = name
+        self._text = text
+        self._out_path = out_path
+
+    def run(self) -> None:  # noqa: D401 - QThread entry point
+        try:
+            AudioGenerator.generate(self._text, self._out_path)
+            self.finished_with_path.emit(self._name, self._out_path)
+        except AudioGeneratorError as exc:
+            log.warning("Greeting TTS for '%s' failed: %s", self._name, exc)
+            self.finished_with_path.emit(self._name, None)
+        except Exception as exc:  # pragma: no cover - defensive
+            log.exception("Greeting TTS for '%s' crashed: %s", self._name, exc)
+            self.finished_with_path.emit(self._name, None)
+
+
+class FaceGreeter(QObject):
+    """Per-person cooldown + cached gTTS playback."""
+
+    spoken = pyqtSignal(str)  # name we just greeted
+
+    def __init__(
+        self,
+        *,
+        cache_dir: Optional[Path] = None,
+        cooldown_sec: float = 30.0,
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        if cache_dir is None:
+            repo_root = Path(__file__).resolve().parents[2]
+            cache_dir = repo_root / "nina" / "data" / "greetings"
+        self._cache_dir = Path(cache_dir)
+        self._cache_dir.mkdir(parents=True, exist_ok=True)
+        self._cooldown = float(cooldown_sec)
+        self._last_greeted: Dict[str, float] = {}
+        self._lock = threading.RLock()
+        self._player = AudioPlayer()
+        # Active synthesis workers, kept alive until each finishes so
+        # QThread doesn't get garbage-collected mid-run.
+        self._gen_workers: Dict[str, _GenerateClipWorker] = {}
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def greet(self, name: str) -> None:
+        """Speak "Hello <name>" if cooldown has elapsed for this name.
+
+        Safe to call from any thread; playback is dispatched in the
+        background via `subprocess.Popen`.
+        """
+        name = (name or "").strip()
+        if not name:
+            return
+        if not self._player.is_supported:
+            log.warning(
+                "FaceGreeter: no audio player available "
+                "(install mpg123 / alsa-utils)"
+            )
+            return
+
+        with self._lock:
+            last = self._last_greeted.get(name, 0.0)
+            now = time.time()
+            if now - last < self._cooldown:
+                return
+            # Reserve the slot *now* so a burst of recognitions doesn't
+            # queue up multiple TTS jobs while the first one is still
+            # synthesising.
+            self._last_greeted[name] = now
+
+        clip = self._cached_clip_for(name)
+        if clip is not None:
+            self._play_clip(clip, name)
+            return
+        # First-time greeting: synthesise then play.
+        self._spawn_synthesis(name)
+
+    def reset_cooldown(self, name: Optional[str] = None) -> None:
+        """Forget the last-greeted timestamp(s).
+
+        Used by the screen on `on_enter` so re-opening the Vision tab
+        always greets people freshly.
+        """
+        with self._lock:
+            if name is None:
+                self._last_greeted.clear()
+            else:
+                self._last_greeted.pop(name, None)
+
+    # ------------------------------------------------------------------
+    # Internals
+    # ------------------------------------------------------------------
+
+    def _cached_clip_for(self, name: str) -> Optional[Path]:
+        path = self._cache_dir / f"{_safe_filename(name)}.mp3"
+        if path.exists() and path.stat().st_size > 0:
+            return path
+        return None
+
+    def _spawn_synthesis(self, name: str) -> None:
+        with self._lock:
+            existing = self._gen_workers.get(name)
+            if existing is not None and existing.isRunning():
+                # Already on it; don't spam gTTS with parallel requests
+                # for the same name.
+                return
+
+            text = f"Hello, {name}"
+            out_path = self._cache_dir / f"{_safe_filename(name)}.mp3"
+            worker = _GenerateClipWorker(name, text, out_path, parent=self)
+            worker.finished_with_path.connect(self._on_synthesised)
+            worker.finished.connect(worker.deleteLater)
+            self._gen_workers[name] = worker
+            worker.start()
+
+    def _on_synthesised(self, name: str, path_obj) -> None:
+        with self._lock:
+            self._gen_workers.pop(name, None)
+        if path_obj is None:
+            # Synthesis failed -- clear the cooldown so the next
+            # recognition tries again instead of going silent forever.
+            self.reset_cooldown(name)
+            return
+        path = Path(path_obj)
+        if path.exists():
+            self._play_clip(path, name)
+
+    def _play_clip(self, path: Path, name: str) -> None:
+        try:
+            self._player.play(path)
+        except Exception as exc:  # pragma: no cover - subprocess errors
+            log.warning("FaceGreeter playback failed for %s: %s", name, exc)
+            return
+        self.spoken.emit(name)

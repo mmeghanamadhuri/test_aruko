@@ -31,9 +31,11 @@ import os
 import threading
 import time
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+from nina.services.face_db import FaceDB
 from sirena_ui.workers.vision_types import (
     KIND_FACE,
     KIND_OBJECT,
@@ -73,6 +75,15 @@ _YUNET_URL = (
 )
 _YUNET_FILENAME = "face_detection_yunet_2023mar.onnx"
 
+# SFace ONNX (MIT-licensed) from the OpenCV model zoo. This is the
+# recommended pairing with YuNet for face *recognition*; YuNet returns
+# the 5 facial landmarks SFace's `alignCrop` consumes. ~38 MB.
+_SFACE_URL = (
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/"
+    "models/face_recognition_sface/face_recognition_sface_2021dec.onnx"
+)
+_SFACE_FILENAME = "face_recognition_sface_2021dec.onnx"
+
 # Default object-detection weights. Ultralytics auto-downloads on
 # first use; we pin the smallest variant so the cold-start cost is
 # manageable on a Nano (TRT export still takes ~3 minutes the first
@@ -92,13 +103,32 @@ def _models_root() -> Path:
 # ======================================================================
 
 
+@dataclass
+class _FaceHit:
+    """One YuNet detection plus the raw row needed for SFace alignment."""
+
+    detection: Detection
+    row: object  # numpy ndarray shape (15,) - x,y,w,h, 5 landmarks, score
+
+
+@dataclass
+class EnrollmentResult:
+    """Outcome of a face-enrollment session, surfaced to the GUI."""
+
+    ok: bool
+    samples: int
+    attempts: int
+    message: str
+
+
 class _YuNetFaceDetector:
     """Tiny wrapper around `cv2.FaceDetectorYN`.
 
     YuNet expects RGB / BGR uint8 frames and returns (N, 15) float
     arrays where each row is [x, y, w, h, lm_x0, lm_y0, ..., score].
-    We only forward the bbox + score - the screen doesn't draw
-    landmarks today.
+    We forward the bbox + score for the UI and keep the raw row so
+    SFace's `alignCrop` can use the 5 facial landmarks for
+    recognition.
     """
 
     def __init__(self, model_path: Path, score_threshold: float = 0.7) -> None:
@@ -124,7 +154,7 @@ class _YuNetFaceDetector:
         )
         self._last_size: Optional[Tuple[int, int]] = None
 
-    def detect(self, frame_bgr) -> List[Detection]:
+    def detect(self, frame_bgr) -> List[_FaceHit]:
         h, w = frame_bgr.shape[:2]
         if self._last_size != (w, h):
             self._detector.setInputSize((w, h))
@@ -132,7 +162,7 @@ class _YuNetFaceDetector:
         _, faces = self._detector.detect(frame_bgr)
         if faces is None:
             return []
-        out: List[Detection] = []
+        out: List[_FaceHit] = []
         for row in faces:
             x, y, fw, fh = row[0:4]
             score = float(row[-1])
@@ -143,14 +173,87 @@ class _YuNetFaceDetector:
             if x2 <= x1 or y2 <= y1:
                 continue
             out.append(
-                Detection(
-                    kind=KIND_FACE,
-                    label="face",
-                    confidence=score,
-                    bbox=(x1, y1, x2, y2),
+                _FaceHit(
+                    detection=Detection(
+                        kind=KIND_FACE,
+                        label="face",
+                        confidence=score,
+                        bbox=(x1, y1, x2, y2),
+                    ),
+                    row=row,
                 )
             )
         return out
+
+
+# ======================================================================
+# Face recognizer (SFace)
+# ======================================================================
+
+
+class _SFaceRecognizer:
+    """Wrapper around `cv2.FaceRecognizerSF`.
+
+    SFace produces a 128-dim feature vector per face. We keep the raw
+    output (we L2-normalize inside `FaceDB.upsert`) and rely on
+    `FaceDB.find_best_match` for cosine matching against the enrolled
+    embeddings.
+
+    Alignment relies on the 5 facial landmarks YuNet returns; passing
+    the raw YuNet row to `alignCrop` is the documented happy path.
+    """
+
+    def __init__(self, model_path: Path) -> None:
+        if cv2 is None:
+            raise RuntimeError(
+                "OpenCV is required for face recognition."
+            )
+        if not hasattr(cv2, "FaceRecognizerSF_create"):
+            raise RuntimeError(
+                "cv2.FaceRecognizerSF_create is missing. Upgrade OpenCV "
+                "to >= 4.5.4 (pip install -U opencv-python-headless)."
+            )
+        # Empty 'config' string + default backend/target -> CPU ONNX.
+        self._recognizer = cv2.FaceRecognizerSF_create(str(model_path), "")
+
+    def embed(self, frame_bgr, yunet_row) -> Optional[List[float]]:
+        """Return a 128-dim Python list (CPU-friendly) for one face,
+        or None if alignment fails."""
+        try:
+            aligned = self._recognizer.alignCrop(frame_bgr, yunet_row)
+            feature = self._recognizer.feature(aligned)
+        except Exception as exc:
+            log.warning("SFace embed failed: %s", exc)
+            return None
+        if feature is None:
+            return None
+        try:
+            flat = feature.flatten().tolist()
+        except Exception:
+            flat = list(feature)
+        return [float(v) for v in flat]
+
+
+def _ensure_sface_model() -> Path:
+    """Download the SFace ONNX once (~38 MB) and cache it under
+    nina/models/weights."""
+    cache_dir = _models_root()
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / _SFACE_FILENAME
+    if target.exists() and target.stat().st_size > 0:
+        return target
+    log.info("Downloading SFace recognition model -> %s", target)
+    tmp = target.with_suffix(target.suffix + ".part")
+    try:
+        urllib.request.urlretrieve(_SFACE_URL, tmp)
+        tmp.replace(target)
+    finally:
+        if tmp.exists():
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+    return target
 
 
 def _ensure_yunet_model() -> Path:
@@ -340,6 +443,7 @@ class VisionPipeline:
         face_score_threshold: float = 0.7,
         object_confidence: float = 0.4,
         prefer_tensorrt: Optional[bool] = None,
+        face_db_path: Optional[Path] = None,
     ) -> None:
         self._camera_index = (
             int(os.environ.get("NINA_VISION_CAMERA", "0"))
@@ -358,10 +462,19 @@ class VisionPipeline:
 
         self._cap = None
         self._face: Optional[_YuNetFaceDetector] = None
+        self._sface: Optional[_SFaceRecognizer] = None
         self._object: Optional[_YoloObjectDetector] = None
 
         self._face_enabled = False
         self._object_enabled = False
+
+        # Face recognition DB. Persisted alongside the rest of Nina's
+        # mutable state under nina/data/. Lazy: we don't load anything
+        # until the user enables face detection or enrolls someone.
+        if face_db_path is None:
+            repo_root = Path(__file__).resolve().parents[2]
+            face_db_path = repo_root / "nina" / "data" / "faces.json"
+        self._face_db: FaceDB = FaceDB(face_db_path)
 
         self._lock = threading.RLock()
         self._last_frame = None  # most recent annotated BGR frame
@@ -430,6 +543,16 @@ class VisionPipeline:
                     self._face_enabled = False
                     self._status.face_ready = False
                     return
+            # SFace is best-effort -- if the download / load fails, face
+            # *detection* still works, the per-face label just stays
+            # generic ("face") instead of carrying a name.
+            if enabled and self._sface is None:
+                try:
+                    sface_path = _ensure_sface_model()
+                    self._sface = _SFaceRecognizer(sface_path)
+                except Exception as exc:
+                    log.warning("Face recognizer unavailable: %s", exc)
+                    self._sface = None
             self._face_enabled = bool(enabled)
 
     def set_object_enabled(self, enabled: bool) -> None:
@@ -462,7 +585,9 @@ class VisionPipeline:
         with self._lock:
             cap = self._cap
             face = self._face if self._face_enabled else None
+            sface = self._sface if self._face_enabled else None
             obj = self._object if self._object_enabled else None
+            face_db = self._face_db
         if cap is None or cv2 is None:
             return None, []
         ok, frame = cap.read()
@@ -472,9 +597,30 @@ class VisionPipeline:
         detections: List[Detection] = []
         if face is not None:
             try:
-                detections.extend(face.detect(frame))
+                hits = face.detect(frame)
             except Exception as exc:
                 log.warning("face.detect failed: %s", exc)
+                hits = []
+            # Recognition is opt-in on success: if we have an SFace
+            # recognizer AND at least one enrolled face, look up each
+            # detected face's identity. Otherwise we just emit the bare
+            # face detections (label "face") as before.
+            do_recog = sface is not None and not face_db.is_empty()
+            for hit in hits:
+                if do_recog:
+                    try:
+                        emb = sface.embed(frame, hit.row)
+                    except Exception as exc:
+                        log.warning("face.embed failed: %s", exc)
+                        emb = None
+                    if emb is not None:
+                        match = face_db.find_best_match(emb)
+                        if match is not None:
+                            name, score = match
+                            hit.detection.identity = name
+                            hit.detection.identity_score = score
+                            hit.detection.label = name
+                detections.append(hit.detection)
         if obj is not None:
             try:
                 detections.extend(obj.detect(frame))
@@ -485,6 +631,173 @@ class VisionPipeline:
         with self._lock:
             self._last_frame = annotated
         return annotated, detections
+
+    # ------------------------------------------------------------------
+    # Face enrollment
+    # ------------------------------------------------------------------
+
+    def enroll_face(
+        self,
+        name: str,
+        *,
+        target_samples: int = 8,
+        max_attempts: int = 80,
+        min_confidence: float = 0.85,
+        progress_cb=None,
+    ) -> "EnrollmentResult":
+        """Capture `target_samples` frames where exactly one face is
+        visible, average their SFace embeddings, and persist the
+        result under `name` in the FaceDB.
+
+        Runs on the worker thread (we own `self._lock` only briefly to
+        snapshot resources). The camera and detectors must already be
+        ready -- the caller is expected to have set face detection on
+        before triggering this.
+
+        Returns an `EnrollmentResult` describing how it went so the GUI
+        can show a friendly message regardless of success or failure.
+        """
+        name = (name or "").strip()
+        if not name:
+            return EnrollmentResult(
+                ok=False,
+                samples=0,
+                attempts=0,
+                message="Name cannot be empty.",
+            )
+
+        with self._lock:
+            cap = self._cap
+            face = self._face
+            sface = self._sface
+        if cv2 is None or cap is None:
+            return EnrollmentResult(
+                ok=False,
+                samples=0,
+                attempts=0,
+                message="Camera not open.",
+            )
+        if face is None:
+            return EnrollmentResult(
+                ok=False,
+                samples=0,
+                attempts=0,
+                message=(
+                    "Face detection isn't initialised. Toggle "
+                    "'Face detection' on first."
+                ),
+            )
+        if sface is None:
+            return EnrollmentResult(
+                ok=False,
+                samples=0,
+                attempts=0,
+                message=(
+                    "Face recognition model unavailable. Make sure the "
+                    "Jetson has internet for the first SFace download."
+                ),
+            )
+
+        embeddings: List[List[float]] = []
+        attempts = 0
+        skipped_multiple = 0
+        skipped_low_conf = 0
+        skipped_no_face = 0
+
+        while len(embeddings) < target_samples and attempts < max_attempts:
+            attempts += 1
+            ok, frame = cap.read()
+            if not ok or frame is None:
+                time.sleep(0.05)
+                continue
+            try:
+                hits = face.detect(frame)
+            except Exception as exc:
+                log.warning("enroll: face.detect failed: %s", exc)
+                hits = []
+
+            if not hits:
+                skipped_no_face += 1
+                time.sleep(0.05)
+                continue
+            if len(hits) > 1:
+                skipped_multiple += 1
+                time.sleep(0.05)
+                continue
+            hit = hits[0]
+            if hit.detection.confidence < float(min_confidence):
+                skipped_low_conf += 1
+                time.sleep(0.05)
+                continue
+            emb = sface.embed(frame, hit.row)
+            if emb is None:
+                time.sleep(0.05)
+                continue
+            embeddings.append(emb)
+            if progress_cb is not None:
+                try:
+                    progress_cb(len(embeddings), target_samples)
+                except Exception:
+                    # A misbehaving callback shouldn't kill an
+                    # otherwise successful enrollment.
+                    pass
+
+        if not embeddings:
+            reason = "No high-confidence face captured."
+            if skipped_multiple:
+                reason = (
+                    "Multiple faces were visible -- enrollment requires "
+                    "exactly one face in frame."
+                )
+            elif skipped_no_face >= attempts // 2:
+                reason = "Couldn't see a face. Move closer to the camera."
+            elif skipped_low_conf:
+                reason = (
+                    "Face was detected but at low confidence. Improve "
+                    "lighting and look directly at the camera."
+                )
+            return EnrollmentResult(
+                ok=False,
+                samples=0,
+                attempts=attempts,
+                message=reason,
+            )
+
+        # Average the embeddings element-wise. FaceDB.upsert L2-
+        # normalizes the result, which is the standard SFace mean-of-
+        # samples trick (samples land near each other on the unit
+        # sphere, so averaging then re-normalizing is equivalent to a
+        # spherical mean for our purposes).
+        dim = len(embeddings[0])
+        mean = [0.0] * dim
+        for emb in embeddings:
+            for i, v in enumerate(emb):
+                mean[i] += v
+        scale = 1.0 / float(len(embeddings))
+        mean = [v * scale for v in mean]
+
+        try:
+            self._face_db.upsert(name, mean, samples=len(embeddings))
+        except Exception as exc:
+            return EnrollmentResult(
+                ok=False,
+                samples=len(embeddings),
+                attempts=attempts,
+                message=f"Failed to save face: {exc}",
+            )
+
+        return EnrollmentResult(
+            ok=True,
+            samples=len(embeddings),
+            attempts=attempts,
+            message=f"Enrolled '{name}' from {len(embeddings)} samples.",
+        )
+
+    def list_enrolled_faces(self) -> List[str]:
+        return self._face_db.names()
+
+    def remove_enrolled_face(self, name: str) -> bool:
+        return self._face_db.remove(name)
 
     # ------------------------------------------------------------------
     # Misc
@@ -529,7 +842,15 @@ class VisionPipeline:
             color = _FACE_COLOR if det.kind == KIND_FACE else _OBJECT_COLOR
             x1, y1, x2, y2 = det.bbox
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
-            label = f"{det.label} {int(round(det.confidence * 100))}%"
+            # For recognised faces show "name match%"; otherwise show the
+            # detection confidence so the operator can still see how
+            # certain YuNet was about a generic face.
+            if det.kind == KIND_FACE and det.identity and det.identity_score is not None:
+                pct = int(round(det.identity_score * 100))
+                label = f"{det.identity} {pct}%"
+            else:
+                pct = int(round(det.confidence * 100))
+                label = f"{det.label} {pct}%"
             (tw, th), _ = cv2.getTextSize(
                 label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1
             )

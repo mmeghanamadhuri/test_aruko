@@ -37,6 +37,8 @@ from sirena_ui.widgets.common import (
     Pill,
     SectionLabel,
 )
+from sirena_ui.widgets.face_enroll_dialog import FaceEnrollDialog
+from sirena_ui.workers.face_greeter import FaceGreeter
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.vision_types import KIND_FACE, Detection
 
@@ -120,6 +122,10 @@ class VisionScreen(QWidget):
         self._track_toggle: Optional[_ToggleRow] = None
         self._viewport_label: Optional[QLabel] = None
         self._viewport_placeholder: Optional[QWidget] = None
+        # Greets recognised people via gTTS + AudioPlayer with a
+        # per-person cooldown so we don't spam "Hello hari" on every
+        # frame.
+        self._greeter = FaceGreeter(parent=self)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -149,6 +155,10 @@ class VisionScreen(QWidget):
         # Stay idempotent - VisionWorker.start() is a no-op if already
         # running, which keeps re-navigation snappy.
         worker.start()
+        # Reset the greeter's cooldown table so re-opening the Vision
+        # tab always greets people (otherwise leaving + returning a
+        # few seconds later would feel silent).
+        self._greeter.reset_cooldown()
         # Also reflect the latest known status immediately so the pill
         # doesn't lag the first frame.
         self._apply_status(self._status_to_dict(worker.status()))
@@ -328,11 +338,21 @@ class VisionScreen(QWidget):
         worker.detections_changed.connect(self._render_detections)
         worker.fps_changed.connect(self._on_fps)
         worker.status_changed.connect(self._apply_status)
+        worker.faces_recognized.connect(self._on_faces_recognized)
 
         if self._face_toggle is not None:
             self._face_toggle.toggled.connect(worker.set_face_enabled)
         if self._object_toggle is not None:
             self._object_toggle.toggled.connect(worker.set_object_enabled)
+
+    def _on_faces_recognized(self, names: list) -> None:
+        # FaceGreeter handles per-name cooldown internally, so we can
+        # forward every frame's recognised set without de-duping here.
+        for name in names:
+            try:
+                self._greeter.greet(str(name))
+            except Exception:
+                pass
 
     # ---------- handlers ----------
 
@@ -408,11 +428,15 @@ class VisionScreen(QWidget):
             return
         # Cap the visible list so a busy frame doesn't blow up the rail.
         for det in detections[:8]:
-            row = _DetectionRow(
-                det.label,
-                det.kind,
-                int(round(det.confidence * 100)),
-            )
+            # For recognised faces we show the match strength (cosine
+            # similarity from SFace), not the YuNet detection
+            # confidence -- that's what the operator actually cares
+            # about when verifying recognition.
+            if det.kind == KIND_FACE and det.identity and det.identity_score is not None:
+                pct = int(round(det.identity_score * 100))
+            else:
+                pct = int(round(det.confidence * 100))
+            row = _DetectionRow(det.label, det.kind, pct)
             layout.addWidget(row)
         if len(detections) > 8:
             more = MutedLabel(f"... and {len(detections) - 8} more")
@@ -428,13 +452,23 @@ class VisionScreen(QWidget):
     def _on_train(self) -> None:
         from PyQt5.QtWidgets import QMessageBox
 
-        QMessageBox.information(
-            self,
-            "Coming soon",
-            "Face enrollment / recognition ships in the next firmware "
-            "update. Today's pipeline detects faces but doesn't match "
-            "them to identities.",
-        )
+        worker = self._service.vision
+        status = worker.status()
+        if not status.camera_open:
+            QMessageBox.warning(
+                self,
+                "Camera not ready",
+                "Connect a USB camera before training a new face.",
+            )
+            return
+        # Toggle face detection on if it isn't already, so the operator
+        # doesn't have to remember to flip it before training. Running
+        # the enrollment with face detection off would just time out.
+        if self._face_toggle is not None and not self._face_toggle._btn.isChecked():  # noqa: SLF001
+            self._face_toggle._btn.setChecked(True)  # noqa: SLF001 - emits toggled -> worker
+
+        dialog = FaceEnrollDialog(worker, parent=self)
+        dialog.exec_()
 
     def _on_snapshot(self) -> None:
         from PyQt5.QtWidgets import QMessageBox

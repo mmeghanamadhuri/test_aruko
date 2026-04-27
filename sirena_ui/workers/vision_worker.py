@@ -45,7 +45,7 @@ from typing import Callable, List, Optional
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QImage
 
-from sirena_ui.workers.vision_pipeline import VisionPipeline
+from sirena_ui.workers.vision_pipeline import EnrollmentResult, VisionPipeline
 from sirena_ui.workers.vision_types import Detection, VisionStatus
 
 
@@ -64,6 +64,13 @@ class VisionWorker(QObject):
     detections_changed = pyqtSignal(list)
     fps_changed = pyqtSignal(float)
     status_changed = pyqtSignal(dict)
+    # Fired once per detection cycle with the set of recognised names
+    # in the current frame. The screen uses this to drive the greeting
+    # cooldown (no need to greet "hari" every frame).
+    faces_recognized = pyqtSignal(list)
+    # Lifecycle for an enrollment session triggered via `enroll_face`.
+    enrollment_progress = pyqtSignal(int, int)  # samples, target
+    enrollment_finished = pyqtSignal(dict)      # asdict(EnrollmentResult)
 
     def __init__(
         self,
@@ -149,6 +156,21 @@ class VisionWorker(QObject):
 
     def status(self) -> VisionStatus:
         return self._pipeline.status()
+
+    def enroll_face(self, name: str, target_samples: int = 8) -> None:
+        """Capture face samples for `name` and add to the FaceDB.
+
+        Runs on the worker thread so we can grab consecutive frames
+        without fighting the live capture loop. Progress + outcome are
+        published via `enrollment_progress` / `enrollment_finished`.
+        """
+        self._enqueue(lambda: self._cmd_enroll(name, int(target_samples)))
+
+    def list_faces(self) -> List[str]:
+        return self._pipeline.list_enrolled_faces()
+
+    def remove_face(self, name: str) -> bool:
+        return self._pipeline.remove_enrolled_face(name)
 
     # ------------------------------------------------------------------
     # Worker loop + command handlers
@@ -249,6 +271,35 @@ class VisionWorker(QObject):
         self._pipeline.set_object_enabled(enabled)
         self._emit_status(self._pipeline.status())
 
+    def _cmd_enroll(self, name: str, target_samples: int) -> None:
+        self._announce(f"Capturing face samples for '{name}'...")
+        # Force face detection on so the operator doesn't need to
+        # toggle it manually before clicking Train. SFace lazy-init
+        # rides along inside set_face_enabled.
+        self._pipeline.set_face_enabled(True)
+        self.enrollment_progress.emit(0, int(target_samples))
+
+        def _on_progress(captured: int, target: int) -> None:
+            self.enrollment_progress.emit(int(captured), int(target))
+
+        result: EnrollmentResult = self._pipeline.enroll_face(
+            name,
+            target_samples=int(target_samples),
+            progress_cb=_on_progress,
+        )
+        # Surface result both as a structured payload (for the dialog)
+        # and as a fresh status pill so the operator sees feedback even
+        # if the dialog has already been dismissed.
+        payload = {
+            "ok": bool(result.ok),
+            "samples": int(result.samples),
+            "attempts": int(result.attempts),
+            "message": str(result.message),
+            "name": str(name),
+        }
+        self.enrollment_finished.emit(payload)
+        self._announce(result.message)
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -260,6 +311,18 @@ class VisionWorker(QObject):
         # Emit a stable Python list so Qt's queued connection deep-copies
         # via reference (not memoryview pointing into a dying ndarray).
         self.detections_changed.emit(list(detections))
+        # Names of any recognised people in this frame. We dedupe so
+        # multiple faces of the same enrolled person (rare but
+        # possible if YuNet double-detects) don't double-trigger
+        # downstream greeters.
+        recognised: List[str] = []
+        seen = set()
+        for det in detections:
+            if det.identity and det.identity not in seen:
+                seen.add(det.identity)
+                recognised.append(det.identity)
+        if recognised:
+            self.faces_recognized.emit(recognised)
 
     @staticmethod
     def _bgr_to_qimage(frame_bgr) -> Optional[QImage]:

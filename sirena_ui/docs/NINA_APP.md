@@ -92,17 +92,28 @@ blocking on timed turns.
 - **Recognition** toggles on the right rail:
   - **Face detection** — YuNet (`cv2.FaceDetectorYN`); ships with
     OpenCV ≥ 4.5.4. The 340 KB ONNX model is downloaded once to
-    `nina/models/weights/face_detection_yunet_2023mar.onnx`.
+    `nina/models/weights/face_detection_yunet_2023mar.onnx`. When
+    enabled, also lazy-loads the **SFace** recogniser
+    (`cv2.FaceRecognizerSF`, ~38 MB ONNX cached at
+    `nina/models/weights/face_recognition_sface_2021dec.onnx`) so
+    enrolled faces are matched to a name in real time.
   - **Object detection** — Ultralytics YOLOv8n on COCO-80. On Jetson
     the pipeline auto-exports a **TensorRT FP16** engine on first
     run (`nina/models/weights/yolov8n.engine`) and caches it; PyTorch
     CPU fallback on dev hosts.
   - **Person tracking** — toggle for the next iteration's tracker.
-- **Detected** rolling list of the last detections (class + score).
+- **Detected** rolling list shows the class (or recognised name) and
+  match score for each visible detection.
 - **Camera** controls: resolution dropdown (640×480 / 1280×720 / etc),
   brightness slider, exposure mode.
-- **Train a new face** opens the face-enrolment flow; **Snapshot**
-  saves the current frame to `~/Pictures/nina-snapshots/`.
+- **Train a new face** opens the enrolment dialog. Type a name, look
+  at the camera, and Nina captures 8 high-confidence samples of a
+  single face. The averaged 128-d SFace embedding is persisted to
+  `nina/data/faces.json`. Subsequent recognitions draw the matched
+  name + cosine score on the bbox and trigger an automatic **"Hello
+  <name>"** greeting (cached at `nina/data/greetings/<name>.mp3`,
+  cooldown 30 s per person to avoid spam).
+- **Snapshot** saves the current frame to `~/Pictures/nina-snapshots/`.
 - Top pill diagnoses missing hardware: `Camera /dev/video0 not
   found`, `OpenCV not installed`, `Ultralytics not installed`, etc.
 

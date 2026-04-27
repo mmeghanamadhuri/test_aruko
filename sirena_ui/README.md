@@ -120,6 +120,14 @@ detectors that the operator toggles independently:
 - **Face detection** - YuNet (`cv2.FaceDetectorYN`). Ships with
   OpenCV >= 4.5.4. The 340 KB ONNX model is downloaded once to
   `nina/models/weights/face_detection_yunet_2023mar.onnx`.
+- **Face recognition** - SFace (`cv2.FaceRecognizerSF`). Loaded
+  alongside YuNet; the ~38 MB ONNX is cached at
+  `nina/models/weights/face_recognition_sface_2021dec.onnx`. Click
+  **Train a new face** in the Vision tab to enrol an embedding; the
+  averaged 128-d feature lands in `nina/data/faces.json`. Recognised
+  faces trigger an auto-greeting ("Hello <name>") via gTTS, with the
+  per-name MP3 cached at `nina/data/greetings/<name>.mp3` and a 30 s
+  cooldown per person so you don't get spammed.
 - **Object detection** - Ultralytics YOLOv8n (COCO 80 classes). On
   Jetson the pipeline auto-exports a TensorRT FP16 engine on first
   run (`nina/models/weights/yolov8n.engine`); thereafter inference
