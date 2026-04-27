@@ -56,10 +56,19 @@ Pi build uses):
             this pin floating the JYQD ignores Z/F changes and runs in a
             single "limp" direction.
 
-The Pi build uses 3.3V GPIOs (no level shifter) and works fine: the JYQD's
-opto-isolated inputs trigger reliably at 3.3V. The Jetson Nano is also
-3.3V, so the same wires can land directly on the JYQD's "set" header
-without any shifter in line.
+**DO NOT use a level shifter between the Jetson and the JYQD "set"
+header.** The JYQD V7.3E2 inputs (EL, Signal, Z/F) are opto-isolated and
+trigger reliably from 3.3V GPIOs - the same RPi wiring this driver was
+copied from runs 3.3V direct, no shifter. The cheap red 4-channel
+passive resistor-divider boards silently mangle these signals into
+intermediate voltages (~1-2V at the JYQD screw, with the Jetson side
+toggling cleanly at 0/3.3V), and the failure mode looks like "wheels
+won't reverse" or "one wheel never spins" - the chip never sees a clean
+edge. If you suspect a wiring issue, probe at the **JYQD screw** with
+`pin_probe --pin <bcm>` running and compare to the Jetson header pin: if
+the JYQD-side reading isn't a clean 0V/3.3V swing matching the header,
+there is a shifter / broken wire / bad connection in between - fix the
+harness, do not patch it in software.
 
 Direction polarity (matches the Pi):
   Left  forward => L_DIR HIGH
