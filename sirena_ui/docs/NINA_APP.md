@@ -95,10 +95,12 @@ autonomous-pilot commands. The CLI tools still use the timed
 `turn_left()` / `turn_right()` for scripted turns of a fixed duration.
 
 Default tunables (`nina/config/settings.py`) for the JYQD + 3.3 V
-Jetson combo: `NINA_NAV_MIN_DUTY=70` (deadband floor — slider 1 % maps
-to ~70 % real PWM duty so the rotor catches), `NINA_NAV_KICK_SEC=0.25`
-at `NINA_NAV_KICK_DUTY=100` (brief 100 % pulse to break static
-friction). Override via env vars if a particular motor needs less.
+Jetson combo, verified on Nina's actual hub motors at 24 V:
+`NINA_NAV_MIN_DUTY=85` (deadband floor — slider 1 % maps to ~85 %
+real PWM duty so the rotor catches reliably), `NINA_NAV_KICK_SEC=0.5`
+at `NINA_NAV_KICK_DUTY=100` (0.5 s pulse at full duty to break
+static friction). Override via env vars if a particular motor
+needs less.
 
 ---
 

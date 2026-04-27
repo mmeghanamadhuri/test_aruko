@@ -80,15 +80,17 @@ def load_settings(repo_root: Path) -> NinaSettings:
         default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "15")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         # JYQD_V7.3E2 + Jetson 3.3V GPIO defaults: BLDC hub motors
-        # typically need ~70% real PWM duty before the rotor catches and
-        # a brief 100%-duty kick-start to break static friction. Without
-        # both, the slider can sit at 15% and the wheels will silently
-        # not move. The env vars below let you tune per-motor if a
-        # specific driver/motor combo behaves differently.
-        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "70")),
+        # typically need ~85% real PWM duty before the rotor catches
+        # cleanly and a 0.5s, 100%-duty kick-start to break static
+        # friction. These values were verified end-to-end on Nina's
+        # actual hardware (CLI smoke test on the Jetson, hub motors at
+        # 24V) - lower numbers worked sometimes but missed catches at
+        # cold-start. Override via env vars below if a specific
+        # driver/motor combo needs less.
+        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "85")),
         max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
         kick_start_duty_percent=float(os.environ.get("NINA_NAV_KICK_DUTY", "100")),
-        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.25")),
+        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.5")),
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
     )
