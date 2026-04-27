@@ -66,7 +66,18 @@ Cross-cutting design rules:
   empty state when not).
 - **Manual D-pad** with a big **STOP** in the centre and a **Brake** /
   **Reverse** state row underneath. Hold-to-drive, release-to-stop.
-- **Speed slider** (0–100 %) with `−` / `+` increment buttons.
+  Forward, Back, Left and Right are all held-while-pressed (release the
+  button and the wheels coast to a stop), so steering during a left or
+  right turn matches forward / back behaviour exactly.
+- **Speed slider** (0–100 %) with `−` / `+` increment buttons. Sliding
+  while a direction button is held now pushes the new duty straight to
+  the motors — the wheels speed up / slow down live, no need to
+  release-and-re-press to apply the change.
+- **EMERGENCY STOP** — big red panic button below the toggle row.
+  Drains pending drive commands, sets PWM duty to 0, engages the brake
+  (EL low on both drivers) and lights all three status-LED channels.
+  Independent of the regular Brake toggle so it works even mid-drive
+  without first releasing the D-pad.
 - Live **telemetry strip**: Speed, Heading, Distance, Battery.
 - **Autonomous mode** toggle (mirrored on Map). When ON, the D-pad,
   brake, reverse and slider are disabled so the operator can't fight
@@ -77,9 +88,17 @@ Cross-cutting design rules:
 
 Wiring: `workers/drive_controller.py` is a Qt facade over
 `nina.controllers.navigation_manager.NavigationManager`, talking to
-the JYQD\_V7.3E2 BLDC drivers. A new `set_wheels()` API lets the
-autonomous pilot command per-wheel speeds continuously without
-blocking on timed turns.
+the JYQD\_V7.3E2 BLDC drivers. The GUI flow uses
+`drive_continuous(...)` for D-pad presses (kick-start + non-blocking,
+no auto-stop) and `set_wheels(...)` for live speed updates and
+autonomous-pilot commands. The CLI tools still use the timed
+`turn_left()` / `turn_right()` for scripted turns of a fixed duration.
+
+Default tunables (`nina/config/settings.py`) for the JYQD + 3.3 V
+Jetson combo: `NINA_NAV_MIN_DUTY=70` (deadband floor — slider 1 % maps
+to ~70 % real PWM duty so the rotor catches), `NINA_NAV_KICK_SEC=0.25`
+at `NINA_NAV_KICK_DUTY=100` (brief 100 % pulse to break static
+friction). Override via env vars if a particular motor needs less.
 
 ---
 

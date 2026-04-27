@@ -214,6 +214,34 @@ class NavigationManager:
                          speed=speed, duration=duration)
         log.info("turn_right speed=%s%%", speed)
 
+    def drive_continuous(self, left_dir: str, right_dir: str,
+                         speed_percent: Optional[int] = None) -> None:
+        """Start (or update) per-wheel motion that does NOT auto-stop.
+
+        Includes the same settle + kick-start as forward()/backward() so
+        a BLDC at rest catches reliably, but unlike turn_left/turn_right
+        this method returns as soon as steady-state PWM is set and
+        leaves the wheels running until stop() is called. Used by the
+        GUI's held D-pad buttons so left/right turns last as long as
+        the operator holds the key down.
+        """
+        if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
+            raise ValueError(f"Invalid left_dir '{left_dir}'")
+        if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
+            raise ValueError(f"Invalid right_dir '{right_dir}'")
+        speed = self._resolve_speed(speed_percent)
+        self.stop()
+        time.sleep(self.config.settle_delay_sec)
+        self._set_direction(self.SIDE_LEFT, left_dir)
+        self._set_direction(self.SIDE_RIGHT, right_dir)
+        time.sleep(0.02)  # let JYQD latch direction before EL/PWM ramps
+        self._kick_start(left_dir=left_dir, right_dir=right_dir,
+                         target_speed=speed)
+        self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
+        self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
+        log.info("drive_continuous left=%s right=%s speed=%s%%",
+                 left_dir, right_dir, speed)
+
     def stop(self) -> None:
         self._control_speed(self.SIDE_LEFT, True, 0, self.DIR_FORWARD)
         self._control_speed(self.SIDE_RIGHT, True, 0, self.DIR_FORWARD)

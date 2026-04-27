@@ -137,7 +137,21 @@ class DriveController(QObject):
         pct = max(0, min(100, int(pct)))
         with self._lock:
             self._state["speed_pct"] = pct
+            direction = self._state["direction"]
+            brake = self._state["brake"]
         self._emit_state()
+
+        # If the wheels are currently moving, push the new duty cycle
+        # straight through so the speed slider acts live. We deliberately
+        # use `set_wheels` (no settle / no kick-start) here - those only
+        # matter when starting from rest, and re-running them on every
+        # slider tick would chop the motors. The order is preserved by
+        # the worker queue so a still-pending start command will run
+        # first and this update will follow.
+        if not brake and direction != "idle":
+            self._enqueue(
+                lambda d=direction, s=pct: self._do_apply_live_speed(d, s)
+            )
 
     def set_reverse(self, on: bool) -> None:
         # Reverse is interpreted as "swap forward/back at the hardware
@@ -182,6 +196,39 @@ class DriveController(QObject):
             self._state["direction"] = "idle"
         self._emit_state()
         self._enqueue(self._do_stop)
+
+    def emergency_stop(self) -> None:
+        """Hard stop: set duty=0, engage brake, light the red+green+blue
+        status LED. Independent of the regular brake toggle so the user
+        can fire it without first releasing the D-pad.
+
+        Drains any pending drive commands from the worker queue so a
+        kick-start or settle that was queued just before the panic
+        click can't sneak in after the e-stop. The command currently
+        in flight (if any) still has to complete - we can't safely
+        interrupt mid-sleep - but nothing else queued behind it will
+        run before the stop+brake+EL-disable.
+        """
+        with self._lock:
+            self._state["direction"] = "idle"
+            self._state["brake"] = True
+        self._emit_state()
+        self._drain_queue()
+        self._enqueue(self._do_emergency_stop)
+
+    def _drain_queue(self) -> None:
+        """Pop every pending command. Safe to call any time; the worker
+        thread will simply find an empty queue and block on get()."""
+        while True:
+            try:
+                item = self._cmd_q.get_nowait()
+            except queue.Empty:
+                return
+            # Preserve the shutdown sentinel if shutdown was already
+            # requested; otherwise drop the callable on the floor.
+            if item is None:
+                self._cmd_q.put(None)
+                return
 
     def drive_wheels(
         self,
@@ -312,16 +359,55 @@ class DriveController(QObject):
         if self._nav is None:
             return
         try:
-            if direction == _DIR_FORWARD:
-                self._nav.forward(speed_pct)
-            elif direction == _DIR_BACK:
-                self._nav.backward(speed_pct)
-            elif direction == _DIR_LEFT:
-                self._nav.turn_left(speed_pct)
-            elif direction == _DIR_RIGHT:
-                self._nav.turn_right(speed_pct)
+            ldir, rdir = self._wheel_dirs_for(direction)
+            if ldir is None or rdir is None:
+                return
+            # Use drive_continuous for all four directions so L/R is
+            # held-while-pressed (matches forward/back) instead of the
+            # old timed turn that auto-stopped after ~2.3s.
+            self._nav.drive_continuous(
+                left_dir=ldir,
+                right_dir=rdir,
+                speed_percent=speed_pct,
+            )
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
+
+    def _do_apply_live_speed(self, direction: str, speed_pct: int) -> None:
+        """Update PWM duty on the running motors without re-issuing the
+        settle / kick-start sequence. Called from set_speed() while a
+        D-pad button is held."""
+        if self._nav is None:
+            return
+        ldir, rdir = self._wheel_dirs_for(direction)
+        if ldir is None or rdir is None:
+            return
+        try:
+            self._nav.set_wheels(
+                left_dir=ldir,
+                left_speed=speed_pct,
+                right_dir=rdir,
+                right_speed=speed_pct,
+            )
+        except Exception as exc:
+            log.exception(
+                "apply_live_speed(%s, %s) failed: %s",
+                direction, speed_pct, exc,
+            )
+
+    def _wheel_dirs_for(self, direction: str):
+        """Map a UI direction to a (left, right) pair of nav directions."""
+        if self._nav is None:
+            return None, None
+        if direction == _DIR_FORWARD:
+            return self._nav.DIR_FORWARD, self._nav.DIR_FORWARD
+        if direction == _DIR_BACK:
+            return self._nav.DIR_BACKWARD, self._nav.DIR_BACKWARD
+        if direction == _DIR_LEFT:
+            return self._nav.DIR_BACKWARD, self._nav.DIR_FORWARD
+        if direction == _DIR_RIGHT:
+            return self._nav.DIR_FORWARD, self._nav.DIR_BACKWARD
+        return None, None
 
     def _do_stop(self) -> None:
         if self._nav is None:
@@ -330,6 +416,25 @@ class DriveController(QObject):
             self._nav.stop()
         except Exception as exc:
             log.exception("stop() failed: %s", exc)
+
+    def _do_emergency_stop(self) -> None:
+        if self._nav is None:
+            with self._lock:
+                self._state["driver_message"] = (
+                    "EMERGENCY STOP requested - hardware not connected"
+                )
+            self._emit_state()
+            return
+        try:
+            self._nav.emergency_stop()
+            with self._lock:
+                self._state["driver_message"] = (
+                    "EMERGENCY STOP - brake engaged, release brake to resume"
+                )
+            self._emit_state()
+            log.warning("DriveController: emergency_stop fired")
+        except Exception as exc:
+            log.exception("emergency_stop failed: %s", exc)
 
     def _do_drive_wheels(
         self,

@@ -204,6 +204,14 @@ class DriveScreen(QWidget):
         toggles.addWidget(self._reverse_btn)
         toggles.addStretch(1)
 
+        # Big red panic button. Bypasses the brake toggle so the operator
+        # can fire it without first releasing whatever direction is held.
+        self._estop_btn = QPushButton("\u26A0  EMERGENCY STOP")
+        self._estop_btn.setObjectName("stopButton")
+        self._estop_btn.setCursor(Qt.PointingHandCursor)
+        self._estop_btn.clicked.connect(self._on_emergency_stop)
+        card.add(self._estop_btn)
+
         card.add_stretch()
         return card
 
@@ -216,6 +224,16 @@ class DriveScreen(QWidget):
     def _on_reverse_toggle(self, checked: bool) -> None:
         self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
+
+    def _on_emergency_stop(self) -> None:
+        self._drive.emergency_stop()
+        # Sync the Brake toggle so the screen reflects the new state
+        # immediately (the controller already engaged the brake on the
+        # hardware; this just makes the UI agree).
+        self._brake_btn.blockSignals(True)
+        self._brake_btn.setChecked(True)
+        self._brake_btn.setText("Brake: ON")
+        self._brake_btn.blockSignals(False)
 
     def _on_autonomy_toggle(self, on: bool) -> None:
         try:

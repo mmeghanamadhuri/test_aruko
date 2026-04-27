@@ -79,16 +79,16 @@ def load_settings(repo_root: Path) -> NinaSettings:
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
         default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "15")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
-        # Defaults match the proven Pi build (speed=15 at 15% duty, no
-        # deadband, no kick-start). The earlier non-zero defaults were a
-        # workaround for the broken direction pin - now that direction is
-        # correctly wired, the motor starts cleanly at low duty just like
-        # on the Pi. Set the env vars below if a particular driver/motor
-        # combo still needs help starting.
-        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "0")),
+        # JYQD_V7.3E2 + Jetson 3.3V GPIO defaults: BLDC hub motors
+        # typically need ~70% real PWM duty before the rotor catches and
+        # a brief 100%-duty kick-start to break static friction. Without
+        # both, the slider can sit at 15% and the wheels will silently
+        # not move. The env vars below let you tune per-motor if a
+        # specific driver/motor combo behaves differently.
+        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "70")),
         max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
         kick_start_duty_percent=float(os.environ.get("NINA_NAV_KICK_DUTY", "100")),
-        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0")),
+        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.25")),
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
     )
