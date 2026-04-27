@@ -13,8 +13,9 @@ CLI behaves identically to the GUI -- the same env-var overrides apply.
 
 import logging
 import os
+from pathlib import Path
 
-from nina.config.settings import build_settings
+from nina.config.settings import load_settings
 from nina.controllers.navigation_manager import (
     DEFAULT_PINS,
     NavigationConfig,
@@ -43,7 +44,8 @@ def main() -> None:
     print("Sirena Technologies - Nina Manual Motor Control")
     print("--------------------------------------------------")
 
-    nav_settings = build_settings().navigation
+    repo_root = Path(__file__).resolve().parents[2]
+    nav_settings = load_settings(repo_root).navigation
     backend_name = os.environ.get("NINA_NAV_BACKEND", nav_settings.backend_name)
     nav = NavigationManager(
         NavigationConfig(

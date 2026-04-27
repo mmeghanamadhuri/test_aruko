@@ -34,13 +34,14 @@ import argparse
 import logging
 import os
 import time
+from pathlib import Path
 
 # Force the per-pin DIR write log lines to INFO before importing the
 # NavigationManager - this script IS a diagnostic, so the user shouldn't
 # need to remember to export NINA_NAV_LOG_DIR=1 themselves.
 os.environ.setdefault("NINA_NAV_LOG_DIR", "1")
 
-from nina.config.settings import build_settings  # noqa: E402
+from nina.config.settings import load_settings  # noqa: E402
 from nina.controllers.navigation_manager import (  # noqa: E402
     DEFAULT_PINS,
     NavigationConfig,
@@ -52,7 +53,8 @@ log = logging.getLogger("nina.motor_direction_test")
 
 
 def _build_nav() -> NavigationManager:
-    settings = build_settings().navigation
+    repo_root = Path(__file__).resolve().parents[2]
+    settings = load_settings(repo_root).navigation
     cfg = NavigationConfig(
         pins=DEFAULT_PINS,
         backend_name=settings.backend_name,
