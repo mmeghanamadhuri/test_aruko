@@ -6,11 +6,15 @@ Run with the package path so imports resolve correctly:
     python3 -m nina.app.motor_control
 
 Backend selection via env var NINA_NAV_BACKEND ("jetson" default, or "pigpio").
+All other tunables (min_duty_percent, kick_start_*, default_speed_percent,
+invert_*_dir) come from `nina.config.settings.build_settings()` so this
+CLI behaves identically to the GUI -- the same env-var overrides apply.
 """
 
 import logging
 import os
 
+from nina.config.settings import build_settings
 from nina.controllers.navigation_manager import (
     DEFAULT_PINS,
     NavigationConfig,
@@ -39,9 +43,22 @@ def main() -> None:
     print("Sirena Technologies - Nina Manual Motor Control")
     print("--------------------------------------------------")
 
-    backend_name = os.environ.get("NINA_NAV_BACKEND", "jetson")
+    nav_settings = build_settings().navigation
+    backend_name = os.environ.get("NINA_NAV_BACKEND", nav_settings.backend_name)
     nav = NavigationManager(
-        NavigationConfig(pins=DEFAULT_PINS, backend_name=backend_name)
+        NavigationConfig(
+            pins=DEFAULT_PINS,
+            backend_name=backend_name,
+            pwm_frequency_hz=nav_settings.pwm_frequency_hz,
+            default_speed_percent=nav_settings.default_speed_percent,
+            turn_duration_sec=nav_settings.turn_duration_sec,
+            min_duty_percent=nav_settings.min_duty_percent,
+            max_duty_percent=nav_settings.max_duty_percent,
+            kick_start_duty_percent=nav_settings.kick_start_duty_percent,
+            kick_start_duration_sec=nav_settings.kick_start_duration_sec,
+            invert_left_dir=nav_settings.invert_left_dir,
+            invert_right_dir=nav_settings.invert_right_dir,
+        )
     )
     try:
         nav.initialize()

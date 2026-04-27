@@ -32,10 +32,16 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import time
 
-from nina.config.settings import build_settings
-from nina.controllers.navigation_manager import (
+# Force the per-pin DIR write log lines to INFO before importing the
+# NavigationManager - this script IS a diagnostic, so the user shouldn't
+# need to remember to export NINA_NAV_LOG_DIR=1 themselves.
+os.environ.setdefault("NINA_NAV_LOG_DIR", "1")
+
+from nina.config.settings import build_settings  # noqa: E402
+from nina.controllers.navigation_manager import (  # noqa: E402
     DEFAULT_PINS,
     NavigationConfig,
     NavigationManager,
@@ -63,12 +69,33 @@ def _build_nav() -> NavigationManager:
     return NavigationManager(cfg)
 
 
+def _expected_level(side: str, direction: str, nav: NavigationManager) -> int:
+    """Mirror NavigationManager._set_direction() so we can print the
+    BCM logic level the diagnostic *expects* the wire to be holding."""
+    forward = (direction == NavigationManager.DIR_FORWARD)
+    if side == NavigationManager.SIDE_LEFT:
+        level = 1 if forward else 0
+        if nav.config.invert_left_dir:
+            level = 0 if level else 1
+    else:
+        level = 0 if forward else 1
+        if nav.config.invert_right_dir:
+            level = 0 if level else 1
+    return level
+
+
 def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: float) -> None:
     """Spin the chosen wheel forward for `duration` then backward for
     `duration`, with a 1 s park between phases.
 
     The other wheel is held stopped (PWM 0, EL low) so any motion the
     operator sees is unambiguously coming from the wheel under test.
+
+    Each phase prints the expected BCM logic level for the DIR pin AND
+    the kick-start duty being used. This way the operator has a single
+    line of "I should be seeing X V on BCM Y; the wheel should spin
+    THIS direction now" without needing the NINA_NAV_LOG_DIR env var
+    set (which is one fewer thing to forget on Jetson).
     """
     other = (
         NavigationManager.SIDE_RIGHT
@@ -81,26 +108,41 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
         if side == NavigationManager.SIDE_LEFT
         else (pins.r_dir, pins.r_en, pins.pwm_r)
     )
+    dir_pin, en_pin, pwm_pin = side_pins
 
     print(
-        f"\n=== {side.upper()} wheel test (DIR=BCM{side_pins[0]}, "
-        f"EN=BCM{side_pins[1]}, PWM=BCM{side_pins[2]}) ==="
+        f"\n=== {side.upper()} wheel test "
+        f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, PWM=BCM{pwm_pin}) ==="
     )
 
     for label, direction in (
-        ("FORWARD", NavigationManager.DIR_FORWARD),
+        ("FORWARD",  NavigationManager.DIR_FORWARD),
         ("BACKWARD", NavigationManager.DIR_BACKWARD),
     ):
-        print(f"  -> {label} for {duration:.1f}s at {speed}% duty")
-        # Park the other wheel.
+        expected = _expected_level(side, direction, nav)
+        print(
+            f"  -> {label} for {duration:.1f}s at {speed}% duty "
+            f"(expect BCM{dir_pin} = {expected})"
+        )
         nav._control_speed(other, True, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
-        # Drive the test wheel.
         nav._set_direction(side, direction)  # noqa: SLF001
         time.sleep(0.05)
+        # Brief kick-start to break static friction; same idea as
+        # NavigationManager._kick_start but inlined so each phase is
+        # self-contained and easy to read in the log.
+        kick = max(int(speed), int(nav.config.kick_start_duty_percent))
+        kick = max(0, min(100, kick))
+        kick_dur = max(0.0, float(nav.config.kick_start_duration_sec))
+        if kick_dur > 0 and speed > 0:
+            print(f"     kick-start {kick}% for {kick_dur:.2f}s")
+            nav._control_speed(side, True, kick, direction)  # noqa: SLF001
+            time.sleep(kick_dur)
         nav._control_speed(side, True, speed, direction)  # noqa: SLF001
         time.sleep(duration)
         nav._control_speed(side, True, 0, direction)  # noqa: SLF001
-        time.sleep(1.0)
+        # 1.5 s park gives the operator a beat to confirm "yes, the
+        # wheel just stopped" before the next phase reverses direction.
+        time.sleep(1.5)
     print(f"  done. {side.upper()} wheel parked.")
 
 
