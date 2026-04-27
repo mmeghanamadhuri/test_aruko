@@ -72,6 +72,7 @@ class ActionsScreen(QWidget):
         self._playback_panel = PlaybackPanel(service)
         self._playback_panel.play_requested.connect(self._on_play)
         self._playback_panel.audio_edit_requested.connect(self._on_edit_audio_inline)
+        self._playback_panel.delete_requested.connect(self._on_delete_action)
         self._record_panel = RecordPanel()
         self._record_panel.start_requested.connect(self._on_start_record)
         self._record_panel.stop_requested.connect(self._on_stop_record)
@@ -232,6 +233,78 @@ class ActionsScreen(QWidget):
 
     def _on_audio_changed(self, _name: str) -> None:
         self._playback_panel.refresh()
+
+    # ---------- delete ----------
+
+    def _on_delete_action(self, name: str) -> None:
+        if self._playback_worker is not None and self._playback_worker.isRunning():
+            QMessageBox.information(
+                self, "Playback in progress",
+                "Wait for the current playback to finish before deleting.",
+            )
+            return
+        if self._record_worker is not None and self._record_worker.isRunning():
+            QMessageBox.information(
+                self, "Recording in progress",
+                "Stop recording before deleting an action.",
+            )
+            return
+
+        neutral = getattr(self._service.settings, "neutral_action_name", None)
+        if isinstance(neutral, str) and neutral and name == neutral:
+            QMessageBox.warning(
+                self, "Cannot delete",
+                f"'{name}' is the configured neutral pose used during "
+                "startup. Change NINA_NEUTRAL_ACTION before removing it.",
+            )
+            return
+
+        info = {}
+        try:
+            info = self._service.get_action_audio_info(name)
+        except Exception:
+            info = {}
+        has_audio = bool(info.get("audio_path") or info.get("audio_rel"))
+
+        msg = (
+            f"Delete '{name}'?\n\n"
+            "This removes the action from the manifest and deletes its "
+            "recording file from disk."
+        )
+        if has_audio:
+            msg += (
+                "\n\nThe associated audio clip on disk will be left in "
+                "place (other actions may use it)."
+            )
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete action",
+            msg,
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        try:
+            result = self._service.delete_action(name)
+        except Exception as exc:
+            QMessageBox.warning(self, "Delete failed", str(exc))
+            return
+
+        deleted_file = result.get("deleted_recording")
+        if deleted_file:
+            self._set_status(
+                f"Status: deleted '{name}' (manifest + recording file)"
+            )
+        else:
+            self._set_status(
+                f"Status: removed '{name}' from manifest "
+                "(recording file already missing)"
+            )
+        self._playback_panel.refresh()
+        self._audio_panel.refresh()
 
     # ---------- recording ----------
 

@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from nina.controllers.dynamixel_manager import DynamixelManager
 
@@ -121,6 +121,87 @@ class ActionRunner:
             actions[action_name] = entry
 
         self.manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+
+    def delete_action(
+        self,
+        action_name: str,
+        *,
+        delete_recording: bool = True,
+        delete_audio: bool = False,
+    ) -> Dict[str, Any]:
+        """Remove an action from the manifest, optionally deleting its files.
+
+        Returns a summary of what was actually changed so the caller can
+        surface it to the user:
+            {
+              "removed_from_manifest": bool,
+              "deleted_recording": Optional[str],   # path that was deleted
+              "deleted_audio":     Optional[str],
+              "skipped_audio_shared_with": list[str],
+            }
+
+        Audio files are kept by default because two manifest entries can
+        legitimately share the same clip (e.g. variants of the same
+        action). Set `delete_audio=True` to also remove the MP3, but only
+        if no other manifest entry references it.
+        """
+        manifest = self._load_manifest()
+        actions = manifest.setdefault("actions", {})
+        if action_name not in actions:
+            raise ValueError(f"Action '{action_name}' is not in the manifest.")
+
+        entry = actions[action_name]
+        rel_file = self._extract_file(entry)
+        rel_audio: Optional[str] = None
+        if isinstance(entry, dict):
+            audio_val = entry.get("audio")
+            if isinstance(audio_val, str) and audio_val.strip():
+                rel_audio = audio_val.strip()
+
+        del actions[action_name]
+        self.manifest_path.write_text(
+            json.dumps(manifest, indent=2), encoding="utf-8"
+        )
+
+        deleted_recording: Optional[str] = None
+        if delete_recording and rel_file:
+            recording_path = self.actions_dir / rel_file
+            if recording_path.exists() and recording_path.is_file():
+                try:
+                    recording_path.unlink()
+                    deleted_recording = str(recording_path)
+                except OSError:
+                    # The manifest is already updated; surfacing a hard
+                    # failure here would just confuse the operator.
+                    deleted_recording = None
+
+        deleted_audio: Optional[str] = None
+        skipped_audio_shared_with: List[str] = []
+        if delete_audio and rel_audio:
+            others = [
+                other_name
+                for other_name, other_entry in actions.items()
+                if isinstance(other_entry, dict)
+                and isinstance(other_entry.get("audio"), str)
+                and other_entry["audio"].strip() == rel_audio
+            ]
+            if others:
+                skipped_audio_shared_with = others
+            else:
+                audio_path = self.actions_dir / rel_audio
+                if audio_path.exists() and audio_path.is_file():
+                    try:
+                        audio_path.unlink()
+                        deleted_audio = str(audio_path)
+                    except OSError:
+                        deleted_audio = None
+
+        return {
+            "removed_from_manifest": True,
+            "deleted_recording": deleted_recording,
+            "deleted_audio": deleted_audio,
+            "skipped_audio_shared_with": skipped_audio_shared_with,
+        }
 
     def register_action(
         self,

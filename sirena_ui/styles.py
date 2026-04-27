@@ -245,6 +245,27 @@ QPushButton#secondary:disabled, QPushButton#secondaryButton:disabled {{
     border-color: #d8d8db;
 }}
 
+/* Outlined danger button used for destructive actions like Delete */
+QPushButton#dangerButton {{
+    background-color: {BRAND_PANEL};
+    color: {BRAND_DANGER};
+    border: 1px solid {BRAND_DANGER};
+    border-radius: 16px;
+    padding: 8px 14px;
+    font-weight: 600;
+}}
+QPushButton#dangerButton:hover {{
+    background-color: #fdecea;
+}}
+QPushButton#dangerButton:pressed {{
+    background-color: #f9c9c4;
+}}
+QPushButton#dangerButton:disabled {{
+    background-color: #ececef;
+    color: #9a9a9f;
+    border-color: #d8d8db;
+}}
+
 QPushButton#stopButton {{
     background-color: {BRAND_DANGER};
     color: {BRAND_WHITE};

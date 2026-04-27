@@ -73,10 +73,58 @@ class DynamixelManager:
         )
 
     def set_torque_all(self, enable: bool) -> None:
+        """Broadcast a single SyncWrite to flip torque on every motor.
+
+        Earlier this looped through `write_reg` once per motor. On a
+        slightly noisy bus (typical when running off a Jetson Nano with
+        a long FTDI lead) any one of those 11 individual writes could
+        be missed - the affected motor would then keep holding torque,
+        which made manual posing during a recording impossible. A
+        SyncWrite is a single bus packet, so either every motor sees
+        the update or none do. Use `set_torque_all_verified()` if you
+        need the stronger "every motor confirms" guarantee.
+        """
         self._require_initialized()
         value = 1 if enable else 0
+        payload = {sid: [value] for sid in self.expected_motor_ids}
+        self.sync_write(*REG_TORQUE_ENABLE, payload)
+
+    def set_torque_all_verified(
+        self,
+        enable: bool,
+        *,
+        max_attempts: int = 4,
+    ) -> List[int]:
+        """Like `set_torque_all`, but read back and retry stragglers.
+
+        Returns the list of motor IDs that we could not confirm were in
+        the requested state after `max_attempts` rounds. The bus stays
+        usable either way; the caller can decide whether to abort or
+        continue with a warning.
+        """
+        self._require_initialized()
+        target = 1 if enable else 0
+        for attempt in range(max(1, max_attempts)):
+            self.set_torque_all(enable)
+            time.sleep(0.01)
+            stragglers: List[int] = []
+            for sid in self.expected_motor_ids:
+                actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+                if actual is None or actual != target:
+                    stragglers.append(sid)
+            if not stragglers:
+                return []
+            # Targeted retry on just the holdouts before re-broadcasting.
+            for sid in stragglers:
+                self.write_reg(sid, *REG_TORQUE_ENABLE, target)
+            time.sleep(0.01 * (attempt + 1))
+        # Final readback after the last targeted retry round.
+        unresolved: List[int] = []
         for sid in self.expected_motor_ids:
-            self.write_reg(sid, *REG_TORQUE_ENABLE, value)
+            actual = self.read_reg(sid, *REG_TORQUE_ENABLE)
+            if actual is None or actual != target:
+                unresolved.append(sid)
+        return unresolved
 
     def execute_action_file(self, action_path: Path) -> None:
         self._require_initialized()

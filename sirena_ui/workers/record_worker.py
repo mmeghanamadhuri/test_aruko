@@ -53,7 +53,19 @@ class RecordWorker(QThread):
         try:
             with self._service.bus_lock:
                 dxl = self._service.dxl
-                dxl.set_torque_all(False)
+                # Verified torque-off: keeps retrying any motor that
+                # didn't actually disengage. On the Jetson Nano, doing
+                # this once with no readback was leaving 1-2 motors
+                # rigid mid-recording, which made manual posing
+                # impossible.
+                stragglers = dxl.set_torque_all_verified(False)
+                if stragglers:
+                    self.failed.emit(
+                        "Could not release torque on motor(s) "
+                        f"{stragglers} after several retries. "
+                        "Recording aborted - check bus wiring / power."
+                    )
+                    return
 
                 whole = int(self._countdown_sec)
                 for remaining in range(whole, 0, -1):
@@ -68,10 +80,22 @@ class RecordWorker(QThread):
                 interval = 1.0 / max(1.0, self._hz)
                 target_frames = max(1, int(self._seconds * self._hz))
                 frames = []
+                # Re-assert torque-off roughly once a second as cheap
+                # insurance. The SyncWrite is a single bus packet
+                # (~3 ms for 11 motors at 222 222 baud), so it fits
+                # comfortably between sample intervals.
+                refresh_every = max(1, int(round(self._hz)))
                 start = time.monotonic()
                 for i in range(target_frames):
                     if self._stop_event.is_set():
                         break
+                    if i > 0 and i % refresh_every == 0:
+                        try:
+                            dxl.set_torque_all(False)
+                        except Exception:
+                            # Don't let a transient bus blip kill the
+                            # recording - the next iteration will retry.
+                            pass
                     frames.append(dxl.capture_frame(duration=interval))
                     elapsed = time.monotonic() - start
                     self.progress.emit(i + 1, target_frames, elapsed)

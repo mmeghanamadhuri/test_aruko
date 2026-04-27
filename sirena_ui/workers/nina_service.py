@@ -187,6 +187,27 @@ class NinaService:
     def action_path(self, name: str) -> Path:
         return self.settings.actions_dir / self.list_actions()[name]
 
+    def delete_action(
+        self,
+        name: str,
+        *,
+        delete_recording: bool = True,
+        delete_audio: bool = False,
+    ) -> Dict[str, Any]:
+        """Remove an action from the manifest (UI-facing wrapper).
+
+        Mirrors `ActionRunner.delete_action` but goes through the same
+        `bus_lock` other UI workers use, so a delete cannot interleave
+        with a playback or recording session that's actively touching
+        the manifest.
+        """
+        with self.bus_lock:
+            return self.action_runner.delete_action(
+                name,
+                delete_recording=delete_recording,
+                delete_audio=delete_audio,
+            )
+
     def action_audio_path(self, name: str) -> Optional[Path]:
         """
         Resolve the audio file to play alongside an action, if any.

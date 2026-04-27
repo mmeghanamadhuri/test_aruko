@@ -23,8 +23,17 @@ from sirena_ui.workers.nina_service import NinaService
 class _ActionRow(QFrame):
     play_clicked = pyqtSignal(str)
     audio_clicked = pyqtSignal(str)
+    delete_clicked = pyqtSignal(str)
 
-    def __init__(self, name: str, meta: str, audio_meta: str, parent=None) -> None:
+    def __init__(
+        self,
+        name: str,
+        meta: str,
+        audio_meta: str,
+        *,
+        deletable: bool = True,
+        parent=None,
+    ) -> None:
         super().__init__(parent)
         self.setObjectName("card")
         self._name = name
@@ -53,6 +62,22 @@ class _ActionRow(QFrame):
         self._audio.clicked.connect(lambda: self.audio_clicked.emit(self._name))
         layout.addWidget(self._audio)
 
+        self._delete = QPushButton("Delete")
+        self._delete.setObjectName("dangerButton")
+        self._delete.setCursor(Qt.PointingHandCursor)
+        self._delete.clicked.connect(lambda: self.delete_clicked.emit(self._name))
+        if not deletable:
+            self._delete.setEnabled(False)
+            self._delete.setToolTip(
+                "Protected action - cannot be deleted from the UI."
+            )
+        else:
+            self._delete.setToolTip(
+                "Remove this action from the manifest and delete its "
+                "recording file."
+            )
+        layout.addWidget(self._delete)
+
         self._play = QPushButton("\u25B6")  # right-pointing triangle
         self._play.setObjectName("playButton")
         self._play.setCursor(Qt.PointingHandCursor)
@@ -62,11 +87,18 @@ class _ActionRow(QFrame):
     def set_enabled(self, enabled: bool) -> None:
         self._play.setEnabled(enabled)
         self._audio.setEnabled(enabled)
+        # Don't override the protected state set in __init__; only enable
+        # if the row was deletable to begin with.
+        if self._delete.toolTip().startswith("Protected"):
+            self._delete.setEnabled(False)
+        else:
+            self._delete.setEnabled(enabled)
 
 
 class PlaybackPanel(QWidget):
     play_requested = pyqtSignal(str)
     audio_edit_requested = pyqtSignal(str)
+    delete_requested = pyqtSignal(str)
 
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
@@ -112,12 +144,16 @@ class PlaybackPanel(QWidget):
             actions = self._service.list_actions()
         except Exception:
             actions = {}
+        protected = self._protected_action_names()
         for name, rel_path in sorted(actions.items()):
             meta = self._frame_meta(self._service.settings.actions_dir / rel_path)
             audio_meta = self._audio_meta(name)
-            row = _ActionRow(name, meta, audio_meta)
+            row = _ActionRow(
+                name, meta, audio_meta, deletable=name not in protected,
+            )
             row.play_clicked.connect(self.play_requested.emit)
             row.audio_clicked.connect(self.audio_edit_requested.emit)
+            row.delete_clicked.connect(self.delete_requested.emit)
             self._list_layout.insertWidget(self._list_layout.count() - 1, row)
             self._rows.append(row)
         if not actions:
@@ -125,6 +161,21 @@ class PlaybackPanel(QWidget):
             empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet("color: #6e6e73; padding: 20px;")
             self._list_layout.insertWidget(self._list_layout.count() - 1, empty)
+
+    def _protected_action_names(self) -> set:
+        """Names that the UI should never let the user delete.
+
+        Today that's just the configured neutral pose - removing it
+        would break the startup boot sequence.
+        """
+        names: set = set()
+        try:
+            neutral = getattr(self._service.settings, "neutral_action_name", None)
+            if isinstance(neutral, str) and neutral:
+                names.add(neutral)
+        except Exception:
+            pass
+        return names
 
     def set_buttons_enabled(self, enabled: bool) -> None:
         for row in self._rows:
