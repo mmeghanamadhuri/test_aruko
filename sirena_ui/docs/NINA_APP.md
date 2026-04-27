@@ -135,6 +135,13 @@ needs less.
   <name>"** greeting (cached at `nina/data/greetings/<name>.mp3`,
   cooldown 30 s per person to avoid spam).
 - **Snapshot** saves the current frame to `~/Pictures/nina-snapshots/`.
+- **Play Objects** speaks the labels currently visible to the YOLO
+  detector ("I see a person, two chairs and a bottle.") via gTTS +
+  the standard `AudioPlayer`. Disabled until the detector reports at
+  least one box. Each unique sentence is cached as an MP3 under
+  `nina/data/announcements/` so repeat scenes replay instantly with
+  no internet round-trip; a 1.5 s cooldown stops a double-click from
+  overlapping playbacks.
 - Top pill diagnoses missing hardware: `Camera /dev/video0 not
   found`, `OpenCV not installed`, `Ultralytics not installed`, etc.
 

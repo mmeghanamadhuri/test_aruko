@@ -40,7 +40,8 @@ from sirena_ui.widgets.common import (
 from sirena_ui.widgets.face_enroll_dialog import FaceEnrollDialog
 from sirena_ui.workers.face_greeter import FaceGreeter
 from sirena_ui.workers.nina_service import NinaService
-from sirena_ui.workers.vision_types import KIND_FACE, Detection
+from sirena_ui.workers.object_announcer import ObjectAnnouncer
+from sirena_ui.workers.vision_types import KIND_FACE, KIND_OBJECT, Detection
 
 
 class _ToggleRow(QFrame):
@@ -126,6 +127,15 @@ class VisionScreen(QWidget):
         # per-person cooldown so we don't spam "Hello hari" on every
         # frame.
         self._greeter = FaceGreeter(parent=self)
+        # Speaks the current set of detected object labels when the
+        # operator clicks "Play Objects". Cached MP3s + 1.5 s cooldown
+        # so a double-click doesn't queue two overlapping playbacks.
+        self._announcer = ObjectAnnouncer(parent=self)
+        # Most recent object-only detections, refreshed every time
+        # `detections_changed` fires. Used by "Play Objects" so the
+        # button speaks whatever is on screen *right now*.
+        self._latest_object_labels: List[str] = []
+        self._play_objects_btn: Optional[QPushButton] = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -328,6 +338,25 @@ class VisionScreen(QWidget):
         snap.clicked.connect(self._on_snapshot)
         button_row.addWidget(snap)
 
+        # "Play Objects" speaks the current detector output via gTTS.
+        # Disabled by default; enabled the moment object detection sees
+        # at least one thing, so the operator can't tap it on an empty
+        # scene by accident.
+        play_row = QHBoxLayout()
+        play_row.setSpacing(8)
+        card.add_layout(play_row)
+        play = QPushButton("Play Objects")
+        play.setObjectName("primaryButton")
+        play.setCursor(Qt.PointingHandCursor)
+        play.setToolTip(
+            "Speak the names of the objects currently in view. "
+            "Turn on 'Object detection' first."
+        )
+        play.setEnabled(False)
+        play.clicked.connect(self._on_play_objects)
+        play_row.addWidget(play)
+        self._play_objects_btn = play
+
         return card
 
     # ---------- worker wiring ----------
@@ -346,6 +375,11 @@ class VisionScreen(QWidget):
             self._face_toggle.toggled.connect(worker.set_face_enabled)
         if self._object_toggle is not None:
             self._object_toggle.toggled.connect(worker.set_object_enabled)
+
+        # Surface "Play Objects" failures (no audio player, gTTS down,
+        # offline, ...) as a single warning dialog instead of a silent
+        # console log.
+        self._announcer.error.connect(self._on_announcer_error)
 
     def _on_face_enable_failed(self, reason: str) -> None:
         from PyQt5.QtWidgets import QMessageBox
@@ -483,6 +517,15 @@ class VisionScreen(QWidget):
             self._fps_pill.setText("\u2014")
 
     def _render_detections(self, detections: List[Detection]) -> None:
+        # Stash object labels for "Play Objects" before any early
+        # return -- we want the button to update even if the panel
+        # isn't ready yet (e.g. during teardown).
+        self._latest_object_labels = [
+            det.label for det in detections if det.kind == KIND_OBJECT
+        ]
+        if self._play_objects_btn is not None:
+            self._play_objects_btn.setEnabled(bool(self._latest_object_labels))
+
         layout = self._detections_layout
         if layout is None:
             return
@@ -561,6 +604,36 @@ class VisionScreen(QWidget):
             "Snapshot saved",
             f"Saved to:\n{path}",
         )
+
+    def _on_play_objects(self) -> None:
+        from PyQt5.QtWidgets import QMessageBox
+
+        # Take a copy in case `detections_changed` fires mid-call and
+        # mutates the list under our feet.
+        labels = list(self._latest_object_labels)
+        if not labels:
+            obj_on = (
+                self._object_toggle is not None
+                and self._object_toggle._btn.isChecked()  # noqa: SLF001
+            )
+            if not obj_on:
+                QMessageBox.information(
+                    self,
+                    "Play Objects",
+                    "Turn on 'Object detection' first, then point the "
+                    "camera at something to play.",
+                )
+                return
+            # Detection is on but the frame is empty - speak it so the
+            # operator gets feedback either way.
+            self._announcer.announce_empty()
+            return
+        self._announcer.announce(labels)
+
+    def _on_announcer_error(self, reason: str) -> None:
+        from PyQt5.QtWidgets import QMessageBox
+
+        QMessageBox.warning(self, "Play Objects", reason)
 
     # ---------- helpers ----------
 

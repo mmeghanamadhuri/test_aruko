@@ -269,6 +269,22 @@ This drops a `Sirena.desktop` launcher into both the application menu
 and the user's Desktop folder, pointing the Exec line at this repo and
 this venv. Re-run the script after moving the repo.
 
+After running the installer, double-click the **Sirena** icon on the
+Desktop (or pick *Sirena* from the application menu) and the GUI
+launches with the same environment as `python3 -m sirena_ui`. The
+launcher (`scripts/launch-sirena.sh`) sources `~/.profile` /
+`~/.bashrc`, adds the standard Jetson CUDA / cuDNN / TensorRT lib
+directories to `LD_LIBRARY_PATH`, forces `QT_QPA_PLATFORM=xcb`, and
+ensures the repo root is on `PYTHONPATH`. Anything it prints is
+appended to `~/.cache/sirena/launch.log`, and a fatal error pops a
+zenity / notify-send dialog so you don't get a silent dead icon.
+
+> **First time GNOME shows "Untrusted application launcher"?** That's
+> the file manager being cautious. Right-click the icon and pick
+> **Allow Launching** (older Ubuntu) or just run the installer again
+> -- it `chmod +x`'s the file and sets the `metadata::trusted` flag,
+> which is what GNOME / Nautilus look for.
+
 ## Launch from a terminal
 
 ```bash
