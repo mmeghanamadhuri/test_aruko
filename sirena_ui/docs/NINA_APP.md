@@ -327,9 +327,11 @@ export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
 export NINA_LIDAR_PORT=/dev/ttyUSB0
 export NINA_LIDAR_BAUD=115200
 
-# Ultrasonic ring (BCM pin numbers)
-export NINA_HCSR04_FL_TRIG=23 NINA_HCSR04_FL_ECHO=24
+# Ultrasonic ring (BCM pin numbers; defaults shown)
+export NINA_HCSR04_FL_TRIG=19 NINA_HCSR04_FL_ECHO=24
 export NINA_HCSR04_FR_TRIG=7  NINA_HCSR04_FR_ECHO=8
+export NINA_HCSR04_RL_TRIG=11 NINA_HCSR04_RL_ECHO=4
+export NINA_HCSR04_RR_TRIG=6  NINA_HCSR04_RR_ECHO=26
 # NINA_HCSR04_DISABLE=1 to skip the ring entirely
 
 # IR cliff

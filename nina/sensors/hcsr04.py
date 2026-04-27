@@ -8,14 +8,22 @@ unavailable in a clean way and the autonomy stack runs in simulation.
 
 Default mounting on Nina (BCM pin numbers, override via env vars):
 
-    front_left   trig=BCM23  echo=BCM24
+    front_left   trig=BCM19  echo=BCM24
     front_right  trig= BCM7  echo= BCM8
-    rear_left    trig=BCM27  echo=BCM4
+    rear_left    trig=BCM11  echo=BCM4
     rear_right   trig= BCM6  echo=BCM26
 
-These pin choices avoid the navigation pins (12/13/18/22/25/10) and
-the Dynamixel UART. Set env `NINA_HCSR04_DISABLE=1` to skip the array
-entirely.
+These pin choices avoid the navigation pins:
+    - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
+    - JYQD direction   :  BCM 25 (L), BCM 22 (R)
+    - JYQD signal-gate :  BCM 23 (L), BCM 27 (R)
+    - JYQD speed / VR  :  BCM 12 (L), BCM 13 (R)  (hardware PWM)
+    - Status LEDs      :  BCM 16, 20, 21
+    - E-stop           :  BCM 5, 17
+
+...and they avoid the Dynamixel UART (BCM 14 / 15) and the I2C bus the
+GP2Y0E02B IR cliff sensor uses (BCM 2 / 3). Set env
+`NINA_HCSR04_DISABLE=1` to skip the array entirely.
 """
 
 from __future__ import annotations
@@ -56,7 +64,9 @@ def _env_int(name: str, default: int) -> int:
 _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     _Channel(
         position="front_left",
-        trig=_env_int("NINA_HCSR04_FL_TRIG", 23),
+        # BCM 19 (physical pin 35) - free GPIO clear of the JYQD signal
+        # pins. The previous default (BCM 23) collided with L_SIGNAL.
+        trig=_env_int("NINA_HCSR04_FL_TRIG", 19),
         echo=_env_int("NINA_HCSR04_FL_ECHO", 24),
     ),
     _Channel(
@@ -66,7 +76,9 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     ),
     _Channel(
         position="rear_left",
-        trig=_env_int("NINA_HCSR04_RL_TRIG", 27),
+        # BCM 11 (physical pin 23) - free GPIO clear of the JYQD signal
+        # pins. The previous default (BCM 27) collided with R_SIGNAL.
+        trig=_env_int("NINA_HCSR04_RL_TRIG", 11),
         echo=_env_int("NINA_HCSR04_RL_ECHO", 4),
     ),
     _Channel(
