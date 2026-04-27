@@ -193,26 +193,36 @@ class NavigationManager:
     def forward(self, speed_percent: Optional[int] = None) -> None:
         speed = self._resolve_speed(speed_percent)
         self._command_both(self.DIR_FORWARD, speed)
-        log.info("forward speed=%s%%", speed)
+        log.info(
+            "forward speed=%s%% (L_DIR=BCM%d R_DIR=BCM%d)",
+            speed, self.config.pins.l_dir, self.config.pins.r_dir,
+        )
 
     def backward(self, speed_percent: Optional[int] = None) -> None:
         speed = self._resolve_speed(speed_percent)
         self._command_both(self.DIR_BACKWARD, speed)
-        log.info("backward speed=%s%%", speed)
+        log.info(
+            "backward speed=%s%% (L_DIR=BCM%d R_DIR=BCM%d)",
+            speed, self.config.pins.l_dir, self.config.pins.r_dir,
+        )
 
     def turn_left(self, speed_percent: Optional[int] = None,
                   duration: Optional[float] = None) -> None:
         speed = self._resolve_speed(speed_percent)
         self._timed_turn(left_dir=self.DIR_BACKWARD, right_dir=self.DIR_FORWARD,
                          speed=speed, duration=duration)
-        log.info("turn_left speed=%s%%", speed)
+        log.info(
+            "turn_left speed=%s%% (L=backward R=forward)", speed,
+        )
 
     def turn_right(self, speed_percent: Optional[int] = None,
                    duration: Optional[float] = None) -> None:
         speed = self._resolve_speed(speed_percent)
         self._timed_turn(left_dir=self.DIR_FORWARD, right_dir=self.DIR_BACKWARD,
                          speed=speed, duration=duration)
-        log.info("turn_right speed=%s%%", speed)
+        log.info(
+            "turn_right speed=%s%% (L=forward R=backward)", speed,
+        )
 
     def drive_continuous(self, left_dir: str, right_dir: str,
                          speed_percent: Optional[int] = None) -> None:
@@ -239,8 +249,11 @@ class NavigationManager:
                          target_speed=speed)
         self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
         self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
-        log.info("drive_continuous left=%s right=%s speed=%s%%",
-                 left_dir, right_dir, speed)
+        log.info(
+            "drive_continuous L=%s R=%s speed=%s%% (L_DIR=BCM%d R_DIR=BCM%d)",
+            left_dir, right_dir, speed,
+            self.config.pins.l_dir, self.config.pins.r_dir,
+        )
 
     def stop(self) -> None:
         self._control_speed(self.SIDE_LEFT, True, 0, self.DIR_FORWARD)
@@ -366,6 +379,12 @@ class NavigationManager:
         proven Pi setup: LEFT forward = HIGH, RIGHT forward = LOW (the
         right wheel is mirrored, so opposite logic level). Per-side
         invert_*_dir flags flip these for unusual motor mountings.
+
+        Emits a DEBUG-level log line (lifted to INFO when env var
+        ``NINA_NAV_LOG_DIR=1`` is set) so a user can confirm whether the
+        ZF/DIR pin actually toggles between forward and backward
+        commands. Useful when "all keys spin the wheels the same way"
+        because the JYQD ZF input isn't seeing any logic-level change.
         """
         pins = self.config.pins
         forward = (direction == self.DIR_FORWARD)
@@ -374,11 +393,25 @@ class NavigationManager:
             if self.config.invert_left_dir:
                 level = 0 if level else 1
             self._backend.write(pins.l_dir, level)
+            pin = pins.l_dir
         else:
             level = 0 if forward else 1
             if self.config.invert_right_dir:
                 level = 0 if level else 1
             self._backend.write(pins.r_dir, level)
+            pin = pins.r_dir
+        if os.environ.get("NINA_NAV_LOG_DIR", "").strip() in ("1", "true", "yes"):
+            log.info(
+                "DIR %s -> %s (BCM%d=%d, invert_%s=%s)",
+                side, direction, pin, level, side,
+                self.config.invert_left_dir if side == self.SIDE_LEFT
+                else self.config.invert_right_dir,
+            )
+        else:
+            log.debug(
+                "DIR %s -> %s (BCM%d=%d)",
+                side, direction, pin, level,
+            )
 
     def _apply_deadband(self, speed_percent: int) -> float:
         """Map user-facing 0..100 speed to actual PWM duty using deadband config."""
