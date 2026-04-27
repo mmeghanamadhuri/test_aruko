@@ -127,10 +127,14 @@ class AudioPanel(QWidget):
 
         card.add_stretch()
 
-        gtts_err = self._service.audio_generator_available()
-        if gtts_err:
-            self._generate_btn.setEnabled(False)
-            self._generate_btn.setToolTip(gtts_err)
+        # If gTTS isn't importable yet (typical on a fresh Jetson Nano)
+        # we keep the button clickable so the operator gets an actionable
+        # error dialog with install instructions on click, instead of a
+        # silent grey button. The same hint also lands in the tooltip and
+        # status label so it's visible without clicking.
+        self._gtts_err: Optional[str] = self._service.audio_generator_available()
+        if self._gtts_err:
+            self._generate_btn.setToolTip(self._gtts_err)
 
         self.refresh()
 
@@ -187,11 +191,19 @@ class AudioPanel(QWidget):
             self._text_edit.setText(name.replace("_", " ").title())
         self._offset_spin.setValue(offset)
         if not rel:
-            self._set_status(f"No audio clip for '{name}' yet. Generate one above.")
+            base = f"No audio clip for '{name}' yet. Generate one above."
         elif offset > 0:
-            self._set_status(f"Current: {rel}  -  offset {offset:.2f}s")
+            base = f"Current: {rel}  -  offset {offset:.2f}s"
         else:
-            self._set_status(f"Current: {rel}  -  no offset")
+            base = f"Current: {rel}  -  no offset"
+        if self._gtts_err:
+            self._set_status(
+                f"{base}\nNote: gTTS not installed - run "
+                "`pip install --user gTTS` on the Jetson to enable audio "
+                "generation."
+            )
+        else:
+            self._set_status(base)
         self._update_buttons_for_state()
 
     def _update_buttons_for_state(self) -> None:

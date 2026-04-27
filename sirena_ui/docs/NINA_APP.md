@@ -49,7 +49,7 @@ Cross-cutting design rules:
 
 - Hero card with the real Nina photo and current state pills
   (`Idle`, `Torque ON`, `Voice ready`).
-- Two prominent CTAs — **Play "namaste"** and **Record new** — that
+- Two prominent CTAs — **Play actions** and **Record new** — that
   jump straight into the Actions screen.
 - 8-tile **Quick actions** grid (Play action, Record, Audio, Drive,
   Vision, Map, Health, Settings) for one-tap navigation.

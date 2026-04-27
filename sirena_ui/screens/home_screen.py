@@ -159,7 +159,7 @@ class HomeScreen(QWidget):
         cta_col.setAlignment(Qt.AlignCenter)
         h.addLayout(cta_col)
 
-        play_btn = QPushButton("Play \"namaste\"")
+        play_btn = QPushButton("Play actions")
         play_btn.setObjectName("primaryButton")
         play_btn.setCursor(Qt.PointingHandCursor)
         play_btn.setMinimumWidth(200)

@@ -141,14 +141,17 @@ class AudioEditorDialog(QDialog):
 
         outer.addLayout(button_row)
 
+        # Keep the button clickable even when gTTS is missing (common on
+        # a fresh Jetson Nano). The click path surfaces the install hint
+        # via QMessageBox; we also show it in the status label and
+        # tooltip so it's visible at a glance.
         gtts_err = self._service.audio_generator_available()
         if gtts_err:
-            self._generate_btn.setEnabled(False)
             self._generate_btn.setToolTip(gtts_err)
             self._status_label.setText(
-                "gTTS not available - install with `pip install --user gTTS` to "
-                "enable audio generation. You can still edit the offset for "
-                "existing clips."
+                "gTTS not installed - click 'Generate && Save' for install "
+                "instructions, or run `pip install --user gTTS` on the "
+                "Jetson now. You can still edit the offset for existing clips."
             )
 
     # ---------- handlers ----------
