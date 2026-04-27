@@ -2,14 +2,34 @@
 NavigationManager for Nina (5ft wheeled bot).
 
 Drives 2x JYQD_V7.3E2 BLDC drivers (one per wheel) directly from the Jetson
-Nano. The pinout below mirrors the known-good Raspberry Pi build that is
-already shipping on the bot, so the same physical wiring harness moves
-between Pi and Jetson without resoldering.
+Nano. The pinout below matches Nina's hand-verified baseline harness; both
+JYQD VR pins land on the same Jetson hardware-PWM channel (BCM 13 / pin
+33), so this build runs in *shared-PWM* mode: one duty cycle controls
+both wheels at the same speed; differential motion (in-place pivot) comes
+from flipping the per-side Z/F pin, not from running the wheels at
+different speeds. This is intentional, and well-suited to the manual /
+"forward / backward / pivot-left / pivot-right" command vocabulary used
+on the bot today.
 
-  Left wheel : L_EN=BCM18 L_DIR=BCM25 L_SIGNAL=BCM23 L_PWM=BCM12 (HW PWM0)
-  Right wheel: R_EN=BCM10 R_DIR=BCM22 R_SIGNAL=BCM27 R_PWM=BCM13 (HW PWM2)
+  Left wheel : L_EN=BCM18 L_DIR=BCM22 L_SIGNAL=BCM24 L_PWM=BCM13
+  Right wheel: R_EN=BCM10 R_DIR=BCM12 R_SIGNAL=BCM27 R_PWM=BCM13 (shared)
   Status LED : RED=BCM21  GREEN=BCM20 BLUE=BCM16
   E-stop     : ESTOP1=BCM17 ESTOP2=BCM5
+
+Physical pins on the Jetson 40-pin header (cross-reference for the harness):
+
+           Function        BCM   Physical pin
+  Left   EL              18         12
+         Z/F             22         15
+         Signal          24         18
+         VR (PWM)        13         33    (shared with right)
+  Right  EL              10         19
+         Z/F             12         32
+         Signal          27         13
+         VR (PWM)        13         33    (shared with left)
+  Power  5 V supply       -          2 or 4
+         GND              -          30, 34, 39 (use one per JYQD; the
+                                                 third anchors the Jetson)
 
 JYQD_V7.3E2 "set" header layout (top -> bottom on the silkscreen):
   5V, EL, Signal, Z/F, VR, GND.
@@ -19,15 +39,13 @@ Pi build uses):
 
 - EL     -> per-side digital enable. LOW = brake / freewheel; HIGH = run.
 - Z/F    -> per-side direction. HIGH/LOW selects rotation.
-- VR     -> per-side analog speed input. We feed it Jetson hardware PWM on
-            BCM 12 / BCM 13 and the JYQD's input filter averages it into a
+- VR     -> shared analog speed input. We feed it Jetson hardware PWM on
+            BCM 13 and the JYQD's input filter averages it into a
             quasi-DC speed reference (0% duty = stop, 100% duty = max speed).
 - Signal -> per-side digital run-gate. **Must be HIGH for the chip to
-            commutate** even when EL=HIGH and VR has a voltage on it. We
-            drive it via BCM 23 (left) and BCM 27 (right). With this pin
-            floating the JYQD ignores Z/F changes and runs in a single
-            "limp" direction - this was the root cause of the long-running
-            "wheels only spin one way" debug saga in early-2026.
+            commutate** even when EL=HIGH and VR has a voltage on it. With
+            this pin floating the JYQD ignores Z/F changes and runs in a
+            single "limp" direction.
 
 The Pi build uses 3.3V GPIOs (no level shifter) and works fine: the JYQD's
 opto-isolated inputs trigger reliably at 3.3V. The Jetson Nano is also
@@ -37,6 +55,13 @@ without any shifter in line.
 Direction polarity (matches the Pi):
   Left  forward => L_DIR HIGH
   Right forward => R_DIR LOW   (right side is mirrored, so opposite level)
+
+Implication of the shared PWM channel:
+  set_wheels(left_speed=A, right_speed=B) with A != B will NOT produce
+  per-wheel speeds; the second set_duty() write wins and both wheels run
+  at B. Autonomy controllers that want true differential speed need to
+  re-pin to dedicated L_PWM / R_PWM hardware-PWM channels (BCM 12 and
+  BCM 13) - search this module for "shared-PWM" before changing.
 
 Hardware PWM on Jetson Nano is only available on:
 - BCM 12 (physical pin 32) -> PWM0
@@ -119,17 +144,18 @@ class NavigationConfig:
     invert_right_dir: bool = False
 
 
-# Default Nina pinout (BCM numbering). These match the working Raspberry Pi
-# build exactly - same physical wires can be moved between Pi and Jetson
-# without resoldering. PWM pins MUST be BCM 12 and BCM 13 to use hardware
-# PWM on Jetson Nano.
+# Default Nina pinout (BCM numbering). These match the hand-verified baseline
+# harness on the bot; both VR (PWM) wires land on the same Jetson hardware-PWM
+# channel (BCM 13 / pin 33). See module docstring for the shared-PWM
+# implications. PWM pins MUST be BCM 12 or BCM 13 to use hardware PWM on
+# Jetson Nano.
 DEFAULT_PINS = NavigationPins(
     l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
-    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
-    l_signal=int(os.environ.get("NINA_NAV_L_SIGNAL", "23")),
-    pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
+    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "22"))),
+    l_signal=int(os.environ.get("NINA_NAV_L_SIGNAL", "24")),
+    pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "13")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
-    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "22"))),
+    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "12"))),
     r_signal=int(os.environ.get("NINA_NAV_R_SIGNAL", "27")),
     pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,
@@ -189,16 +215,24 @@ class NavigationManager:
         self._backend.write(pins.r_signal, 0)
 
         self._is_initialized = True
+        pwm_mode = "SHARED" if pins.pwm_l == pins.pwm_r else "INDEPENDENT"
         log.info(
-            "NavigationManager initialized backend=%s pins: "
+            "NavigationManager initialized backend=%s pwm_mode=%s pins: "
             "L_EN=BCM%d L_ZF/DIR=BCM%d L_SIGNAL=BCM%d L_PWM=BCM%d "
             "R_EN=BCM%d R_ZF/DIR=BCM%d R_SIGNAL=BCM%d R_PWM=BCM%d "
             "invert_left=%s invert_right=%s",
-            self._backend.name,
+            self._backend.name, pwm_mode,
             pins.l_en, pins.l_dir, pins.l_signal, pins.pwm_l,
             pins.r_en, pins.r_dir, pins.r_signal, pins.pwm_r,
             self.config.invert_left_dir, self.config.invert_right_dir,
         )
+        if pwm_mode == "SHARED":
+            log.info(
+                "NavigationManager: shared-PWM mode (L_PWM == R_PWM == BCM%d). "
+                "Both wheels run at the same duty; differential motion comes "
+                "from per-side ZF/Signal toggling, not per-wheel speed.",
+                pins.pwm_l,
+            )
 
     def shutdown(self) -> None:
         if not self._is_initialized:
@@ -301,7 +335,27 @@ class NavigationManager:
 
         Speeds are 0..100 (deadband-corrected just like `forward()` /
         `backward()`). Pass speed=0 to coast that wheel.
+
+        Note: in shared-PWM mode (L_PWM == R_PWM, see module docstring),
+        passing left_speed != right_speed will silently end up with both
+        wheels at right_speed because the right write overwrites the
+        shared duty channel. We emit a one-shot warning the first time
+        this happens so the caller knows they need a per-wheel-PWM
+        rewire to get true differential speed.
         """
+        pins = self.config.pins
+        if (
+            pins.pwm_l == pins.pwm_r
+            and left_speed != right_speed
+            and not getattr(self, "_warned_shared_pwm_asymmetric", False)
+        ):
+            log.warning(
+                "set_wheels(left_speed=%s, right_speed=%s) but L_PWM == R_PWM "
+                "== BCM%d; both wheels will run at right_speed. Re-pin to "
+                "BCM 12 + BCM 13 for true differential speed.",
+                left_speed, right_speed, pins.pwm_l,
+            )
+            self._warned_shared_pwm_asymmetric = True
         self._control_speed(self.SIDE_LEFT, True, left_speed, left_dir)
         self._control_speed(self.SIDE_RIGHT, True, right_speed, right_dir)
 

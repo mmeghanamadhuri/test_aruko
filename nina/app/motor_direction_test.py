@@ -1,18 +1,21 @@
 """
 Standalone diagnostic: drive each wheel through every direction in turn
 so you can see (and probe with a multimeter) whether the JYQD ZF/DIR
-input is responding to the BCM 25 / BCM 22 logic levels.
+input is responding to the BCM logic levels.
 
 Use this when "all keyboard / D-pad keys spin the wheels in the same
 direction" -- the symptom of the direction pin not toggling. The
 script:
 
-  1. Initialises Nina's BLDC pinout (BCM 25 = L_DIR, BCM 22 = R_DIR,
-     BCM 12 = L_PWM, BCM 13 = R_PWM, BCM 18 = L_EN, BCM 10 = R_EN).
+  1. Initialises Nina's BLDC pinout (defaults: BCM 22 = L_DIR,
+     BCM 12 = R_DIR, BCM 13 = shared PWM, BCM 18 = L_EN, BCM 10 = R_EN,
+     BCM 24 = L_SIGNAL, BCM 27 = R_SIGNAL).
   2. For each wheel independently:
-       * Sets DIR HIGH, kicks PWM up to the requested speed for
-         3 seconds, stops.
-       * Sets DIR LOW, kicks PWM up for 3 seconds, stops.
+       * Disables the OTHER wheel (EL=Signal=LOW) so the shared PWM
+         channel can ramp up without dragging it along.
+       * Sets DIR for the wheel-under-test, kicks PWM up to the
+         requested speed for `--duration`, stops.
+       * Repeats with the opposite DIR.
   3. Logs both the configured polarity and the actual GPIO level it
      wrote so the operator can correlate "I expected forward but it
      went backward" with the env-var invert flags.
@@ -90,8 +93,11 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
     """Spin the chosen wheel forward for `duration` then backward for
     `duration`, with a 1 s park between phases.
 
-    The other wheel is held stopped (PWM 0, EL low) so any motion the
-    operator sees is unambiguously coming from the wheel under test.
+    The other wheel is held with EL=LOW *and* Signal=LOW so the JYQD
+    treats it as gated-off; any motion the operator sees is
+    unambiguously coming from the wheel under test, even on builds
+    where both VR pins share a single PWM channel (Nina's default
+    baseline harness, where L_PWM == R_PWM == BCM 13).
 
     Each phase prints the expected BCM logic level for the DIR pin AND
     the kick-start duty being used. This way the operator has a single
@@ -111,11 +117,12 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
         else (pins.r_dir, pins.r_en, pins.r_signal, pins.pwm_r)
     )
     dir_pin, en_pin, sig_pin, pwm_pin = side_pins
+    shared_pwm = pins.pwm_l == pins.pwm_r
 
     print(
         f"\n=== {side.upper()} wheel test "
         f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, SIGNAL=BCM{sig_pin}, "
-        f"PWM=BCM{pwm_pin}) ==="
+        f"PWM=BCM{pwm_pin}{', shared' if shared_pwm else ''}) ==="
     )
 
     for label, direction in (
@@ -127,7 +134,10 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
             f"  -> {label} for {duration:.1f}s at {speed}% duty "
             f"(expect BCM{dir_pin} = {expected})"
         )
-        nav._control_speed(other, True, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
+        # Gate the OTHER wheel off (EL=Signal=LOW) so the shared PWM
+        # channel can spin up the wheel-under-test without dragging
+        # the other one along.
+        nav._control_speed(other, False, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
         nav._set_direction(side, direction)  # noqa: SLF001
         time.sleep(0.05)
         # Brief kick-start to break static friction; same idea as

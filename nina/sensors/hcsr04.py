@@ -8,16 +8,16 @@ unavailable in a clean way and the autonomy stack runs in simulation.
 
 Default mounting on Nina (BCM pin numbers, override via env vars):
 
-    front_left   trig=BCM19  echo=BCM24
+    front_left   trig=BCM19  echo= BCM9
     front_right  trig= BCM7  echo= BCM8
-    rear_left    trig=BCM11  echo=BCM4
+    rear_left    trig=BCM11  echo= BCM4
     rear_right   trig= BCM6  echo=BCM26
 
-These pin choices avoid the navigation pins:
+These pin choices avoid the navigation pins for Nina's baseline harness:
     - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
-    - JYQD direction   :  BCM 25 (L), BCM 22 (R)
-    - JYQD signal-gate :  BCM 23 (L), BCM 27 (R)
-    - JYQD speed / VR  :  BCM 12 (L), BCM 13 (R)  (hardware PWM)
+    - JYQD direction   :  BCM 22 (L), BCM 12 (R)
+    - JYQD signal-gate :  BCM 24 (L), BCM 27 (R)
+    - JYQD speed / VR  :  BCM 13 (shared, hardware PWM2)
     - Status LEDs      :  BCM 16, 20, 21
     - E-stop           :  BCM 5, 17
 
@@ -64,10 +64,12 @@ def _env_int(name: str, default: int) -> int:
 _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     _Channel(
         position="front_left",
-        # BCM 19 (physical pin 35) - free GPIO clear of the JYQD signal
-        # pins. The previous default (BCM 23) collided with L_SIGNAL.
+        # BCM 19 (physical pin 35) for trig and BCM 9 (physical pin 21)
+        # for echo - both free GPIOs clear of the navigation pins. The
+        # previous defaults (trig=BCM 23, echo=BCM 24) collided with
+        # the JYQD L_SIGNAL.
         trig=_env_int("NINA_HCSR04_FL_TRIG", 19),
-        echo=_env_int("NINA_HCSR04_FL_ECHO", 24),
+        echo=_env_int("NINA_HCSR04_FL_ECHO", 9),
     ),
     _Channel(
         position="front_right",
