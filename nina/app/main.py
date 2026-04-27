@@ -63,6 +63,7 @@ def build_navigation(settings) -> NavigationManager:
         kick_start_duration_sec=settings.navigation.kick_start_duration_sec,
         invert_left_dir=settings.navigation.invert_left_dir,
         invert_right_dir=settings.navigation.invert_right_dir,
+        dir_change_settle_sec=settings.navigation.dir_change_settle_sec,
     )
     return NavigationManager(nav_config)
 

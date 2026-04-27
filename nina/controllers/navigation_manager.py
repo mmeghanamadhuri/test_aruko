@@ -74,7 +74,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 from nina.controllers.gpio_backend import GpioBackend, create_backend
 
@@ -142,6 +142,12 @@ class NavigationConfig:
     # Flip these if a side spins the opposite of expected.
     invert_left_dir: bool = False
     invert_right_dir: bool = False
+    # Time the JYQD needs in EL=LOW after stop() before the next EL rising
+    # edge will reliably re-sample the ZF/DIR pin. The V7.3E2 in
+    # VR-with-Signal-gate mode behaves this way; bumping the rotor takes
+    # ~150-200 ms even after PWM is zero. Override via NINA_NAV_DIR_SETTLE
+    # if your specific motors / firmware need more time.
+    dir_change_settle_sec: float = 0.20
 
 
 # Default Nina pinout (BCM numbering). These match the hand-verified baseline
@@ -181,6 +187,14 @@ class NavigationManager:
         self.config = config or NavigationConfig(pins=DEFAULT_PINS)
         self._backend: GpioBackend = backend or create_backend(self.config.backend_name)
         self._is_initialized = False
+        # Tracks the last direction we wrote to each side so set_wheels()
+        # (autonomy 5-20 Hz hot path) can force a clean EL low->high
+        # transition only when direction actually changes, instead of on
+        # every tick.
+        self._last_dir: Dict[str, Optional[str]] = {
+            self.SIDE_LEFT: None,
+            self.SIDE_RIGHT: None,
+        }
 
     def initialize(self) -> None:
         if self._is_initialized:
@@ -315,10 +329,27 @@ class NavigationManager:
         )
 
     def stop(self) -> None:
-        self._control_speed(self.SIDE_LEFT, True, 0, self.DIR_FORWARD)
-        self._control_speed(self.SIDE_RIGHT, True, 0, self.DIR_FORWARD)
-        time.sleep(self.config.settle_delay_sec)
-        log.info("stop")
+        """Hard-stop both wheels: EL=Signal=LOW, PWM=0.
+
+        We deliberately drive EL *low* (not just PWM=0) because the
+        JYQD V7.3E2 in VR-with-Signal-gate mode latches the ZF/DIR pin
+        on the EL rising edge - any caller that wants to change direction
+        after stop() needs a clean EL low->high transition so the chip
+        re-samples DIR. A 'soft stop' that only zeroes PWM would silently
+        keep the previous direction and was the root cause of "all keys
+        spin the wheels the same way" in early-2026.
+
+        Also tracks the per-side direction so set_wheels() (the autonomy
+        hot path) knows the chip is fully reset and the next call needs
+        a fresh EL rising edge.
+        """
+        self._control_speed(self.SIDE_LEFT, False, 0, self.DIR_FORWARD)
+        self._control_speed(self.SIDE_RIGHT, False, 0, self.DIR_FORWARD)
+        self._last_dir[self.SIDE_LEFT] = None
+        self._last_dir[self.SIDE_RIGHT] = None
+        time.sleep(max(self.config.settle_delay_sec,
+                       self.config.dir_change_settle_sec))
+        log.info("stop (EL=Signal=LOW, dir latches cleared)")
 
     def set_wheels(
         self,
@@ -342,6 +373,12 @@ class NavigationManager:
         shared duty channel. We emit a one-shot warning the first time
         this happens so the caller knows they need a per-wheel-PWM
         rewire to get true differential speed.
+
+        On a per-side direction change we also force a brief EL/Signal
+        low->high transition so the JYQD V7.3E2 re-samples the ZF/DIR
+        pin (the chip latches direction at the EL rising edge in
+        VR-with-Signal-gate mode). Same direction across consecutive
+        calls hits the fast path and just nudges PWM duty.
         """
         pins = self.config.pins
         if (
@@ -356,8 +393,20 @@ class NavigationManager:
                 left_speed, right_speed, pins.pwm_l,
             )
             self._warned_shared_pwm_asymmetric = True
-        self._control_speed(self.SIDE_LEFT, True, left_speed, left_dir)
-        self._control_speed(self.SIDE_RIGHT, True, right_speed, right_dir)
+        self._apply_wheel(self.SIDE_LEFT, left_dir, left_speed)
+        self._apply_wheel(self.SIDE_RIGHT, right_dir, right_speed)
+
+    def _apply_wheel(self, side: str, direction: str, speed: int) -> None:
+        """Set one wheel's direction + speed. If the direction differs
+        from the last command for this side, drop EL=Signal=LOW first,
+        let the JYQD settle, then bring it back high so the chip
+        re-samples the ZF/DIR pin. Otherwise just write the new duty.
+        """
+        prev = self._last_dir.get(side)
+        if prev is not None and prev != direction:
+            self._control_speed(side, False, 0, prev)
+            time.sleep(self.config.dir_change_settle_sec)
+        self._control_speed(side, True, speed, direction)
 
     def emergency_stop(self) -> None:
         log.warning("EMERGENCY STOP requested")
@@ -378,16 +427,25 @@ class NavigationManager:
         log.info("brake (EL disable) engaged - motors will coast to stop")
 
     def release_brake(self) -> None:
-        """Re-enable EL + Signal on both drivers so the JYQD can commutate
-        as soon as a non-zero PWM duty appears on VR. This does NOT spin
-        the motors by itself - it just removes the brake/gate; speed is
-        still 0% until _control_speed() is called with a target speed."""
-        pins = self.config.pins
-        self._backend.write(pins.l_en, 1)
-        self._backend.write(pins.r_en, 1)
-        self._backend.write(pins.l_signal, 1)
-        self._backend.write(pins.r_signal, 1)
-        log.info("brake released (EL + Signal re-enabled)")
+        """Logical "brake off" - kept as a no-op stub so the GUI's
+        Release-Brake button still has something to call.
+
+        On the JYQD V7.3E2 in VR-with-Signal-gate mode, direction is
+        latched on the EL rising edge. If we pre-emptively raised EL
+        here (the way an earlier revision did) the next forward/backward
+        command would change ZF *after* the chip had already locked the
+        previous direction, and the motors would refuse to reverse.
+        Instead we leave EL/Signal LOW; the next forward()/backward()/
+        turn_*() call will raise EL atomically with the correct ZF
+        level set, which is what the chip actually needs.
+
+        We do clear the per-side direction latch so the very next
+        motion command always looks like a fresh first-start to
+        _apply_wheel().
+        """
+        self._last_dir[self.SIDE_LEFT] = None
+        self._last_dir[self.SIDE_RIGHT] = None
+        log.info("brake released (EL stays LOW until next motion command)")
 
     def set_status(self, mode: str) -> None:
         if not self._is_initialized:
@@ -464,6 +522,10 @@ class NavigationManager:
             self._backend.write(pins.r_en, gate_level)
             self._backend.write(pins.r_signal, gate_level)
             self._backend.set_duty(pins.pwm_r, duty_percent)
+        # Track the last direction we *committed* (i.e. EL went HIGH),
+        # so set_wheels()/_apply_wheel() can detect transitions. EL=LOW
+        # writes (enable=False) clear the latch.
+        self._last_dir[side] = direction if enable else None
 
     def _set_direction(self, side: str, direction: str) -> None:
         """Write the direction pin for the given side. Defaults match the
@@ -518,7 +580,12 @@ class NavigationManager:
         """Drive both EL and Signal for the requested side. We keep these
         two in lock-step everywhere because the JYQD V7.3E2 only commutates
         when EL=HIGH AND Signal=HIGH; toggling just one leaves the chip in
-        a half-state that ignores Z/F changes."""
+        a half-state that ignores Z/F changes.
+
+        Driving EL low also clears the per-side direction latch so the
+        next set_wheels()/_apply_wheel() call knows it has to provide a
+        fresh EL rising edge for the JYQD to re-sample DIR.
+        """
         pins = self.config.pins
         en_pin, sig_pin = (
             (pins.l_en, pins.l_signal)
@@ -528,6 +595,8 @@ class NavigationManager:
         level = 1 if enable else 0
         self._backend.write(en_pin, level)
         self._backend.write(sig_pin, level)
+        if not enable:
+            self._last_dir[side] = None
 
     def _set_status_led(self, red: bool = False,
                         green: bool = False, blue: bool = False) -> None:

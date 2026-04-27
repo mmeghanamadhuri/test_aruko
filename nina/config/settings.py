@@ -22,6 +22,7 @@ class NavigationSettings:
     kick_start_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
+    dir_change_settle_sec: float
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,12 @@ def load_settings(repo_root: Path) -> NinaSettings:
         kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.5")),
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
+        # JYQD V7.3E2 in VR-with-Signal-gate mode latches the ZF/DIR pin
+        # on the EL rising edge - we need a brief EL=LOW window between
+        # direction changes so the chip re-samples DIR. 0.20 s is the
+        # tested sweet spot; bump to 0.30+ if a wheel ever ignores a
+        # direction reversal.
+        dir_change_settle_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE", "0.20")),
     )
 
     autonomy = AutonomySettings(

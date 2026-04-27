@@ -60,6 +60,7 @@ def main() -> None:
             kick_start_duration_sec=nav_settings.kick_start_duration_sec,
             invert_left_dir=nav_settings.invert_left_dir,
             invert_right_dir=nav_settings.invert_right_dir,
+            dir_change_settle_sec=nav_settings.dir_change_settle_sec,
         )
     )
     try:

@@ -70,6 +70,7 @@ def _build_nav() -> NavigationManager:
         kick_start_duration_sec=settings.kick_start_duration_sec,
         invert_left_dir=settings.invert_left_dir,
         invert_right_dir=settings.invert_right_dir,
+        dir_change_settle_sec=settings.dir_change_settle_sec,
     )
     return NavigationManager(cfg)
 
@@ -138,6 +139,13 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
         # channel can spin up the wheel-under-test without dragging
         # the other one along.
         nav._control_speed(other, False, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
+        # Hard-stop THIS wheel so the JYQD sees a clean EL=Signal=LOW
+        # window before we change direction. Without this drop, the
+        # chip latches direction on the previous EL rising edge and
+        # ignores the new ZF level - which is the exact cause of
+        # "wheel spins the same way for both phases".
+        nav._control_speed(side, False, 0, direction)  # noqa: SLF001
+        time.sleep(nav.config.dir_change_settle_sec)
         nav._set_direction(side, direction)  # noqa: SLF001
         time.sleep(0.05)
         # Brief kick-start to break static friction; same idea as
@@ -218,12 +226,23 @@ def main() -> int:
             _exercise_side(nav, NavigationManager.SIDE_RIGHT, args.speed, args.duration)
 
         print(
-            "\nFinished. If a wheel went the SAME way for both FORWARD "
-            "and BACKWARD phases above, its ZF/DIR pin is not being\n"
-            "honoured by the JYQD: re-check the BCM"
-            f" {nav.config.pins.l_dir} / BCM {nav.config.pins.r_dir} wires "
-            "or flip the polarity with\n"
-            "  NINA_NAV_INVERT_LEFT=1   or   NINA_NAV_INVERT_RIGHT=1"
+            "\nFinished. The JYQD now sees a clean EL=Signal=LOW window\n"
+            "between FORWARD and BACKWARD phases (dir_change_settle="
+            f"{nav.config.dir_change_settle_sec:.2f}s), so each direction\n"
+            "phase gets its own EL rising edge. If a wheel STILL spins the\n"
+            "same way for both phases above:\n"
+            "  1. With a multimeter on the JYQD's ZF terminal, check that\n"
+            "     the voltage actually toggles between phases (~3.3 V vs 0 V).\n"
+            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} (pin 15).\n"
+            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} (pin 32).\n"
+            "  2. If the JYQD ZF pad doesn't track the Jetson pin, the\n"
+            "     wire/level-shifter is at fault.\n"
+            "  3. If the ZF pad DOES toggle but the wheel still doesn't\n"
+            "     reverse, the JYQD silkscreen labels probably differ on\n"
+            "     this rev (some V7.3E2 boards label it 'F/R' and need an\n"
+            "     edge, not a level - try NINA_NAV_DIR_SETTLE=0.50 first).\n"
+            "  4. If only the polarity is wrong (e.g. FORWARD spins backward),\n"
+            "     export NINA_NAV_INVERT_LEFT=1 / NINA_NAV_INVERT_RIGHT=1."
         )
     except KeyboardInterrupt:
         print("\n[INTERRUPT] aborted by user")
