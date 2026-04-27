@@ -31,6 +31,7 @@ class DPad(QWidget):
         self._stop = QPushButton("STOP")
         self._stop.setObjectName("dpadStop")
         self._stop.setCursor(Qt.PointingHandCursor)
+        self._stop.setFocusPolicy(Qt.NoFocus)
         self._stop.clicked.connect(self.stop_clicked.emit)
 
         grid.addWidget(self._fwd,   0, 1)
@@ -43,6 +44,10 @@ class DPad(QWidget):
         btn = QPushButton(label)
         btn.setObjectName("dpadButton")
         btn.setCursor(Qt.PointingHandCursor)
+        # Don't steal keyboard focus on click - the parent Drive screen
+        # listens for WASD / Space / Esc and needs to keep focus while
+        # the operator pokes at the on-screen D-pad with a mouse.
+        btn.setFocusPolicy(Qt.NoFocus)
         btn.pressed.connect(lambda d=direction: self.direction_pressed.emit(d))
         btn.released.connect(lambda d=direction: self.direction_released.emit(d))
         return btn
