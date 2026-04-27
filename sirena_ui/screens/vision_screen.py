@@ -339,11 +339,60 @@ class VisionScreen(QWidget):
         worker.fps_changed.connect(self._on_fps)
         worker.status_changed.connect(self._apply_status)
         worker.faces_recognized.connect(self._on_faces_recognized)
+        worker.face_enable_failed.connect(self._on_face_enable_failed)
+        worker.object_enable_failed.connect(self._on_object_enable_failed)
 
         if self._face_toggle is not None:
             self._face_toggle.toggled.connect(worker.set_face_enabled)
         if self._object_toggle is not None:
             self._object_toggle.toggled.connect(worker.set_object_enabled)
+
+    def _on_face_enable_failed(self, reason: str) -> None:
+        from PyQt5.QtWidgets import QMessageBox
+
+        if self._face_toggle is not None and self._face_toggle._btn.isChecked():  # noqa: SLF001
+            # Block the toggled signal while we revert so we don't
+            # round-trip another set_face_enabled(False) command.
+            blocker = self._face_toggle._btn.blockSignals(True)  # noqa: SLF001
+            try:
+                self._face_toggle._btn.setChecked(False)  # noqa: SLF001
+                self._face_toggle._btn.setText("OFF")  # noqa: SLF001
+            finally:
+                self._face_toggle._btn.blockSignals(blocker)  # noqa: SLF001
+        QMessageBox.warning(
+            self,
+            "Face detection unavailable",
+            "Couldn't start face detection.\n\n"
+            f"{reason}\n\n"
+            "Check the terminal log for the full traceback. The most "
+            "common cause is OpenCV being too old (need >= 4.5.4) or "
+            "the YuNet ONNX failing to download."
+        )
+
+    def _on_object_enable_failed(self, reason: str) -> None:
+        from PyQt5.QtWidgets import QMessageBox
+
+        if self._object_toggle is not None and self._object_toggle._btn.isChecked():  # noqa: SLF001
+            blocker = self._object_toggle._btn.blockSignals(True)  # noqa: SLF001
+            try:
+                self._object_toggle._btn.setChecked(False)  # noqa: SLF001
+                self._object_toggle._btn.setText("OFF")  # noqa: SLF001
+            finally:
+                self._object_toggle._btn.blockSignals(blocker)  # noqa: SLF001
+        QMessageBox.warning(
+            self,
+            "Object detection unavailable",
+            "Couldn't start object detection.\n\n"
+            f"{reason}\n\n"
+            "On Jetson Nano this is usually one of:\n"
+            "  - 'ultralytics' not installed for this Python\n"
+            "      python3 -m pip install --user ultralytics\n"
+            "  - PyTorch CUDA wheel missing for your JetPack\n"
+            "  - The first TensorRT FP16 export ran out of RAM "
+            "(add 4 GB swap, see README)\n\n"
+            "Tip: launch the app from a terminal to see the full "
+            "Python traceback in stderr."
+        )
 
     def _on_faces_recognized(self, names: list) -> None:
         # FaceGreeter handles per-name cooldown internally, so we can
@@ -388,10 +437,35 @@ class VisionScreen(QWidget):
         camera_open = bool(status.get("camera_open", False))
         message = str(status.get("message", "") or "")
         self._connected = camera_open
-        if camera_open:
+
+        # Categorise the message so the pill can surface detector
+        # errors / loading announces *even when* the camera itself is
+        # healthy. The previous implementation always painted
+        # "USB camera connected" once camera_open was True, which
+        # silently swallowed messages like
+        # "Object: ImportError: No module named 'ultralytics'".
+        msg_lower = message.lower()
+        is_detector_error = (
+            message.startswith("Object:")
+            or message.startswith("Face:")
+            or "opencv" in msg_lower
+            or "ultralytics" in msg_lower
+        )
+        is_loading = "loading" in msg_lower
+
+        if camera_open and is_detector_error:
+            self._cam_pill.setText("Detector unavailable")
+            self._cam_pill.set_kind(Pill.KIND_WARN)
+            self._cam_pill.setToolTip(message)
+        elif camera_open and is_loading:
+            self._cam_pill.setText(message)
+            self._cam_pill.set_kind(Pill.KIND_NEUTRAL)
+            self._cam_pill.setToolTip("")
+        elif camera_open:
             self._cam_pill.setText("USB camera connected")
             self._cam_pill.set_kind(Pill.KIND_OK)
-        elif message and "OpenCV" in message or "ultralytics" in message.lower():
+            self._cam_pill.setToolTip("")
+        elif is_detector_error:
             self._cam_pill.setText("Vision unavailable")
             self._cam_pill.set_kind(Pill.KIND_WARN)
             self._cam_pill.setToolTip(message)

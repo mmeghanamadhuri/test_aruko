@@ -527,7 +527,9 @@ class VisionPipeline:
     # Detector toggles
     # ------------------------------------------------------------------
 
-    def set_face_enabled(self, enabled: bool) -> None:
+    def set_face_enabled(self, enabled: bool) -> Optional[str]:
+        """Toggle face detection. Returns None on success, or a
+        human-readable error message if init fails."""
         with self._lock:
             if enabled and self._face is None:
                 try:
@@ -539,10 +541,11 @@ class VisionPipeline:
                     self._status.face_ready = True
                 except Exception as exc:
                     log.warning("Face detector init failed: %s", exc)
-                    self._status.message = f"Face: {exc}"
+                    err_msg = f"{type(exc).__name__}: {exc}"
+                    self._status.message = f"Face: {err_msg}"
                     self._face_enabled = False
                     self._status.face_ready = False
-                    return
+                    return err_msg
             # SFace is best-effort -- if the download / load fails, face
             # *detection* still works, the per-face label just stays
             # generic ("face") instead of carrying a name.
@@ -554,8 +557,13 @@ class VisionPipeline:
                     log.warning("Face recognizer unavailable: %s", exc)
                     self._sface = None
             self._face_enabled = bool(enabled)
+            return None
 
-    def set_object_enabled(self, enabled: bool) -> None:
+    def set_object_enabled(self, enabled: bool) -> Optional[str]:
+        """Toggle object detection. Returns None on success, or a
+        human-readable error message if init fails (so the GUI can
+        pop a dialog and bounce the toggle back to OFF).
+        """
         with self._lock:
             if enabled and self._object is None:
                 try:
@@ -568,11 +576,13 @@ class VisionPipeline:
                     self._status.object_ready = True
                 except Exception as exc:
                     log.warning("Object detector init failed: %s", exc)
-                    self._status.message = f"Object: {exc}"
+                    err_msg = f"{type(exc).__name__}: {exc}"
+                    self._status.message = f"Object: {err_msg}"
                     self._object_enabled = False
                     self._status.object_ready = False
-                    return
+                    return err_msg
             self._object_enabled = bool(enabled)
+            return None
 
     # ------------------------------------------------------------------
     # Frame loop

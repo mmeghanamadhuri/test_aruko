@@ -71,6 +71,12 @@ class VisionWorker(QObject):
     # Lifecycle for an enrollment session triggered via `enroll_face`.
     enrollment_progress = pyqtSignal(int, int)  # samples, target
     enrollment_finished = pyqtSignal(dict)      # asdict(EnrollmentResult)
+    # Emitted when toggling a detector ON failed to initialise its
+    # model (ultralytics missing, ONNX download failed, etc). The
+    # screen uses these to pop an explanatory dialog AND bounce the
+    # corresponding toggle back to OFF so it doesn't lie about state.
+    face_enable_failed = pyqtSignal(str)
+    object_enable_failed = pyqtSignal(str)
 
     def __init__(
         self,
@@ -257,8 +263,10 @@ class VisionWorker(QObject):
         # pattern symmetric with object detection).
         if enabled and not self._pipeline.status().face_ready:
             self._announce("Loading face detector...")
-        self._pipeline.set_face_enabled(enabled)
+        err = self._pipeline.set_face_enabled(enabled)
         self._emit_status(self._pipeline.status())
+        if err and enabled:
+            self.face_enable_failed.emit(err)
 
     def _cmd_set_object(self, enabled: bool) -> None:
         # YOLO + TRT export can take minutes the first time on Jetson;
@@ -268,8 +276,10 @@ class VisionWorker(QObject):
             self._announce(
                 "Loading object detector (first run may take a few minutes)..."
             )
-        self._pipeline.set_object_enabled(enabled)
+        err = self._pipeline.set_object_enabled(enabled)
         self._emit_status(self._pipeline.status())
+        if err and enabled:
+            self.object_enable_failed.emit(err)
 
     def _cmd_enroll(self, name: str, target_samples: int) -> None:
         self._announce(f"Capturing face samples for '{name}'...")
