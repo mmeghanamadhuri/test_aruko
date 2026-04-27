@@ -282,6 +282,83 @@ def _ensure_yunet_model() -> Path:
 # ======================================================================
 
 
+def _patch_torch_load_for_ultralytics() -> None:
+    """PyTorch 2.6 flipped ``torch.load(..., weights_only=...)`` from
+    ``False`` to ``True`` by default, which causes Ultralytics' YOLO
+    checkpoint loading to fail with::
+
+        WeightsUnpickler error: Unsupported global:
+            GLOBAL ultralytics.nn.tasks.DetectionModel ...
+
+    The yolov8n.pt we ship comes from the official Ultralytics CDN and
+    is cached under ``nina/models/weights/``, so it's safe to load in
+    full-pickle mode. We patch ``torch.load`` once, idempotently, to
+    default ``weights_only=False`` if the caller hasn't requested
+    otherwise. We also try ``add_safe_globals`` for the common
+    Ultralytics classes, so callers that DO pass ``weights_only=True``
+    keep working too.
+    """
+    try:
+        import torch  # type: ignore
+    except ImportError:
+        return
+
+    if not getattr(torch.load, "_nina_weights_only_compat", False):
+        original_load = torch.load
+
+        def _patched_load(*args, **kwargs):  # type: ignore[no-untyped-def]
+            kwargs.setdefault("weights_only", False)
+            return original_load(*args, **kwargs)
+
+        _patched_load._nina_weights_only_compat = True  # type: ignore[attr-defined]
+        torch.load = _patched_load  # type: ignore[assignment]
+
+    add_safe_globals = getattr(
+        getattr(torch, "serialization", None), "add_safe_globals", None
+    )
+    if add_safe_globals is None:
+        return  # PyTorch < 2.6, nothing else to do
+
+    safe: list = []
+    try:
+        from ultralytics.nn import tasks as _tasks  # type: ignore
+
+        for cls_name in (
+            "DetectionModel",
+            "SegmentationModel",
+            "PoseModel",
+            "ClassificationModel",
+            "OBBModel",
+        ):
+            cls = getattr(_tasks, cls_name, None)
+            if cls is not None:
+                safe.append(cls)
+    except Exception:
+        pass
+    try:
+        from ultralytics.nn import modules as _mods  # type: ignore
+
+        for cls_name in (
+            "Conv",
+            "C2f",
+            "SPPF",
+            "Bottleneck",
+            "Concat",
+            "Detect",
+            "DFL",
+        ):
+            cls = getattr(_mods, cls_name, None)
+            if cls is not None:
+                safe.append(cls)
+    except Exception:
+        pass
+    if safe:
+        try:
+            add_safe_globals(safe)
+        except Exception:
+            pass
+
+
 class _YoloObjectDetector:
     """Ultralytics YOLOv8n with optional TensorRT acceleration.
 
@@ -297,6 +374,8 @@ class _YoloObjectDetector:
         confidence: float = 0.4,
         prefer_tensorrt: bool = True,
     ) -> None:
+        _patch_torch_load_for_ultralytics()
+
         try:
             from ultralytics import YOLO  # type: ignore
         except ImportError as exc:
