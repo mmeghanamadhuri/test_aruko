@@ -23,6 +23,7 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -118,8 +119,7 @@ class VisionScreen(QWidget):
         self._object_toggle: Optional[_ToggleRow] = None
         self._track_toggle: Optional[_ToggleRow] = None
         self._viewport_label: Optional[QLabel] = None
-        self._viewport_glyph: Optional[QLabel] = None
-        self._viewport_msg: Optional[QLabel] = None
+        self._viewport_placeholder: Optional[QWidget] = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(20, 20, 20, 20)
@@ -182,32 +182,53 @@ class VisionScreen(QWidget):
         viewport = QFrame()
         viewport.setObjectName("cardSubtle")
         viewport.setMinimumHeight(420)
+        viewport.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # IMPORTANT: do NOT call setAlignment() on this layout. With an
+        # alignment set, QBoxLayout hands children their sizeHint instead
+        # of stretching them, and a QLabel's sizeHint follows the pixmap.
+        # The pixmap is scaled to the label size in `_on_frame`, so an
+        # alignment-centered label collapses to a "dot" on first paint.
         v = QVBoxLayout(viewport)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setAlignment(Qt.AlignCenter)
-        glyph = QLabel("\u25CE")
+        v.setSpacing(0)
+
+        # Placeholder shown until the first frame arrives. It's a self-
+        # contained widget that centers its own children, so we don't
+        # need an alignment on the parent layout (see comment above).
+        placeholder = QWidget(viewport)
+        placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        ph_layout = QVBoxLayout(placeholder)
+        ph_layout.setContentsMargins(0, 0, 0, 0)
+        ph_layout.setSpacing(8)
+        ph_layout.addStretch(1)
+        glyph = QLabel("\u25CE", placeholder)
         glyph.setStyleSheet(
             "color: #c4c4c8; font-size: 96px; background-color: transparent;"
         )
         glyph.setAlignment(Qt.AlignCenter)
-        v.addWidget(glyph)
+        ph_layout.addWidget(glyph)
         msg = QLabel(
             "Plug in a USB camera and the live feed will appear here.\n"
-            "Detected faces and objects will be drawn on top."
+            "Detected faces and objects will be drawn on top.",
+            placeholder,
         )
         msg.setStyleSheet(
             "color: #8e8e93; font-size: 13px; background-color: transparent;"
         )
         msg.setAlignment(Qt.AlignCenter)
-        v.addWidget(msg)
-        self._viewport_glyph = glyph
-        self._viewport_msg = msg
+        ph_layout.addWidget(msg)
+        ph_layout.addStretch(1)
+        v.addWidget(placeholder, stretch=1)
+        self._viewport_placeholder = placeholder
 
-        # Stacked under the placeholder text - swapped in once we get
-        # our first frame, swapped out again when the camera releases.
+        # Live feed label - swapped in once the first frame arrives.
+        # Ignored size policy so the (potentially huge) pixmap can't
+        # feed back into the layout and balloon or collapse the card.
         feed = QLabel(viewport)
         feed.setAlignment(Qt.AlignCenter)
         feed.setStyleSheet("background-color: transparent;")
+        feed.setMinimumSize(320, 240)
+        feed.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         feed.hide()
         v.addWidget(feed, stretch=1)
         self._viewport_label = feed
@@ -318,12 +339,17 @@ class VisionScreen(QWidget):
     def _on_frame(self, image: QImage) -> None:
         if self._viewport_label is None:
             return
-        if self._viewport_glyph is not None and self._viewport_glyph.isVisible():
-            self._viewport_glyph.hide()
-            if self._viewport_msg is not None:
-                self._viewport_msg.hide()
+        if (
+            self._viewport_placeholder is not None
+            and self._viewport_placeholder.isVisible()
+        ):
+            self._viewport_placeholder.hide()
             self._viewport_label.show()
-        # Scale to the label's size while preserving aspect ratio.
+        # Scale to the label's current size while preserving aspect
+        # ratio. With QSizePolicy.Ignored the label fills whatever the
+        # parent layout grants it, so this gives a frame that actually
+        # uses the viewport instead of collapsing to the pixmap's
+        # natural size.
         target = self._viewport_label.size()
         if target.width() <= 0 or target.height() <= 0:
             self._viewport_label.setPixmap(QPixmap.fromImage(image))
@@ -358,10 +384,8 @@ class VisionScreen(QWidget):
         if not camera_open and self._viewport_label is not None:
             self._viewport_label.clear()
             self._viewport_label.hide()
-            if self._viewport_glyph is not None:
-                self._viewport_glyph.show()
-            if self._viewport_msg is not None:
-                self._viewport_msg.show()
+            if self._viewport_placeholder is not None:
+                self._viewport_placeholder.show()
             self._fps_pill.setText("\u2014")
 
     def _render_detections(self, detections: List[Detection]) -> None:
