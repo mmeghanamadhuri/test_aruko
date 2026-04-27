@@ -11,8 +11,8 @@ different speeds. This is intentional, and well-suited to the manual /
 "forward / backward / pivot-left / pivot-right" command vocabulary used
 on the bot today.
 
-  Left wheel : L_EN=BCM18 L_DIR=BCM22 L_SIGNAL=BCM24 L_PWM=BCM13
-  Right wheel: R_EN=BCM10 R_DIR=BCM12 R_SIGNAL=BCM27 R_PWM=BCM13 (shared)
+  Left wheel : L_EN=BCM18 L_DIR=BCM25 L_SIGNAL=BCM24 L_PWM=BCM13
+  Right wheel: R_EN=BCM10 R_DIR=BCM23 R_SIGNAL=BCM27 R_PWM=BCM13 (shared)
   Status LED : RED=BCM21  GREEN=BCM20 BLUE=BCM16
   E-stop     : ESTOP1=BCM17 ESTOP2=BCM5
 
@@ -20,16 +20,25 @@ Physical pins on the Jetson 40-pin header (cross-reference for the harness):
 
            Function        BCM   Physical pin
   Left   EL              18         12
-         Z/F             22         15
+         Z/F             25         22
          Signal          24         18
          VR (PWM)        13         33    (shared with right)
   Right  EL              10         19
-         Z/F             12         32
+         Z/F             23         16
          Signal          27         13
          VR (PWM)        13         33    (shared with left)
   Power  5 V supply       -          2 or 4
          GND              -          30, 34, 39 (use one per JYQD; the
                                                  third anchors the Jetson)
+
+Why ZF moved off pins 15 / 32: BCM 22 (pin 15) defaults to LCD_TE and
+BCM 12 (pin 32) defaults to LCD_BL_PWM in the stock Jetson Nano device
+tree. `Jetson.GPIO.setup(pin, OUT)` silently succeeds on these pins but
+the writes don't leave the SoC - the pad stays at ~0.5 V regardless of
+what we drive. BCM 25 (pin 22) and BCM 23 (pin 16) are unconditionally
+GPIO on every L4T release, so they are the safe choice for ZF. Probe
+with `python3 -m nina.app.pin_probe --pin <bcm>` if you ever need to
+re-vet a different pin.
 
 JYQD_V7.3E2 "set" header layout (top -> bottom on the silkscreen):
   5V, EL, Signal, Z/F, VR, GND.
@@ -157,11 +166,11 @@ class NavigationConfig:
 # Jetson Nano.
 DEFAULT_PINS = NavigationPins(
     l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
-    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "22"))),
+    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
     l_signal=int(os.environ.get("NINA_NAV_L_SIGNAL", "24")),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "13")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
-    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "12"))),
+    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "23"))),
     r_signal=int(os.environ.get("NINA_NAV_R_SIGNAL", "27")),
     pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,

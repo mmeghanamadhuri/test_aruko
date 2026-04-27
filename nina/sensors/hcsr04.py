@@ -15,7 +15,7 @@ Default mounting on Nina (BCM pin numbers, override via env vars):
 
 These pin choices avoid the navigation pins for Nina's baseline harness:
     - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
-    - JYQD direction   :  BCM 22 (L), BCM 12 (R)
+    - JYQD direction   :  BCM 25 (L), BCM 23 (R)
     - JYQD signal-gate :  BCM 24 (L), BCM 27 (R)
     - JYQD speed / VR  :  BCM 13 (shared, hardware PWM2)
     - Status LEDs      :  BCM 16, 20, 21

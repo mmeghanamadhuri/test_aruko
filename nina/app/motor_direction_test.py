@@ -7,8 +7,8 @@ Use this when "all keyboard / D-pad keys spin the wheels in the same
 direction" -- the symptom of the direction pin not toggling. The
 script:
 
-  1. Initialises Nina's BLDC pinout (defaults: BCM 22 = L_DIR,
-     BCM 12 = R_DIR, BCM 13 = shared PWM, BCM 18 = L_EN, BCM 10 = R_EN,
+  1. Initialises Nina's BLDC pinout (defaults: BCM 25 = L_DIR,
+     BCM 23 = R_DIR, BCM 13 = shared PWM, BCM 18 = L_EN, BCM 10 = R_EN,
      BCM 24 = L_SIGNAL, BCM 27 = R_SIGNAL).
   2. For each wheel independently:
        * Disables the OTHER wheel (EL=Signal=LOW) so the shared PWM
@@ -233,14 +233,16 @@ def main() -> int:
             "same way for both phases above:\n"
             "  1. With a multimeter on the JYQD's ZF terminal, check that\n"
             "     the voltage actually toggles between phases (~3.3 V vs 0 V).\n"
-            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} (pin 15).\n"
-            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} (pin 32).\n"
+            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} "
+            "(pin 22).\n"
+            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} "
+            "(pin 16).\n"
             "  2. If the JYQD ZF pad doesn't track the Jetson pin, the\n"
             "     wire/level-shifter is at fault.\n"
-            "  3. If the ZF pad DOES toggle but the wheel still doesn't\n"
-            "     reverse, the JYQD silkscreen labels probably differ on\n"
-            "     this rev (some V7.3E2 boards label it 'F/R' and need an\n"
-            "     edge, not a level - try NINA_NAV_DIR_SETTLE=0.50 first).\n"
+            "  3. If the Jetson PIN itself doesn't toggle, the BCM is\n"
+            "     locked to a non-GPIO alt-function on this device tree.\n"
+            "     Run 'sudo python3 -m nina.app.pin_probe --pin <bcm>'\n"
+            "     to re-vet a candidate pin before re-pinning.\n"
             "  4. If only the polarity is wrong (e.g. FORWARD spins backward),\n"
             "     export NINA_NAV_INVERT_LEFT=1 / NINA_NAV_INVERT_RIGHT=1."
         )
