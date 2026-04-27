@@ -123,6 +123,8 @@ class VisionScreen(QWidget):
         self._track_toggle: Optional[_ToggleRow] = None
         self._viewport_label: Optional[QLabel] = None
         self._viewport_placeholder: Optional[QWidget] = None
+        self._obj_conf_slider: Optional[QSlider] = None
+        self._obj_conf_pill: Optional[Pill] = None
         # Greets recognised people via gTTS + AudioPlayer with a
         # per-person cooldown so we don't spam "Hello hari" on every
         # frame.
@@ -273,6 +275,24 @@ class VisionScreen(QWidget):
         self._face_toggle = face
         self._object_toggle = obj
         self._track_toggle = track
+
+        # Object confidence floor (0..100%). Anything YOLO scores
+        # below this threshold is dropped before it ever reaches the
+        # detector list / bbox overlay. Default 80% per the operator
+        # preference -- "tight" detections only.
+        conf_row = QHBoxLayout()
+        conf_row.setSpacing(8)
+        conf_row.setContentsMargins(0, 4, 0, 4)
+        card.add_layout(conf_row)
+        conf_row.addWidget(MutedLabel("Object confidence"))
+        initial_pct = int(round(self._service.vision.get_object_confidence() * 100))
+        self._obj_conf_slider = QSlider(Qt.Horizontal)
+        self._obj_conf_slider.setRange(50, 99)
+        self._obj_conf_slider.setValue(max(50, min(99, initial_pct)))
+        self._obj_conf_slider.valueChanged.connect(self._on_object_confidence)
+        conf_row.addWidget(self._obj_conf_slider, stretch=1)
+        self._obj_conf_pill = Pill(f"{initial_pct}%", Pill.KIND_NEUTRAL)
+        conf_row.addWidget(self._obj_conf_pill)
 
         card.add(SectionLabel("Detected"))
         # The list lives in its own Card so we can swap children freely
@@ -565,6 +585,15 @@ class VisionScreen(QWidget):
         except ValueError:
             return
         self._service.vision.set_resolution(w, h)
+
+    def _on_object_confidence(self, pct: int) -> None:
+        # Slider lives in 50..99% so the user can't accidentally drag
+        # it down to "anything goes" or to 100% (which YOLO never
+        # reports for any real-world detection).
+        pct = max(50, min(99, int(pct)))
+        if self._obj_conf_pill is not None:
+            self._obj_conf_pill.setText(f"{pct}%")
+        self._service.vision.set_object_confidence(pct / 100.0)
 
     def _on_train(self) -> None:
         from PyQt5.QtWidgets import QMessageBox

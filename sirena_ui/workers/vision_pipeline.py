@@ -366,12 +366,17 @@ class _YoloObjectDetector:
     inference runs on the GPU at ~10-30 FPS depending on the board;
     everywhere else we fall back to PyTorch (CPU on dev hosts, CUDA
     on workstations) so the screen still functions.
+
+    The default `confidence` is 0.8 (80%): on Nina we'd rather skip a
+    weakly-detected box than draw a flicker of false positives. Drop
+    it via the `NINA_VISION_OBJECT_CONF` env var or the
+    `VisionPipeline.set_object_confidence()` runtime setter.
     """
 
     def __init__(
         self,
         weights_path: Path,
-        confidence: float = 0.4,
+        confidence: float = 0.8,
         prefer_tensorrt: bool = True,
     ) -> None:
         _patch_torch_load_for_ultralytics()
@@ -439,6 +444,18 @@ class _YoloObjectDetector:
         if engine_path.exists():
             return engine_path
         raise RuntimeError("YOLO export(format='engine') did not produce a file")
+
+    @property
+    def confidence(self) -> float:
+        return self._confidence
+
+    def set_confidence(self, value: float) -> None:
+        """Update the per-prediction confidence threshold.
+
+        Ultralytics' YOLO consumes this each call, so it's safe to
+        change live without re-loading the model.
+        """
+        self._confidence = max(0.0, min(1.0, float(value)))
 
     def detect(self, frame_bgr) -> List[Detection]:
         try:
@@ -520,7 +537,7 @@ class VisionPipeline:
         width: int = 640,
         height: int = 480,
         face_score_threshold: float = 0.7,
-        object_confidence: float = 0.4,
+        object_confidence: Optional[float] = None,
         prefer_tensorrt: Optional[bool] = None,
         face_db_path: Optional[Path] = None,
     ) -> None:
@@ -532,7 +549,20 @@ class VisionPipeline:
         self._width = int(width)
         self._height = int(height)
         self._face_threshold = float(face_score_threshold)
-        self._object_confidence = float(object_confidence)
+        # Object-detection confidence floor. Default 0.80 keeps the
+        # "Detected" rail and the bbox overlay tight - we'd rather
+        # drop a marginal box than flicker false positives across the
+        # GUI. Override at runtime via env var NINA_VISION_OBJECT_CONF
+        # (0.0..1.0, e.g. 0.7 for slightly looser, 0.9 for stricter)
+        # or programmatically via set_object_confidence().
+        if object_confidence is None:
+            try:
+                object_confidence = float(
+                    os.environ.get("NINA_VISION_OBJECT_CONF", "0.8")
+                )
+            except ValueError:
+                object_confidence = 0.8
+        self._object_confidence = max(0.0, min(1.0, float(object_confidence)))
         self._prefer_trt = (
             self._env_bool("NINA_VISION_TRT", True)
             if prefer_tensorrt is None
@@ -637,6 +667,28 @@ class VisionPipeline:
                     self._sface = None
             self._face_enabled = bool(enabled)
             return None
+
+    def get_object_confidence(self) -> float:
+        """Current YOLO confidence floor (0.0..1.0)."""
+        with self._lock:
+            return float(self._object_confidence)
+
+    def set_object_confidence(self, value: float) -> None:
+        """Update the YOLO confidence threshold live.
+
+        Pushes the new value into the running detector if one exists,
+        so the next predict() call picks it up without rebuilding the
+        TensorRT engine. Callers are free to call this from any
+        thread; it's lock-protected.
+        """
+        clamped = max(0.0, min(1.0, float(value)))
+        with self._lock:
+            self._object_confidence = clamped
+            if self._object is not None:
+                try:
+                    self._object.set_confidence(clamped)
+                except Exception:
+                    log.exception("Failed to push live confidence to YOLO")
 
     def set_object_enabled(self, enabled: bool) -> Optional[str]:
         """Toggle object detection. Returns None on success, or a

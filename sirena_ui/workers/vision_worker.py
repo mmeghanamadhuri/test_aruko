@@ -150,6 +150,19 @@ class VisionWorker(QObject):
     def set_object_enabled(self, enabled: bool) -> None:
         self._enqueue(lambda: self._cmd_set_object(bool(enabled)))
 
+    def set_object_confidence(self, value: float) -> None:
+        """Update YOLO's confidence floor live.
+
+        Pipeline-side setter is cheap (no model rebuild), so we run it
+        synchronously instead of going through the command queue --
+        a slider that drags from 70% to 90% would otherwise lag a
+        frame behind the cursor.
+        """
+        self._pipeline.set_object_confidence(float(value))
+
+    def get_object_confidence(self) -> float:
+        return self._pipeline.get_object_confidence()
+
     def set_resolution(self, width: int, height: int) -> None:
         w, h = int(width), int(height)
         self._enqueue(lambda: self._pipeline.set_resolution(w, h))

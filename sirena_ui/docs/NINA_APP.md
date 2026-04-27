@@ -122,6 +122,12 @@ needs less.
     the pipeline auto-exports a **TensorRT FP16** engine on first
     run (`nina/models/weights/yolov8n.engine`) and caches it; PyTorch
     CPU fallback on dev hosts.
+  - **Object confidence** slider (50–99%). YOLO's per-prediction
+    confidence floor is set live via `VisionWorker.set_object_confidence`,
+    so dragging the slider tightens / loosens detections without
+    rebuilding the TensorRT engine. Defaults to **80%** (override via
+    `NINA_VISION_OBJECT_CONF=0.85` env var if you want a different
+    starting point).
   - **Person tracking** — toggle for the next iteration's tracker.
 - **Detected** rolling list shows the class (or recognised name) and
   match score for each visible detection.
