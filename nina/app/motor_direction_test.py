@@ -125,6 +125,23 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
         f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, SIGNAL=BCM{sig_pin}, "
         f"PWM=BCM{pwm_pin}{', shared' if shared_pwm else ''}) ==="
     )
+    if shared_pwm:
+        other_phase_screw = (
+            "JYQD-R" if side == NavigationManager.SIDE_LEFT else "JYQD-L"
+        )
+        print(
+            f"  [shared PWM on BCM{pwm_pin}] We try to gate the OTHER wheel\n"
+            f"  off by writing EL=Signal=LOW for that side, but if EL or\n"
+            f"  Signal isn't actually reaching {other_phase_screw} (loose\n"
+            f"  wire / mis-routed Dupont / fried opto), the other motor\n"
+            f"  will commutate too as soon as the shared PWM ramps up.\n"
+            f"  If you see BOTH wheels spinning during this single-side\n"
+            f"  test, the cleanest workaround is to physically unplug the\n"
+            f"  3-wire motor PHASE cable from {other_phase_screw} before\n"
+            f"  re-running. The driver stays powered, but the motor\n"
+            f"  cannot spin, so any voltages you probe at the\n"
+            f"  wheel-under-test screws are unambiguous."
+        )
 
     for label, direction in (
         ("FORWARD",  NavigationManager.DIR_FORWARD),
