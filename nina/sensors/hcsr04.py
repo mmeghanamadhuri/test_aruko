@@ -16,7 +16,7 @@ Default mounting on Nina (BCM pin numbers, override via env vars):
 These pin choices avoid the navigation pins for Nina's RPi-mirror
 baseline harness on the Orin Nano:
     - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
-    - JYQD direction   :  BCM 25 (L), BCM 22 (R)
+    - JYQD direction   :  BCM 25 (L), BCM 23 (R)
     - JYQD speed / VR  :  BCM 12 (L, hardware PWM0),
                           BCM 13 (R, hardware PWM2)
     - Status LEDs      :  BCM 16, 20, 21
@@ -71,7 +71,7 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
         position="front_left",
         # BCM 19 (physical pin 35) for trig and BCM 9 (physical pin 21)
         # for echo - both free GPIOs clear of the JYQD navigation pins
-        # in the RPi-mirror baseline (BCM 10/12/13/18/22/25).
+        # in the RPi-mirror baseline (BCM 10/12/13/18/23/25).
         trig=_env_int("NINA_HCSR04_FL_TRIG", 19),
         echo=_env_int("NINA_HCSR04_FL_ECHO", 9),
     ),

@@ -37,7 +37,7 @@ Pin map (mirror of the working RPi build):
     L-DIR (Z/F)    25     22              digital out
     L-PWM (VR)     12     32              hardware PWM0
     R-EL           10     19              digital out
-    R-DIR (Z/F)    22     15              digital out
+    R-DIR (Z/F)    23     16              digital out  (see note A below)
     R-PWM (VR)     13     33              hardware PWM2
     Status RED     21     40              digital out (active-low)
     Status GREEN   20     38              digital out (active-low)
@@ -54,6 +54,20 @@ Direction polarity (matches RPi reference exactly):
 
 If a wheel spins backwards from what's expected, set
 NINA_NAV_INVERT_LEFT=1 or NINA_NAV_INVERT_RIGHT=1.
+
+Note A (R-DIR pin choice):
+  The RPi reference uses BCM 22 / pin 15 for R-DIR. On the specific
+  Jetson Orin Nano carrier this bot uses, pin 15 is **dead** as a
+  GPIO output - it sits at a constant ~1.5 V regardless of what is
+  written, which the JYQD reads as below-threshold (= LOW always),
+  so the right wheel can never reverse. We bench-confirmed this with
+  `python3 -m nina.app.pin_probe --pin 22`. Whether pin 15 is held by
+  an alt-function in the L4T device tree on this image, or whether
+  the carrier board routes it to something else, isn't worth
+  unwinding - we just use BCM 23 / pin 16 instead, which is plain
+  GPIO on this same board and was the proven R-DIR pin in the
+  pre-rewrite shared-PWM config. Override via NINA_NAV_R_DIR if a
+  later image / carrier frees pin 15 back up.
 
 One-time Jetson setup (per fresh install / new SD card):
   sudo /opt/nvidia/jetson-io/jetson-io.py
@@ -145,7 +159,10 @@ DEFAULT_PINS = NavigationPins(
     l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
-    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "22"))),
+    # NOTE: BCM 23 (pin 16), not BCM 22 (pin 15) per the RPi reference.
+    # Pin 15 is dead as a GPIO output on the Orin Nano carrier this bot
+    # uses (probed at 1.5 V constant) - see Note A in the module docstring.
+    r_dir=int(os.environ.get("NINA_NAV_R_DIR", os.environ.get("NINA_NAV_R_ZF", "23"))),
     pwm_r=int(os.environ.get("NINA_NAV_R_PWM", "13")),
     led_red=21,
     led_green=20,

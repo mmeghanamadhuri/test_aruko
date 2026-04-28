@@ -103,8 +103,14 @@ build onto the Jetson Orin Nano. Pin map (mirror of the working RPi):
 | L-DIR (Z/F) | 25  | 22           | digital out          |
 | L-PWM (VR)  | 12  | 32           | hardware PWM0        |
 | R-EL        | 10  | 19           | digital out          |
-| R-DIR (Z/F) | 22  | 15           | digital out          |
+| R-DIR (Z/F) | 23  | 16           | digital out (see note) |
 | R-PWM (VR)  | 13  | 33           | hardware PWM2        |
+
+> Note: the RPi reference puts R-DIR on BCM 22 / pin 15, but pin 15 is
+> dead as a GPIO output on the Orin Nano carrier this bot uses
+> (probed at 1.5 V constant). BCM 23 / pin 16 is the workaround we use
+> instead - same pin the pre-rewrite shared-PWM config used and known
+> to toggle cleanly on this board.
 
 Both PWM pins must be enabled once via
 `sudo /opt/nvidia/jetson-io/jetson-io.py` (Configure 40-pin Header →
