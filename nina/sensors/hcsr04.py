@@ -135,9 +135,14 @@ class HCSR04Array:
             self._message = f"Jetson.GPIO not installed ({exc})"
             raise RuntimeError(self._message) from exc
 
+        # Must match gpio_backend.py / pin_probe.py - Jetson.GPIO maps
+        # BCM numbers to physical pins via a per-model SoC pad table,
+        # and the wrong model silently routes writes to a different pad.
+        # Override with NINA_JETSON_MODEL=JETSON_NANO only on the older
+        # T210 dev kit.
         os.environ.setdefault(
             "JETSON_MODEL_NAME",
-            os.environ.get("NINA_JETSON_MODEL", "JETSON_NANO"),
+            os.environ.get("NINA_JETSON_MODEL", "JETSON_ORIN_NANO"),
         )
         try:
             GPIO.setmode(GPIO.BCM)

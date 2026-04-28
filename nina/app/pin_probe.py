@@ -107,10 +107,16 @@ def main() -> int:
     print("You should see ~3.3 V during HIGH and ~0 V during LOW.")
     print("If the voltage doesn't change, the pin isn't being driven.\n")
 
+    # IMPORTANT: must match the model used by gpio_backend.py
+    # (JETSON_ORIN_NANO). Jetson.GPIO maps BCM numbers to physical pins
+    # via a per-model SoC pad table; the wrong model silently routes
+    # writes to a different pad, so the physical pin appears "stuck"
+    # while the tool prints clean HIGH/LOW transitions. Override with
+    # NINA_JETSON_MODEL=JETSON_NANO only on the older T210 dev kit.
     try:
         os.environ.setdefault(
             "JETSON_MODEL_NAME",
-            os.environ.get("NINA_JETSON_MODEL", "JETSON_NANO"),
+            os.environ.get("NINA_JETSON_MODEL", "JETSON_ORIN_NANO"),
         )
         import Jetson.GPIO as GPIO  # type: ignore
     except Exception as exc:
