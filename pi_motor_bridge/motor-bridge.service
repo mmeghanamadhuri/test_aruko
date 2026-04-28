@@ -1,0 +1,28 @@
+[Unit]
+Description=Sirena Nina motor bridge (RPi side)
+After=multi-user.target pigpiod.service
+Wants=pigpiod.service
+
+[Service]
+Type=simple
+# Run as root because pigpio needs GPIO access. If you've set up
+# pigpio for an unprivileged user, change User= to that user and
+# adjust the working dir / install path accordingly.
+User=root
+ExecStart=/usr/bin/python3 /opt/sirena/pi_motor_bridge/motor_bridge.py
+Restart=on-failure
+RestartSec=2
+# Park the motors on stop / restart.
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+# Optional environment overrides (uncomment + edit):
+# Environment=NINA_BRIDGE_PORT=/dev/serial0
+# Environment=NINA_BRIDGE_BAUD=115200
+# Environment=NINA_BRIDGE_WATCHDOG_SEC=1.5
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
