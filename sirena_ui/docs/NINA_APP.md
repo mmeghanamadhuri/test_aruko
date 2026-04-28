@@ -95,14 +95,14 @@ commands. The CLI tools still use the timed `turn_left()` /
 `turn_right()` for scripted turns of a fixed duration.
 
 The driver itself is a clean port of the Sirena Raspberry Pi reference
-build onto the Jetson Orin Nano. Pin map (mostly mirrors the RPi; two
-pads are remapped because the Orin Nano image / carrier doesn't expose
-them as plain GPIO — see notes below):
+build onto the Jetson Orin Nano. Pin map (mostly mirrors the RPi;
+three pads are remapped because the Orin Nano image / carrier doesn't
+expose them as plain GPIO — see notes below):
 
 | Function    | BCM | Physical pin | Notes                  |
 | ----------- | --- | ------------ | ---------------------- |
 | L-EL        | 24  | 18           | digital out (see note) |
-| L-DIR (Z/F) | 25  | 22           | digital out            |
+| L-DIR (Z/F) |  6  | 31           | digital out (see note) |
 | L-PWM (VR)  | 12  | 32           | hardware PWM0          |
 | R-EL        | 10  | 19           | digital out            |
 | R-DIR (Z/F) | 23  | 16           | digital out (see note) |
@@ -120,6 +120,15 @@ them as plain GPIO — see notes below):
 > that the JYQD reads as "kind of HIGH most of the time." The visible
 > symptom is a left wheel that occasionally spins, often jerks, and
 > dies at higher PWM duty. BCM 24 / pin 18 is the workaround.
+>
+> **L-DIR note.** The RPi reference puts L-DIR on BCM 25 / pin 22, but
+> pin 22 sits at a degraded ~0 V ↔ ~1.5 V intermittent toggle on this
+> carrier (same alt-function-claim class as L-EL above). The JYQD
+> reads 1.5 V as ambiguous and locks the left wheel's direction to
+> whichever side of its threshold it last saw — the wheel can never
+> reverse. BCM 6 / pin 31 is the workaround. Note BCM 6 collides with
+> the default HC-SR04 rear-right TRIG channel; if you wire that
+> ultrasonic sensor, override either pin via env var.
 
 Both PWM pins must be enabled once via
 `sudo /opt/nvidia/jetson-io/jetson-io.py` (Configure 40-pin Header →

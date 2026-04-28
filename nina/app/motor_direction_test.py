@@ -20,13 +20,13 @@ Sequence per phase (matches the RPi `control_speed` flow exactly):
 There is no kick-start, no EL low->high re-edge, and no "Signal pin
 gating" - none of which the working RPi build uses.
 
-Pin defaults (mostly mirror the RPi reference; L-EL and R-DIR are
-remapped because the matching pads are unusable as plain GPIO on the
-Orin Nano carrier - see `nina.controllers.navigation_manager` notes
-A and B):
+Pin defaults (mostly mirror the RPi reference; L-EL, L-DIR and R-DIR
+are remapped because the matching pads are unusable as plain GPIO on
+the Orin Nano carrier - see `nina.controllers.navigation_manager`
+notes A, B and C):
 
     L-EL=BCM24 (pin 18)     R-EL=BCM10 (pin 19)
-    L-DIR=BCM25 (pin 22)    R-DIR=BCM23 (pin 16)
+    L-DIR=BCM 6 (pin 31)    R-DIR=BCM23 (pin 16)
     L-PWM=BCM12 (pin 32)    R-PWM=BCM13 (pin 33)
 
 Usage:

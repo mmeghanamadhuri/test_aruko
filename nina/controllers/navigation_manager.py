@@ -30,13 +30,13 @@ What the RPi reference says about JYQD V7.3E2 in this build:
 - Per-side hardware PWM. L-PWM on BCM 12 (pin 32, PWM0) and R-PWM on
   BCM 13 (pin 33, PWM2). True differential drive is supported.
 
-Pin map (mostly mirrors the RPi reference; two pads remapped because
-the Orin Nano image / carrier doesn't expose them as plain GPIO -
-see notes A and B below):
+Pin map (mostly mirrors the RPi reference; three pads remapped
+because the Orin Nano image / carrier doesn't expose them as plain
+GPIO - see notes A, B, C below):
 
     Function       BCM    Physical pin    Notes
     L-EL           24     18              digital out  (see note B below)
-    L-DIR (Z/F)    25     22              digital out
+    L-DIR (Z/F)     6     31              digital out  (see note C below)
     L-PWM (VR)     12     32              hardware PWM0
     R-EL           10     19              digital out
     R-DIR (Z/F)    23     16              digital out  (see note A below)
@@ -81,6 +81,20 @@ Note B (L-EL pin choice):
   `python3 -m nina.app.pin_probe --pin 18`. We use BCM 24 / pin 18
   instead - plain GPIO on this carrier. Override via NINA_NAV_L_EN
   if a later image / device-tree overlay releases pin 12.
+
+Note C (L-DIR pin choice):
+  The RPi reference uses BCM 25 / pin 22 for L-DIR. On the Orin Nano,
+  pin 22 also sits at a degraded ~0 V <-> ~1.5 V swing instead of a
+  clean 0/3.3 V drive, with intermittent toggle - same failure class
+  as Note B (claimed by an alt-function in the L4T device tree on
+  this image). The JYQD reads 1.5 V as ambiguous and locks the
+  motor's direction to whichever side of its threshold it last saw,
+  so the left wheel can never reverse. Bench-confirmed with
+  `python3 -m nina.app.pin_probe --pin 25`. We use BCM 6 / pin 31
+  instead - plain GPIO on this carrier (clean 0/3.3 V toggle). Note
+  this collides with the default HC-SR04 rear-right TRIG channel; if
+  you wire that ultrasonic sensor, override either pin via env var.
+  Override via NINA_NAV_L_DIR if a later image frees pin 22.
 
 One-time Jetson setup (per fresh install / new SD card):
   sudo /opt/nvidia/jetson-io/jetson-io.py
@@ -173,7 +187,11 @@ DEFAULT_PINS = NavigationPins(
     # GPIO writes get overridden, output sits at ~2.4 V / ~4 V instead
     # of clean 0/3.3 V. See Note B in the module docstring.
     l_en=int(os.environ.get("NINA_NAV_L_EN", "24")),
-    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
+    # NOTE: BCM 6 (pin 31), not BCM 25 (pin 22) per the RPi reference.
+    # Pin 22 sits at degraded ~0 V <-> ~1.5 V intermittent toggle on
+    # this Orin Nano carrier (same alt-function-claim class as L-EL).
+    # See Note C in the module docstring.
+    l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "6"))),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),
     # NOTE: BCM 23 (pin 16), not BCM 22 (pin 15) per the RPi reference.

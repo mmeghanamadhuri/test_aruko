@@ -18,11 +18,16 @@ harness (see `nina.controllers.navigation_manager` for why a few of
 these differ from the RPi reference - some pins are claimed by the
 Orin Nano device tree or are unusable as plain GPIO on this carrier):
     - JYQD enable / EL :  BCM 24 (L), BCM 10 (R)
-    - JYQD direction   :  BCM 25 (L), BCM 23 (R)
+    - JYQD direction   :  BCM 6 (L), BCM 23 (R)
     - JYQD speed / VR  :  BCM 12 (L, hardware PWM0),
                           BCM 13 (R, hardware PWM2)
     - Status LEDs      :  BCM 16, 20, 21
     - E-stop           :  BCM 5, 17
+
+WARNING: BCM 6 is now used by L-DIR (see Note C in the navigation
+module). The default `rear_right` TRIG channel below collides with it.
+If you actually wire a rear-right HC-SR04, override that channel via
+env var (e.g. `NINA_HCSR04_REAR_RIGHT_TRIG=27`) or move it elsewhere.
 
 The JYQD "Signal" screw is intentionally NOT driven on this build (the
 RPi reference proves the chip commutates fine with Signal floating), so
