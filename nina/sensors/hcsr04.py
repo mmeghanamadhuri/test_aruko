@@ -13,9 +13,11 @@ Default mounting on Nina (BCM pin numbers, override via env vars):
     rear_left    trig=BCM11  echo=BCM 4
     rear_right   trig=BCM 6  echo=BCM26
 
-These pin choices avoid the navigation pins for Nina's RPi-mirror
-baseline harness on the Orin Nano:
-    - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
+These pin choices avoid the navigation pins for Nina's Orin Nano
+harness (see `nina.controllers.navigation_manager` for why a few of
+these differ from the RPi reference - some pins are claimed by the
+Orin Nano device tree or are unusable as plain GPIO on this carrier):
+    - JYQD enable / EL :  BCM 24 (L), BCM 10 (R)
     - JYQD direction   :  BCM 25 (L), BCM 23 (R)
     - JYQD speed / VR  :  BCM 12 (L, hardware PWM0),
                           BCM 13 (R, hardware PWM2)

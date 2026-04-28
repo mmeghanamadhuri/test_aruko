@@ -30,10 +30,12 @@ What the RPi reference says about JYQD V7.3E2 in this build:
 - Per-side hardware PWM. L-PWM on BCM 12 (pin 32, PWM0) and R-PWM on
   BCM 13 (pin 33, PWM2). True differential drive is supported.
 
-Pin map (mirror of the working RPi build):
+Pin map (mostly mirrors the RPi reference; two pads remapped because
+the Orin Nano image / carrier doesn't expose them as plain GPIO -
+see notes A and B below):
 
     Function       BCM    Physical pin    Notes
-    L-EL           18     12              digital out
+    L-EL           24     18              digital out  (see note B below)
     L-DIR (Z/F)    25     22              digital out
     L-PWM (VR)     12     32              hardware PWM0
     R-EL           10     19              digital out
@@ -44,9 +46,10 @@ Pin map (mirror of the working RPi build):
     Status BLUE    16     36              digital out (active-low)
     E-stop 1       17     11              digital in (input only)
     E-stop 2        5     29              digital in (input only)
-    5 V to JYQDs    -      2 or 4         power
+    5 V to JYQDs    -      2 or 4         power (logic only)
     GND for L-JYQD  -     39              power
     GND for R-JYQD  -     34              power
+    24 V to JYQDs   -      -              external battery to VCC screws
 
 Direction polarity (matches RPi reference exactly):
     Left  forward  =>  L_DIR HIGH
@@ -59,15 +62,25 @@ Note A (R-DIR pin choice):
   The RPi reference uses BCM 22 / pin 15 for R-DIR. On the specific
   Jetson Orin Nano carrier this bot uses, pin 15 is **dead** as a
   GPIO output - it sits at a constant ~1.5 V regardless of what is
-  written, which the JYQD reads as below-threshold (= LOW always),
-  so the right wheel can never reverse. We bench-confirmed this with
-  `python3 -m nina.app.pin_probe --pin 22`. Whether pin 15 is held by
-  an alt-function in the L4T device tree on this image, or whether
-  the carrier board routes it to something else, isn't worth
-  unwinding - we just use BCM 23 / pin 16 instead, which is plain
-  GPIO on this same board and was the proven R-DIR pin in the
-  pre-rewrite shared-PWM config. Override via NINA_NAV_R_DIR if a
-  later image / carrier frees pin 15 back up.
+  written, so the JYQD always reads it as below-threshold (= LOW)
+  and the right wheel can never reverse. Bench-confirmed with
+  `python3 -m nina.app.pin_probe --pin 22` (driving correctly under
+  JETSON_ORIN_NANO model). We use BCM 23 / pin 16 instead - clean
+  GPIO on this carrier. Override via NINA_NAV_R_DIR if a later image
+  frees pin 15 back up.
+
+Note B (L-EL pin choice):
+  The RPi reference uses BCM 18 / pin 12 for L-EL. On the Orin Nano,
+  pin 12 (PCM_CLK / I2S2_SCLK in the SoC pin table) is partially
+  claimed by the audio device tree by default, so GPIO writes get
+  overridden - the pin sits at a non-logic ~2.4 V <-> ~4 V swing
+  regardless of what the kernel GPIO sysfs says. The JYQD opto-
+  isolator reads this as "kind of HIGH most of the time," which
+  manifests as a left wheel that occasionally spins, often jerks,
+  and dies entirely at higher PWM duty. Bench-confirmed with
+  `python3 -m nina.app.pin_probe --pin 18`. We use BCM 24 / pin 18
+  instead - plain GPIO on this carrier. Override via NINA_NAV_L_EN
+  if a later image / device-tree overlay releases pin 12.
 
 One-time Jetson setup (per fresh install / new SD card):
   sudo /opt/nvidia/jetson-io/jetson-io.py
@@ -155,7 +168,11 @@ class NavigationConfig:
 # Override any single pin via the corresponding NINA_NAV_* env var if a
 # specific harness needs a different mapping (rare).
 DEFAULT_PINS = NavigationPins(
-    l_en=int(os.environ.get("NINA_NAV_L_EN", "18")),
+    # NOTE: BCM 24 (pin 18), not BCM 18 (pin 12) per the RPi reference.
+    # Pin 12 is partially claimed by the Orin Nano audio device tree -
+    # GPIO writes get overridden, output sits at ~2.4 V / ~4 V instead
+    # of clean 0/3.3 V. See Note B in the module docstring.
+    l_en=int(os.environ.get("NINA_NAV_L_EN", "24")),
     l_dir=int(os.environ.get("NINA_NAV_L_DIR", os.environ.get("NINA_NAV_L_ZF", "25"))),
     pwm_l=int(os.environ.get("NINA_NAV_L_PWM", "12")),
     r_en=int(os.environ.get("NINA_NAV_R_EN", "10")),

@@ -95,22 +95,31 @@ commands. The CLI tools still use the timed `turn_left()` /
 `turn_right()` for scripted turns of a fixed duration.
 
 The driver itself is a clean port of the Sirena Raspberry Pi reference
-build onto the Jetson Orin Nano. Pin map (mirror of the working RPi):
+build onto the Jetson Orin Nano. Pin map (mostly mirrors the RPi; two
+pads are remapped because the Orin Nano image / carrier doesn't expose
+them as plain GPIO — see notes below):
 
-| Function    | BCM | Physical pin | Notes                |
-| ----------- | --- | ------------ | -------------------- |
-| L-EL        | 18  | 12           | digital out          |
-| L-DIR (Z/F) | 25  | 22           | digital out          |
-| L-PWM (VR)  | 12  | 32           | hardware PWM0        |
-| R-EL        | 10  | 19           | digital out          |
+| Function    | BCM | Physical pin | Notes                  |
+| ----------- | --- | ------------ | ---------------------- |
+| L-EL        | 24  | 18           | digital out (see note) |
+| L-DIR (Z/F) | 25  | 22           | digital out            |
+| L-PWM (VR)  | 12  | 32           | hardware PWM0          |
+| R-EL        | 10  | 19           | digital out            |
 | R-DIR (Z/F) | 23  | 16           | digital out (see note) |
-| R-PWM (VR)  | 13  | 33           | hardware PWM2        |
+| R-PWM (VR)  | 13  | 33           | hardware PWM2          |
 
-> Note: the RPi reference puts R-DIR on BCM 22 / pin 15, but pin 15 is
-> dead as a GPIO output on the Orin Nano carrier this bot uses
-> (probed at 1.5 V constant). BCM 23 / pin 16 is the workaround we use
-> instead - same pin the pre-rewrite shared-PWM config used and known
-> to toggle cleanly on this board.
+> **R-DIR note.** The RPi reference puts R-DIR on BCM 22 / pin 15, but
+> pin 15 is dead as a GPIO output on the Orin Nano carrier this bot
+> uses (probed at constant 1.5 V regardless of what the kernel writes).
+> BCM 23 / pin 16 is the workaround.
+>
+> **L-EL note.** The RPi reference puts L-EL on BCM 18 / pin 12, but
+> pin 12 (PCM_CLK / I2S2_SCLK in the SoC pin table) is partially
+> claimed by the Orin Nano audio device tree by default — GPIO writes
+> get overridden, and the pad sits at a non-logic ~2.4 V ↔ ~4 V swing
+> that the JYQD reads as "kind of HIGH most of the time." The visible
+> symptom is a left wheel that occasionally spins, often jerks, and
+> dies at higher PWM duty. BCM 24 / pin 18 is the workaround.
 
 Both PWM pins must be enabled once via
 `sudo /opt/nvidia/jetson-io/jetson-io.py` (Configure 40-pin Header →
