@@ -89,18 +89,43 @@ Cross-cutting design rules:
 Wiring: `workers/drive_controller.py` is a Qt facade over
 `nina.controllers.navigation_manager.NavigationManager`, talking to
 the JYQD\_V7.3E2 BLDC drivers. The GUI flow uses
-`drive_continuous(...)` for D-pad presses (kick-start + non-blocking,
-no auto-stop) and `set_wheels(...)` for live speed updates and
-autonomous-pilot commands. The CLI tools still use the timed
-`turn_left()` / `turn_right()` for scripted turns of a fixed duration.
+`drive_continuous(...)` for D-pad presses (non-blocking, no auto-stop)
+and `set_wheels(...)` for live speed updates and autonomous-pilot
+commands. The CLI tools still use the timed `turn_left()` /
+`turn_right()` for scripted turns of a fixed duration.
 
-Default tunables (`nina/config/settings.py`) for the JYQD + 3.3 V
-Jetson combo, verified on Nina's actual hub motors at 24 V:
-`NINA_NAV_MIN_DUTY=85` (deadband floor — slider 1 % maps to ~85 %
-real PWM duty so the rotor catches reliably), `NINA_NAV_KICK_SEC=0.5`
-at `NINA_NAV_KICK_DUTY=100` (0.5 s pulse at full duty to break
-static friction). Override via env vars if a particular motor
-needs less.
+The driver itself is a clean port of the Sirena Raspberry Pi reference
+build onto the Jetson Orin Nano. Pin map (mirror of the working RPi):
+
+| Function    | BCM | Physical pin | Notes                |
+| ----------- | --- | ------------ | -------------------- |
+| L-EL        | 18  | 12           | digital out          |
+| L-DIR (Z/F) | 25  | 22           | digital out          |
+| L-PWM (VR)  | 12  | 32           | hardware PWM0        |
+| R-EL        | 10  | 19           | digital out          |
+| R-DIR (Z/F) | 22  | 15           | digital out          |
+| R-PWM (VR)  | 13  | 33           | hardware PWM2        |
+
+Both PWM pins must be enabled once via
+`sudo /opt/nvidia/jetson-io/jetson-io.py` (Configure 40-pin Header →
+manual → enable `pwm0` and `pwm2` → save → reboot).
+
+Notable simplifications from earlier Jetson code (all driven by what
+the working RPi build actually does):
+- **No Signal pin.** The JYQD's `Signal` screw is left disconnected;
+  the chip commutates fine with it floating.
+- **No EL re-edge.** EL stays HIGH; direction is sampled
+  level-sensitive. `stop()` zeroes PWM but keeps EL HIGH.
+- **No kick-start, no deadband.** PWM ramps directly from 0 to the
+  requested duty - same as the RPi reference.
+- **Per-side hardware PWM.** L on BCM 12, R on BCM 13. True
+  differential drive is supported.
+
+Override individual pins via `NINA_NAV_L_EN`, `NINA_NAV_L_DIR`,
+`NINA_NAV_L_PWM`, `NINA_NAV_R_EN`, `NINA_NAV_R_DIR`, `NINA_NAV_R_PWM`.
+Flip wheel polarity with `NINA_NAV_INVERT_LEFT=1` /
+`NINA_NAV_INVERT_RIGHT=1`. Default cruise speed is `NINA_NAV_SPEED=15`
+(matching the RPi reference build).
 
 ---
 

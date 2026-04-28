@@ -140,13 +140,8 @@ class NinaService:
             pwm_frequency_hz=nav.pwm_frequency_hz,
             default_speed_percent=nav.default_speed_percent,
             turn_duration_sec=nav.turn_duration_sec,
-            min_duty_percent=nav.min_duty_percent,
-            max_duty_percent=nav.max_duty_percent,
-            kick_start_duty_percent=nav.kick_start_duty_percent,
-            kick_start_duration_sec=nav.kick_start_duration_sec,
             invert_left_dir=nav.invert_left_dir,
             invert_right_dir=nav.invert_right_dir,
-            dir_change_settle_sec=nav.dir_change_settle_sec,
         )
 
     def shutdown(self) -> None:

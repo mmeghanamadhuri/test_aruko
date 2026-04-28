@@ -3,8 +3,14 @@ GPIO backend abstraction for Nina navigation.
 
 Two implementations are provided:
 - JetsonBackend: uses Jetson.GPIO with BCM numbering and hardware PWM on
-  pins 32 (BCM 12) and 33 (BCM 13). Default for Nina on Jetson Nano.
-- PigpioBackend: uses pigpio. Useful only on Raspberry Pi style boards.
+  pins 32 (BCM 12 / PWM0) and 33 (BCM 13 / PWM2). Default for Nina on
+  Jetson Orin Nano. Both PWM pins must be enabled once via:
+      sudo /opt/nvidia/jetson-io/jetson-io.py
+- PigpioBackend: uses pigpio. The original Sirena reference build
+  ("nina/app/navigation_bldc.py" prototype + the "/Downloads"
+  motor_control.py / navigation_bldc.py pair) used pigpio on a
+  Raspberry Pi; this backend lets the same code run on a Pi for A/B
+  testing.
 
 The backend is intentionally minimal: digital write, PWM init, PWM duty update,
 and shutdown. NavigationManager owns all logic on top of it.
@@ -39,8 +45,12 @@ class JetsonBackend:
     """
     Jetson.GPIO backend using BCM numbering.
 
-    Hardware PWM is only available on physical pins 32 and 33 (BCM 12 / BCM 13).
-    These must be enabled once via: sudo /opt/nvidia/jetson-io/jetson-io.py
+    Hardware PWM is only available on physical pins 32 and 33
+    (BCM 12 / PWM0, BCM 13 / PWM2). These must be enabled once via:
+        sudo /opt/nvidia/jetson-io/jetson-io.py
+    -> "Configure Jetson 40-pin Header"
+    -> "Configure header pins manually"
+    -> enable both `pwm0` (pin 32) and `pwm2` (pin 33), reboot.
     """
 
     name = "jetson"
@@ -53,10 +63,12 @@ class JetsonBackend:
     def setup(self) -> None:
         # Hint Jetson.GPIO about the SoC so it skips its carrier-board check
         # (which prints scary warnings on third-party / custom carrier boards).
-        # Override with NINA_JETSON_MODEL=JETSON_ORIN_NANO etc. for non-Nano hosts.
+        # Default is Orin Nano because that is the only Jetson Nina ships on;
+        # override with NINA_JETSON_MODEL=JETSON_NANO if you ever run this on
+        # the older T210 Nano dev kit.
         os.environ.setdefault(
             "JETSON_MODEL_NAME",
-            os.environ.get("NINA_JETSON_MODEL", "JETSON_NANO"),
+            os.environ.get("NINA_JETSON_MODEL", "JETSON_ORIN_NANO"),
         )
 
         with warnings.catch_warnings():

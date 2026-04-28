@@ -8,21 +8,26 @@ unavailable in a clean way and the autonomy stack runs in simulation.
 
 Default mounting on Nina (BCM pin numbers, override via env vars):
 
-    front_left   trig=BCM19  echo= BCM9
-    front_right  trig= BCM7  echo= BCM8
-    rear_left    trig=BCM11  echo= BCM4
-    rear_right   trig= BCM6  echo=BCM26
+    front_left   trig=BCM19  echo=BCM 9
+    front_right  trig=BCM 7  echo=BCM 8
+    rear_left    trig=BCM11  echo=BCM 4
+    rear_right   trig=BCM 6  echo=BCM26
 
-These pin choices avoid the navigation pins for Nina's baseline harness:
+These pin choices avoid the navigation pins for Nina's RPi-mirror
+baseline harness on the Orin Nano:
     - JYQD enable / EL :  BCM 18 (L), BCM 10 (R)
-    - JYQD direction   :  BCM 25 (L), BCM 23 (R)
-    - JYQD signal-gate :  BCM 24 (L), BCM 27 (R)
-    - JYQD speed / VR  :  BCM 13 (shared, hardware PWM2)
+    - JYQD direction   :  BCM 25 (L), BCM 22 (R)
+    - JYQD speed / VR  :  BCM 12 (L, hardware PWM0),
+                          BCM 13 (R, hardware PWM2)
     - Status LEDs      :  BCM 16, 20, 21
     - E-stop           :  BCM 5, 17
 
-...and they avoid the Dynamixel UART (BCM 14 / 15) and the I2C bus the
-GP2Y0E02B IR cliff sensor uses (BCM 2 / 3). Set env
+The JYQD "Signal" screw is intentionally NOT driven on this build (the
+RPi reference proves the chip commutates fine with Signal floating), so
+no GPIO is reserved for it.
+
+These defaults also avoid the Dynamixel UART (BCM 14 / 15) and the I2C
+bus the GP2Y0E02B IR cliff sensor uses (BCM 2 / 3). Set env
 `NINA_HCSR04_DISABLE=1` to skip the array entirely.
 """
 
@@ -65,9 +70,8 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     _Channel(
         position="front_left",
         # BCM 19 (physical pin 35) for trig and BCM 9 (physical pin 21)
-        # for echo - both free GPIOs clear of the navigation pins. The
-        # previous defaults (trig=BCM 23, echo=BCM 24) collided with
-        # the JYQD L_SIGNAL.
+        # for echo - both free GPIOs clear of the JYQD navigation pins
+        # in the RPi-mirror baseline (BCM 10/12/13/18/22/25).
         trig=_env_int("NINA_HCSR04_FL_TRIG", 19),
         echo=_env_int("NINA_HCSR04_FL_ECHO", 9),
     ),
@@ -78,8 +82,7 @@ _DEFAULT_CHANNELS: Tuple[_Channel, ...] = (
     ),
     _Channel(
         position="rear_left",
-        # BCM 11 (physical pin 23) - free GPIO clear of the JYQD signal
-        # pins. The previous default (BCM 27) collided with R_SIGNAL.
+        # BCM 11 (physical pin 23) - free GPIO clear of the navigation pins.
         trig=_env_int("NINA_HCSR04_RL_TRIG", 11),
         echo=_env_int("NINA_HCSR04_RL_ECHO", 4),
     ),

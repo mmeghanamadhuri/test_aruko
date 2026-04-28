@@ -57,13 +57,8 @@ def build_navigation(settings) -> NavigationManager:
         pwm_frequency_hz=settings.navigation.pwm_frequency_hz,
         default_speed_percent=settings.navigation.default_speed_percent,
         turn_duration_sec=settings.navigation.turn_duration_sec,
-        min_duty_percent=settings.navigation.min_duty_percent,
-        max_duty_percent=settings.navigation.max_duty_percent,
-        kick_start_duty_percent=settings.navigation.kick_start_duty_percent,
-        kick_start_duration_sec=settings.navigation.kick_start_duration_sec,
         invert_left_dir=settings.navigation.invert_left_dir,
         invert_right_dir=settings.navigation.invert_right_dir,
-        dir_change_settle_sec=settings.navigation.dir_change_settle_sec,
     )
     return NavigationManager(nav_config)
 
@@ -356,7 +351,9 @@ def main() -> None:
                         )
                         nav._control_speed(nav.SIDE_LEFT, True, args.speed, dir_const)
                     if args.side in ("right", "both"):
-                        zf_level = (1 if direction == "forward" else 0)
+                        # Right wheel polarity is mirrored on the RPi
+                        # reference: forward = LOW on R_DIR.
+                        zf_level = (0 if direction == "forward" else 1)
                         if nav.config.invert_right_dir:
                             zf_level = 0 if zf_level else 1
                         print(

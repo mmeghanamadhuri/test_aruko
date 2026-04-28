@@ -12,17 +12,18 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class NavigationSettings:
+    """Tunables for `nina.controllers.navigation_manager.NavigationManager`.
+
+    Mirrors the fields on `NavigationConfig` 1:1 - the dataclass exists
+    so this stays env-driven and re-loadable from anywhere in the app
+    without the caller needing to know about `NavigationConfig`.
+    """
     backend_name: str
     pwm_frequency_hz: int
     default_speed_percent: int
     turn_duration_sec: float
-    min_duty_percent: float
-    max_duty_percent: float
-    kick_start_duty_percent: float
-    kick_start_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
-    dir_change_settle_sec: float
 
 
 @dataclass(frozen=True)
@@ -78,28 +79,14 @@ def load_settings(repo_root: Path) -> NinaSettings:
     navigation = NavigationSettings(
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
+        # 15% matches the Sirena RPi reference build's `forward_forever`
+        # default. Bump via NINA_NAV_SPEED for harder cruises.
         default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "15")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
-        # JYQD_V7.3E2 + Jetson 3.3V GPIO defaults: BLDC hub motors
-        # typically need ~85% real PWM duty before the rotor catches
-        # cleanly and a 0.5s, 100%-duty kick-start to break static
-        # friction. These values were verified end-to-end on Nina's
-        # actual hardware (CLI smoke test on the Jetson, hub motors at
-        # 24V) - lower numbers worked sometimes but missed catches at
-        # cold-start. Override via env vars below if a specific
-        # driver/motor combo needs less.
-        min_duty_percent=float(os.environ.get("NINA_NAV_MIN_DUTY", "85")),
-        max_duty_percent=float(os.environ.get("NINA_NAV_MAX_DUTY", "100")),
-        kick_start_duty_percent=float(os.environ.get("NINA_NAV_KICK_DUTY", "100")),
-        kick_start_duration_sec=float(os.environ.get("NINA_NAV_KICK_SEC", "0.5")),
+        # Flip if a wheel spins opposite of what the GUI expects (the
+        # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
-        # JYQD V7.3E2 in VR-with-Signal-gate mode latches the ZF/DIR pin
-        # on the EL rising edge - we need a brief EL=LOW window between
-        # direction changes so the chip re-samples DIR. 0.20 s is the
-        # tested sweet spot; bump to 0.30+ if a wheel ever ignores a
-        # direction reversal.
-        dir_change_settle_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE", "0.20")),
     )
 
     autonomy = AutonomySettings(

@@ -1,14 +1,14 @@
 """
-Operator CLI for Nina's BLDC navigation (JYQD_V7.3E2 + Jetson Nano).
+Operator CLI for Nina's BLDC navigation (JYQD_V7.3E2 + Jetson Orin Nano).
 
 Run with the package path so imports resolve correctly:
 
     python3 -m nina.app.motor_control
 
 Backend selection via env var NINA_NAV_BACKEND ("jetson" default, or "pigpio").
-All other tunables (min_duty_percent, kick_start_*, default_speed_percent,
-invert_*_dir) come from `nina.config.settings.build_settings()` so this
-CLI behaves identically to the GUI -- the same env-var overrides apply.
+All other tunables (default_speed_percent, invert_*_dir, etc.) come from
+`nina.config.settings.load_settings()` so this CLI behaves identically to
+the GUI's Drive screen - the same env-var overrides apply to both.
 """
 
 import logging
@@ -54,13 +54,8 @@ def main() -> None:
             pwm_frequency_hz=nav_settings.pwm_frequency_hz,
             default_speed_percent=nav_settings.default_speed_percent,
             turn_duration_sec=nav_settings.turn_duration_sec,
-            min_duty_percent=nav_settings.min_duty_percent,
-            max_duty_percent=nav_settings.max_duty_percent,
-            kick_start_duty_percent=nav_settings.kick_start_duty_percent,
-            kick_start_duration_sec=nav_settings.kick_start_duration_sec,
             invert_left_dir=nav_settings.invert_left_dir,
             invert_right_dir=nav_settings.invert_right_dir,
-            dir_change_settle_sec=nav_settings.dir_change_settle_sec,
         )
     )
     try:

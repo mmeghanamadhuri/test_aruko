@@ -1,51 +1,49 @@
 """
-Standalone diagnostic: drive each wheel through every direction in turn
-so you can see (and probe with a multimeter) whether the JYQD ZF/DIR
-input is responding to the BCM logic levels.
+Standalone diagnostic: drive each wheel forward, then backward, so you
+can see (and probe with a multimeter) whether the JYQD ZF/DIR input is
+actually responding to the BCM logic levels.
 
 Use this when "all keyboard / D-pad keys spin the wheels in the same
-direction" -- the symptom of the direction pin not toggling. The
-script:
+direction" - the symptom of the direction pin not toggling. The script
+mirrors the proven Sirena RPi reference build's `forward_forever` /
+`backward_forever` sequence, so the only differences from the GUI's
+Drive screen are: it picks one wheel at a time, and it prints what
+voltage the operator should see on each pin.
 
-  1. Initialises Nina's BLDC pinout (defaults: BCM 25 = L_DIR,
-     BCM 23 = R_DIR, BCM 13 = shared PWM, BCM 18 = L_EN, BCM 10 = R_EN,
-     BCM 24 = L_SIGNAL, BCM 27 = R_SIGNAL).
-  2. For each wheel independently:
-       * Disables the OTHER wheel (EL=Signal=LOW) so the shared PWM
-         channel can ramp up without dragging it along.
-       * Sets DIR for the wheel-under-test, kicks PWM up to the
-         requested speed for `--duration`, stops.
-       * Repeats with the opposite DIR.
-  3. Logs both the configured polarity and the actual GPIO level it
-     wrote so the operator can correlate "I expected forward but it
-     went backward" with the env-var invert flags.
+Sequence per phase (matches the RPi `control_speed` flow exactly):
+
+    1. stop()                          # PWM=0, EL stays HIGH
+    2. sleep settle (default 0.1 s)
+    3. control_speed(side, en=1, speed=N, dir=fwd|back)
+    4. sleep --duration
+
+There is no kick-start, no EL low->high re-edge, and no "Signal pin
+gating" - none of which the working RPi build uses.
+
+Pin defaults (mirror of the RPi reference):
+
+    L-EL=BCM18 (pin 12)     R-EL=BCM10 (pin 19)
+    L-DIR=BCM25 (pin 22)    R-DIR=BCM22 (pin 15)
+    L-PWM=BCM12 (pin 32)    R-PWM=BCM13 (pin 33)
 
 Usage:
     python3 -m nina.app.motor_direction_test            # both wheels
     python3 -m nina.app.motor_direction_test --side left
     python3 -m nina.app.motor_direction_test --speed 30 --duration 4
 
-Pass NINA_NAV_INVERT_LEFT=1 or NINA_NAV_INVERT_RIGHT=1 if the wheel
-spins the *opposite* direction to what's logged. Pass
-NINA_NAV_LOG_DIR=1 to also log every internal DIR-pin write the
-NavigationManager performs.
+Pass NINA_NAV_INVERT_LEFT=1 or NINA_NAV_INVERT_RIGHT=1 if a wheel spins
+the *opposite* direction to what's logged.
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import time
 from pathlib import Path
 
-# Force the per-pin DIR write log lines to INFO before importing the
-# NavigationManager - this script IS a diagnostic, so the user shouldn't
-# need to remember to export NINA_NAV_LOG_DIR=1 themselves.
-os.environ.setdefault("NINA_NAV_LOG_DIR", "1")
-
-from nina.config.settings import load_settings  # noqa: E402
-from nina.controllers.navigation_manager import (  # noqa: E402
+from nina.config.settings import load_settings
+from nina.controllers.navigation_manager import (
     DEFAULT_PINS,
     NavigationConfig,
     NavigationManager,
@@ -64,21 +62,16 @@ def _build_nav() -> NavigationManager:
         pwm_frequency_hz=settings.pwm_frequency_hz,
         default_speed_percent=settings.default_speed_percent,
         turn_duration_sec=settings.turn_duration_sec,
-        min_duty_percent=settings.min_duty_percent,
-        max_duty_percent=settings.max_duty_percent,
-        kick_start_duty_percent=settings.kick_start_duty_percent,
-        kick_start_duration_sec=settings.kick_start_duration_sec,
         invert_left_dir=settings.invert_left_dir,
         invert_right_dir=settings.invert_right_dir,
-        dir_change_settle_sec=settings.dir_change_settle_sec,
     )
     return NavigationManager(cfg)
 
 
 def _expected_level(side: str, direction: str, nav: NavigationManager) -> int:
-    """Mirror NavigationManager._set_direction() so we can print the
+    """Mirror NavigationManager._control_speed() so we can print the
     BCM logic level the diagnostic *expects* the wire to be holding."""
-    forward = (direction == NavigationManager.DIR_FORWARD)
+    forward = direction == NavigationManager.DIR_FORWARD
     if side == NavigationManager.SIDE_LEFT:
         level = 1 if forward else 0
         if nav.config.invert_left_dir:
@@ -91,20 +84,12 @@ def _expected_level(side: str, direction: str, nav: NavigationManager) -> int:
 
 
 def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: float) -> None:
-    """Spin the chosen wheel forward for `duration` then backward for
-    `duration`, with a 1 s park between phases.
+    """Spin the chosen wheel forward for `duration`, park, then backward.
 
-    The other wheel is held with EL=LOW *and* Signal=LOW so the JYQD
-    treats it as gated-off; any motion the operator sees is
-    unambiguously coming from the wheel under test, even on builds
-    where both VR pins share a single PWM channel (Nina's default
-    baseline harness, where L_PWM == R_PWM == BCM 13).
-
-    Each phase prints the expected BCM logic level for the DIR pin AND
-    the kick-start duty being used. This way the operator has a single
-    line of "I should be seeing X V on BCM Y; the wheel should spin
-    THIS direction now" without needing the NINA_NAV_LOG_DIR env var
-    set (which is one fewer thing to forget on Jetson).
+    The other wheel is parked (PWM=0) but EL stays HIGH (RPi-style soft
+    stop). With per-side hardware PWM the other wheel won't move on its
+    own; if it does, that JYQD's L-PWM/R-PWM screw is mis-wired (probably
+    crossed onto the same pin as the wheel under test) - check the harness.
     """
     other = (
         NavigationManager.SIDE_RIGHT
@@ -112,69 +97,32 @@ def _exercise_side(nav: NavigationManager, side: str, speed: int, duration: floa
         else NavigationManager.SIDE_LEFT
     )
     pins = nav.config.pins
-    side_pins = (
-        (pins.l_dir, pins.l_en, pins.l_signal, pins.pwm_l)
-        if side == NavigationManager.SIDE_LEFT
-        else (pins.r_dir, pins.r_en, pins.r_signal, pins.pwm_r)
-    )
-    dir_pin, en_pin, sig_pin, pwm_pin = side_pins
-    shared_pwm = pins.pwm_l == pins.pwm_r
+    if side == NavigationManager.SIDE_LEFT:
+        dir_pin, en_pin, pwm_pin = pins.l_dir, pins.l_en, pins.pwm_l
+    else:
+        dir_pin, en_pin, pwm_pin = pins.r_dir, pins.r_en, pins.pwm_r
 
     print(
         f"\n=== {side.upper()} wheel test "
-        f"(DIR=BCM{dir_pin}, EN=BCM{en_pin}, SIGNAL=BCM{sig_pin}, "
-        f"PWM=BCM{pwm_pin}{', shared' if shared_pwm else ''}) ==="
+        f"(EN=BCM{en_pin}, DIR=BCM{dir_pin}, PWM=BCM{pwm_pin}) ==="
     )
-    if shared_pwm:
-        other_phase_screw = (
-            "JYQD-R" if side == NavigationManager.SIDE_LEFT else "JYQD-L"
-        )
-        print(
-            f"  [shared PWM on BCM{pwm_pin}] We try to gate the OTHER wheel\n"
-            f"  off by writing EL=Signal=LOW for that side, but if EL or\n"
-            f"  Signal isn't actually reaching {other_phase_screw} (loose\n"
-            f"  wire / mis-routed Dupont / fried opto), the other motor\n"
-            f"  will commutate too as soon as the shared PWM ramps up.\n"
-            f"  If you see BOTH wheels spinning during this single-side\n"
-            f"  test, the cleanest workaround is to physically unplug the\n"
-            f"  3-wire motor PHASE cable from {other_phase_screw} before\n"
-            f"  re-running. The driver stays powered, but the motor\n"
-            f"  cannot spin, so any voltages you probe at the\n"
-            f"  wheel-under-test screws are unambiguous."
-        )
 
     for label, direction in (
-        ("FORWARD",  NavigationManager.DIR_FORWARD),
+        ("FORWARD", NavigationManager.DIR_FORWARD),
         ("BACKWARD", NavigationManager.DIR_BACKWARD),
     ):
         expected = _expected_level(side, direction, nav)
         print(
             f"  -> {label} for {duration:.1f}s at {speed}% duty "
-            f"(expect BCM{dir_pin} = {expected})"
+            f"(expect BCM{dir_pin} = {'HIGH' if expected else 'LOW'})"
         )
-        # Gate the OTHER wheel off (EL=Signal=LOW) so the shared PWM
-        # channel can spin up the wheel-under-test without dragging
-        # the other one along.
-        nav._control_speed(other, False, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
-        # Hard-stop THIS wheel so the JYQD sees a clean EL=Signal=LOW
-        # window before we change direction. Without this drop, the
-        # chip latches direction on the previous EL rising edge and
-        # ignores the new ZF level - which is the exact cause of
-        # "wheel spins the same way for both phases".
-        nav._control_speed(side, False, 0, direction)  # noqa: SLF001
-        time.sleep(nav.config.dir_change_settle_sec)
-        nav._set_direction(side, direction)  # noqa: SLF001
-        time.sleep(0.05)
-        # Brief kick-start to break static friction; same idea as
-        # NavigationManager._kick_start but inlined so each phase is
-        # self-contained and easy to read in the log.
-        kick = max(int(speed), int(nav.config.kick_start_duty_percent))
-        kick = max(0, min(100, kick))
-        kick_dur = max(0.0, float(nav.config.kick_start_duration_sec))
-        if kick_dur > 0 and speed > 0:
-            print(f"     kick-start {kick}% for {kick_dur:.2f}s")
-            nav._control_speed(side, True, kick, direction)  # noqa: SLF001
-            time.sleep(kick_dur)
+        # Park the other wheel (PWM=0, EL stays HIGH - same as stop()).
+        nav._control_speed(other, True, 0, NavigationManager.DIR_FORWARD)  # noqa: SLF001
+        # Park the wheel under test before changing direction. JYQD samples
+        # DIR continuously so this isn't strictly required, but it gives
+        # us a clean visual "stop... go the other way" cadence.
+        nav._control_speed(side, True, 0, direction)  # noqa: SLF001
+        time.sleep(nav.config.settle_delay_sec)
         nav._control_speed(side, True, speed, direction)  # noqa: SLF001
         time.sleep(duration)
         nav._control_speed(side, True, 0, direction)  # noqa: SLF001
@@ -218,14 +166,12 @@ def main() -> int:
         "--------------------------------------------------"
     )
     print(
-        "Polarity: LEFT forward = HIGH on BCM",
-        nav.config.pins.l_dir,
-        "(invert=" + str(nav.config.invert_left_dir) + ")",
+        "Polarity: LEFT  forward = HIGH on BCM "
+        f"{nav.config.pins.l_dir} (invert={nav.config.invert_left_dir})"
     )
     print(
-        "          RIGHT forward = LOW on BCM",
-        nav.config.pins.r_dir,
-        "(invert=" + str(nav.config.invert_right_dir) + ")",
+        "          RIGHT forward = LOW  on BCM "
+        f"{nav.config.pins.r_dir} (invert={nav.config.invert_right_dir})"
     )
 
     try:
@@ -234,8 +180,6 @@ def main() -> int:
         print(f"[FATAL] initialize() failed: {exc}")
         return 2
 
-    nav.release_brake()
-
     try:
         if args.side in ("left", "both"):
             _exercise_side(nav, NavigationManager.SIDE_LEFT, args.speed, args.duration)
@@ -243,23 +187,18 @@ def main() -> int:
             _exercise_side(nav, NavigationManager.SIDE_RIGHT, args.speed, args.duration)
 
         print(
-            "\nFinished. The JYQD now sees a clean EL=Signal=LOW window\n"
-            "between FORWARD and BACKWARD phases (dir_change_settle="
-            f"{nav.config.dir_change_settle_sec:.2f}s), so each direction\n"
-            "phase gets its own EL rising edge. If a wheel STILL spins the\n"
-            "same way for both phases above:\n"
+            "\nFinished. If a wheel STILL spins the same way for both phases:\n"
             "  1. With a multimeter on the JYQD's ZF terminal, check that\n"
             "     the voltage actually toggles between phases (~3.3 V vs 0 V).\n"
-            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} "
-            "(pin 22).\n"
-            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} "
-            "(pin 16).\n"
+            f"     LEFT  ZF should toggle on BCM {nav.config.pins.l_dir} (pin 22).\n"
+            f"     RIGHT ZF should toggle on BCM {nav.config.pins.r_dir} (pin 15).\n"
             "  2. If the JYQD ZF pad doesn't track the Jetson pin, the\n"
-            "     wire/level-shifter is at fault.\n"
-            "  3. If the Jetson PIN itself doesn't toggle, the BCM is\n"
-            "     locked to a non-GPIO alt-function on this device tree.\n"
-            "     Run 'sudo python3 -m nina.app.pin_probe --pin <bcm>'\n"
-            "     to re-vet a candidate pin before re-pinning.\n"
+            "     wire is broken or running through a level shifter that\n"
+            "     is mangling the signal - fix the harness.\n"
+            "  3. If the Jetson PIN itself doesn't toggle, run\n"
+            "     'sudo python3 -m nina.app.pin_probe --pin <bcm>' to\n"
+            "     re-vet that the pin is GPIO-capable in the current\n"
+            "     jetson-io.py header config.\n"
             "  4. If only the polarity is wrong (e.g. FORWARD spins backward),\n"
             "     export NINA_NAV_INVERT_LEFT=1 / NINA_NAV_INVERT_RIGHT=1."
         )
