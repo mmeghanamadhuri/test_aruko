@@ -86,18 +86,32 @@ Cross-cutting design rules:
   plus, on a non-Jetson host, an honest `Simulation — Jetson.GPIO is
   required on Jetson Nano. Install with: pip install Jetson.GPIO`.
 
-Wiring: `workers/drive_controller.py` is a Qt facade over
-`nina.controllers.navigation_manager.NavigationManager`, talking to
-the JYQD\_V7.3E2 BLDC drivers. The GUI flow uses
-`drive_continuous(...)` for D-pad presses (non-blocking, no auto-stop)
-and `set_wheels(...)` for live speed updates and autonomous-pilot
-commands. The CLI tools still use the timed `turn_left()` /
-`turn_right()` for scripted turns of a fixed duration.
+Wiring: `workers/drive_controller.py` is a Qt facade over a
+navigation manager. Two backends are supported, picked by
+`NINA_NAV_MODE` and instantiated by
+`nina.controllers.navigation_factory.build_navigation_manager`:
 
-The driver itself is a clean port of the Sirena Raspberry Pi reference
-build onto the Jetson Orin Nano. Pin map (mostly mirrors the RPi;
-three pads are remapped because the Orin Nano image / carrier doesn't
-expose them as plain GPIO — see notes below):
+- **`NINA_NAV_MODE=local` (default).**
+  `nina.controllers.navigation_manager.NavigationManager` drives the
+  JYQDs directly from the Jetson Orin Nano's GPIOs. Pin map and quirks
+  are documented immediately below.
+- **`NINA_NAV_MODE=remote`.**
+  `nina.controllers.remote_navigation_manager.RemoteNavigationManager`
+  sends ASCII commands over a serial port to a Raspberry Pi running
+  `pi_motor_bridge/motor_bridge.py`. The Pi owns the JYQDs. See
+  [Remote mode (Pi motor bridge)](#remote-mode-pi-motor-bridge) below
+  and `pi_motor_bridge/README.md` for the full setup.
+
+Either way the GUI flow is identical: `drive_continuous(...)` for
+D-pad presses (non-blocking, no auto-stop) and `set_wheels(...)` for
+live speed updates and autonomous-pilot commands. The CLI tools still
+use the timed `turn_left()` / `turn_right()` for scripted turns of a
+fixed duration.
+
+The local-mode driver is a clean port of the Sirena Raspberry Pi
+reference build onto the Jetson Orin Nano. Pin map (mostly mirrors the
+RPi; three pads are remapped because the Orin Nano image / carrier
+doesn't expose them as plain GPIO — see notes below):
 
 | Function    | BCM | Physical pin | Notes                  |
 | ----------- | --- | ------------ | ---------------------- |
@@ -150,6 +164,137 @@ Override individual pins via `NINA_NAV_L_EN`, `NINA_NAV_L_DIR`,
 Flip wheel polarity with `NINA_NAV_INVERT_LEFT=1` /
 `NINA_NAV_INVERT_RIGHT=1`. Default cruise speed is `NINA_NAV_SPEED=15`
 (matching the RPi reference build).
+
+### Remote mode (Pi motor bridge)
+
+If the Jetson's GPIOs aren't a reliable way to drive the JYQDs (drive
+strength, dead pads, alt-function claims), Nina supports offloading
+**only** the motor switching to a Raspberry Pi. The Jetson keeps
+running the GUI, vision, autonomy, sensors, SLAM, etc.; the Pi runs
+`pi_motor_bridge/motor_bridge.py`, which owns the JYQDs and listens
+for short ASCII commands over a serial link.
+
+Architecture:
+
+```
+┌──────────────────────────┐                  ┌──────────────────────┐
+│ Jetson Orin Nano         │                  │ Raspberry Pi         │
+│   GUI / vision / nav     │  ── USB-UART ──> │   pigpiod            │
+│   sensors / SLAM         │     115200 8N1   │   motor_bridge.py    │
+│                          │  <── ack/event ──│   navigation_bldc.py │
+│   RemoteNavigationMgr    │                  │   ─────► JYQD x2     │
+└──────────────────────────┘                  └──────────────────────┘
+```
+
+The selection happens at `NinaService` construction time and applies
+everywhere the GUI / autonomy / CLI tools touch motors — there's no
+"local vs remote" branch in any caller; both managers implement the
+same surface.
+
+#### Wiring (recommended: USB-to-TTL adapter)
+
+| USB-to-TTL adapter | Connect to                        |
+|--------------------|-----------------------------------|
+| USB                | Jetson USB-A (any free port)      |
+| TX                 | Raspberry Pi pin 10 (BCM 15, RXD) |
+| RX                 | Raspberry Pi pin 8  (BCM 14, TXD) |
+| GND                | Raspberry Pi pin 6  (any GND)     |
+| VCC                | NOT CONNECTED                     |
+
+Adapter shows up on the Jetson as `/dev/ttyUSB0` (or `/dev/ttyUSB1` if
+the Dynamixel adapter already took USB0).
+
+> **Cross-over.** Adapter TX → Pi RX, Adapter RX → Pi TX. Wire the
+> opposite of what the labels say.
+
+The Pi-side wiring (JYQD ↔ Pi GPIO) is the proven RPi prototype
+mapping, documented in `pi_motor_bridge/PINMAP.md`. If the Pi was
+already driving these motors before, don't move any wires — just put
+the JYQDs back where they were.
+
+#### One-time Pi setup
+
+```bash
+# On the Raspberry Pi:
+sudo raspi-config
+#   3 Interface Options
+#     I6 Serial Port
+#       "Login shell over serial?"     -> No
+#       "Serial port hardware enabled?"-> Yes
+#   reboot
+
+sudo apt install -y pigpio python3-pigpio
+sudo pip3 install pyserial
+sudo systemctl enable --now pigpiod
+
+# Get the bridge files onto the Pi (e.g. scp the whole pi_motor_bridge/
+# directory over from the Jetson, or git clone the repo on the Pi).
+
+cd pi_motor_bridge
+# (one-shot test in foreground:)
+sudo python3 motor_bridge.py --verbose
+
+# (or install as a systemd service so it auto-starts on boot:)
+sudo bash install_service.sh
+sudo systemctl status motor-bridge
+```
+
+#### Switch the Jetson over to remote mode
+
+```bash
+# On the Jetson:
+export NINA_NAV_MODE=remote
+export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0   # or /dev/ttyUSB1 if Dynamixel took USB0
+export NINA_NAV_REMOTE_BAUD=115200
+
+# Smoke-test the link end-to-end (no GUI):
+python3 -m nina.app.nav_bridge_test --port /dev/ttyUSB0 --speed 25 --duration 3
+
+# Quick connectivity check via the main CLI:
+python3 -m nina.app.main nav-bridge-ping
+```
+
+If the smoke test passes, launch the GUI normally — `NinaService`
+reads `NINA_NAV_MODE` at startup and the Drive screen, autonomy pilot,
+and CLI tools all route through the bridge automatically.
+
+#### Wire protocol (for reference)
+
+ASCII over 115200 8N1, newline-terminated. Documented in detail in
+`pi_motor_bridge/motor_bridge.py`.
+
+| Direction | Line                                  | Reply       | Effect                                    |
+|-----------|----------------------------------------|-------------|-------------------------------------------|
+| J → Pi    | `PING`                                 | `PONG`      | health-check                              |
+| J → Pi    | `SET <ldir> <lspeed> <rdir> <rspeed>`  | `OK`/`ERR`  | per-wheel direction + speed               |
+| J → Pi    | `STOP`                                 | `OK`        | PWM=0, EL stays HIGH (chip armed)         |
+| J → Pi    | `ESTOP`                                | `OK`        | PWM=0, EL LOW (chip disabled, no torque)  |
+| J → Pi    | `LED <CONNECTED|ERROR|WAITING|OFF>`    | `OK`/`ERR`  | status LED                                |
+| Pi → J    | `READY`                                | -           | bridge has finished GPIO init             |
+| Pi → J    | `EVT WATCHDOG`                         | -           | Pi stopped wheels because Jetson went silent while moving |
+
+A 1.5 s **watchdog** on the Pi side stops the wheels if no command
+arrives while they're commanded to move, so a Jetson crash or unplugged
+cable can't run the bot away. Tune via `NINA_BRIDGE_WATCHDOG_SEC` on
+the Pi.
+
+#### Remote-mode env vars
+
+| Var                            | Default            | Meaning                                            |
+|--------------------------------|--------------------|----------------------------------------------------|
+| `NINA_NAV_MODE`                | `local`            | `local` (Jetson GPIO) or `remote` (Pi bridge)      |
+| `NINA_NAV_REMOTE_PORT`         | `/dev/ttyUSB0`     | Serial device on the Jetson                        |
+| `NINA_NAV_REMOTE_BAUD`         | `115200`           | Must match `motor_bridge.py --baud` on the Pi      |
+| `NINA_NAV_REMOTE_TIMEOUT_SEC`  | `0.4`              | Per-line response wait                             |
+| `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward (works in both modes) |
+| `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward (works in both modes) |
+| `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi                            |
+| `NINA_BRIDGE_BAUD` (on the Pi) | `115200`           | Pi-side baud                                       |
+| `NINA_BRIDGE_WATCHDOG_SEC` (on the Pi) | `1.5`      | Stop wheels if Jetson goes silent while moving     |
+
+The local-mode `nav-test-direction` and `nav-test-pin` CLI commands
+refuse to run in remote mode — they probe Jetson GPIOs, which the Pi
+now owns.
 
 ---
 
@@ -367,6 +512,14 @@ sirena_ui/                       nina/
 ## Tunable env vars (high-traffic)
 
 ```bash
+# Navigation backend (local Jetson GPIO vs remote Pi serial bridge)
+# See "Remote mode (Pi motor bridge)" above for the full setup.
+export NINA_NAV_MODE=local                     # or 'remote' for the Pi bridge
+export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
+export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
+export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
+export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
+
 # Vision
 export NINA_VISION_CAMERA=0
 export NINA_VISION_TRT=1                       # 0 = force PyTorch CPU
@@ -427,7 +580,7 @@ mockup.
 | Screen   | Wiring                                       | Notes                                          |
 | -------- | -------------------------------------------- | ---------------------------------------------- |
 | Home     | Live status pills + manifest                  | Quick-action tiles deep-link into every screen |
-| Drive    | Live BLDCs (`NavigationManager`)             | Sim fallback when `Jetson.GPIO` is missing     |
+| Drive    | Live BLDCs (`NavigationManager` local OR `RemoteNavigationManager` via Pi bridge) | Sim fallback when backend isn't reachable     |
 | Vision   | Live USB cam + YuNet + YOLOv8 (TensorRT FP16) | `Person tracking` is next-iteration            |
 | Map      | Live RPLIDAR + HC-SR04 + IR + D435 + SLAM     | `safe wander` autonomy V1                      |
 | Actions  | Live Dynamixel record / playback + gTTS audio | Manifest is the source of truth                |

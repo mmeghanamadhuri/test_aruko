@@ -10,6 +10,11 @@ mirrors the proven Sirena RPi reference build's `forward_forever` /
 Drive screen are: it picks one wheel at a time, and it prints what
 voltage the operator should see on each pin.
 
+This tool is **local mode only** - it drives the Jetson GPIOs directly.
+If you're running with `NINA_NAV_MODE=remote` (motor control is
+offloaded to a Raspberry Pi running `pi_motor_bridge`), use
+`python3 -m nina.app.nav_bridge_test` instead.
+
 Sequence per phase (matches the RPi `control_speed` flow exactly):
 
     1. stop()                          # PWM=0, EL stays HIGH
@@ -59,6 +64,13 @@ log = logging.getLogger("nina.motor_direction_test")
 def _build_nav() -> NavigationManager:
     repo_root = Path(__file__).resolve().parents[2]
     settings = load_settings(repo_root).navigation
+    if settings.mode != "local":
+        raise SystemExit(
+            "motor_direction_test only works in local mode (it probes\n"
+            "the Jetson GPIOs directly). NINA_NAV_MODE is currently\n"
+            f"'{settings.mode}'. For the remote (Pi bridge) path use:\n"
+            "    python3 -m nina.app.nav_bridge_test\n"
+        )
     cfg = NavigationConfig(
         pins=DEFAULT_PINS,
         backend_name=settings.backend_name,

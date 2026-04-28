@@ -8,11 +8,7 @@ from typing import List
 from nina.config.settings import load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
-from nina.controllers.navigation_manager import (
-    DEFAULT_PINS,
-    NavigationConfig,
-    NavigationManager,
-)
+from nina.controllers.navigation_factory import build_navigation_manager
 from nina.services.audio_player import AudioPlayer
 from nina.services.startup_service import StartupService
 
@@ -50,20 +46,16 @@ def build_app():
     return settings, dxl, action_runner, startup_service
 
 
-def build_navigation(settings) -> NavigationManager:
-    nav_config = NavigationConfig(
-        pins=DEFAULT_PINS,
-        backend_name=settings.navigation.backend_name,
-        pwm_frequency_hz=settings.navigation.pwm_frequency_hz,
-        default_speed_percent=settings.navigation.default_speed_percent,
-        turn_duration_sec=settings.navigation.turn_duration_sec,
-        invert_left_dir=settings.navigation.invert_left_dir,
-        invert_right_dir=settings.navigation.invert_right_dir,
-    )
-    return NavigationManager(nav_config)
+def build_navigation(settings):
+    """Return a NavigationManager (local) or RemoteNavigationManager (Pi bridge).
+
+    Selection is made by `NavigationSettings.mode`, driven by the
+    `NINA_NAV_MODE` env var. See `nina.controllers.navigation_factory`.
+    """
+    return build_navigation_manager(settings.navigation)
 
 
-def run_nav_command(nav: NavigationManager, command: str,
+def run_nav_command(nav, command: str,
                     speed: int, duration: float, hold: float) -> None:
     nav.initialize()
     try:
@@ -175,6 +167,15 @@ def main() -> None:
     sub.add_parser("nav-stop", help="Immediately stop the BLDC drive motors.")
     sub.add_parser("nav-brake", help="Engage ZF brake on both wheels.")
     sub.add_parser("nav-release", help="Release ZF brake on both wheels.")
+    sub.add_parser(
+        "nav-bridge-ping",
+        help=(
+            "Open the configured navigation backend and run a quick "
+            "connectivity check. In remote mode this PINGs the Pi "
+            "bridge over serial; in local mode it just confirms the "
+            "Jetson backend can be initialised."
+        ),
+    )
 
     nav_test = sub.add_parser(
         "nav-test-pin",
@@ -327,7 +328,38 @@ def main() -> None:
         print(f"Navigation command '{args.command}' completed.")
         return
 
+    if args.command == "nav-bridge-ping":
+        nav = build_navigation(settings)
+        mode = settings.navigation.mode
+        print(f"[INIT] Navigation mode: {mode}")
+        if mode == "remote":
+            print(
+                f"[INIT] Bridge target : {settings.navigation.remote_serial_port} "
+                f"@ {settings.navigation.remote_baudrate}"
+            )
+        try:
+            nav.initialize()
+            print("[OK] Navigation backend initialised.")
+            if mode == "remote":
+                print("[OK] PING -> PONG round-trip succeeded.")
+        except Exception as exc:
+            print(f"[FAIL] {exc}")
+            raise SystemExit(1)
+        finally:
+            try:
+                nav.shutdown()
+            except Exception:
+                pass
+        return
+
     if args.command == "nav-test-direction":
+        if settings.navigation.mode != "local":
+            raise SystemExit(
+                "nav-test-direction probes Jetson GPIOs directly and only\n"
+                "works in local mode. NINA_NAV_MODE is currently\n"
+                f"'{settings.navigation.mode}'. For the remote (Pi bridge)\n"
+                "path use:  python3 -m nina.app.nav_bridge_test\n"
+            )
         nav = build_navigation(settings)
         nav.initialize()
         pins = nav.config.pins
@@ -377,6 +409,12 @@ def main() -> None:
         return
 
     if args.command == "nav-test-pin":
+        if settings.navigation.mode != "local":
+            raise SystemExit(
+                "nav-test-pin drives a Jetson GPIO directly and only works\n"
+                "in local mode. NINA_NAV_MODE is currently\n"
+                f"'{settings.navigation.mode}'.\n"
+            )
         from nina.controllers.gpio_backend import create_backend
         backend = create_backend(settings.navigation.backend_name)
         backend.setup()

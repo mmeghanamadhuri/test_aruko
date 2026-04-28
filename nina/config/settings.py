@@ -12,11 +12,25 @@ def _env_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class NavigationSettings:
-    """Tunables for `nina.controllers.navigation_manager.NavigationManager`.
+    """Tunables for the BLDC navigation manager.
 
-    Mirrors the fields on `NavigationConfig` 1:1 - the dataclass exists
-    so this stays env-driven and re-loadable from anywhere in the app
-    without the caller needing to know about `NavigationConfig`.
+    Two backends are supported and chosen via `mode`:
+
+      mode='local'  - drive the JYQDs directly from the Jetson Orin
+                      Nano's GPIOs. Uses `backend_name` and
+                      `pwm_frequency_hz`. This is the historical path.
+
+      mode='remote' - send ASCII commands over a serial port to a
+                      Raspberry Pi running
+                      `pi_motor_bridge/motor_bridge.py`. The Pi owns
+                      the JYQDs. Uses `remote_serial_port`,
+                      `remote_baudrate`, `remote_response_timeout_sec`.
+                      `backend_name` / `pwm_frequency_hz` are ignored
+                      in this mode.
+
+    `default_speed_percent`, `turn_duration_sec`, `invert_left_dir`,
+    and `invert_right_dir` apply to both modes - they live in the
+    Jetson side regardless of who actually toggles GPIOs.
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -24,6 +38,11 @@ class NavigationSettings:
     turn_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
+    # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
+    mode: str = "local"
+    remote_serial_port: str = "/dev/ttyUSB0"
+    remote_baudrate: int = 115200
+    remote_response_timeout_sec: float = 0.4
 
 
 @dataclass(frozen=True)
@@ -87,6 +106,15 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
+        # 'local'  -> Jetson GPIOs drive the JYQDs directly.
+        # 'remote' -> commands are sent over serial to a Raspberry Pi
+        #             running pi_motor_bridge/motor_bridge.py.
+        mode=os.environ.get("NINA_NAV_MODE", "local").strip().lower(),
+        remote_serial_port=os.environ.get("NINA_NAV_REMOTE_PORT", "/dev/ttyUSB0"),
+        remote_baudrate=int(os.environ.get("NINA_NAV_REMOTE_BAUD", "115200")),
+        remote_response_timeout_sec=float(
+            os.environ.get("NINA_NAV_REMOTE_TIMEOUT_SEC", "0.4")
+        ),
     )
 
     autonomy = AutonomySettings(

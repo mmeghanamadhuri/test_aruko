@@ -1,10 +1,14 @@
 """
 Real BLDC drive controller for the Drive screen.
 
-Wraps `nina.controllers.navigation_manager.NavigationManager` (which
-drives the two JYQD_V7.3E2 BLDC drivers) with a Qt-friendly worker so
-the UI never blocks on GPIO/PWM calls. The public surface mirrors the
-old `DriveStub` exactly, so it is a drop-in replacement:
+Wraps a navigation manager (either
+`nina.controllers.navigation_manager.NavigationManager` driving the
+JYQDs from Jetson GPIOs, or
+`nina.controllers.remote_navigation_manager.RemoteNavigationManager`
+sending commands over serial to a Raspberry Pi running
+`pi_motor_bridge`) with a Qt-friendly worker so the UI never blocks
+on GPIO / serial calls. The public surface mirrors the old `DriveStub`
+exactly, so it is a drop-in replacement:
 
   state_changed(dict)  signal
   state()              snapshot
@@ -51,6 +55,10 @@ from nina.controllers.navigation_manager import (
     NavigationManager,
 )
 
+# Type alias only; the remote manager is imported lazily by the factory
+# so this file stays usable on dev machines without pyserial.
+NavigationManagerLike = object
+
 
 log = logging.getLogger("sirena_ui.drive")
 
@@ -72,17 +80,45 @@ class DriveController(QObject):
         self,
         config: Optional[NavigationConfig] = None,
         parent=None,
+        *,
+        nav_manager: Optional[NavigationManagerLike] = None,
+        default_speed_percent: Optional[int] = None,
     ) -> None:
+        """Construct the Qt-side facade.
+
+        Two construction modes are supported:
+
+          1. Local (legacy / default): pass a `NavigationConfig` (or
+             nothing, to get the env-driven defaults). DriveController
+             will instantiate `NavigationManager` itself when the
+             worker thread runs `_do_init`.
+
+          2. Factory-injected: pass a pre-built `nav_manager` (any
+             object implementing the NavigationManager surface, e.g.
+             `RemoteNavigationManager`). `_do_init` will call its
+             `initialize()` instead of constructing one. Use this from
+             `NinaService` when `NINA_NAV_MODE=remote`.
+
+        `default_speed_percent` is only needed when using mode (2),
+        because we can't read it from a NavigationConfig in that case.
+        Defaults to 15% (the historical RPi-prototype default).
+        """
         super().__init__(parent)
 
+        self._injected_nav: Optional[NavigationManagerLike] = nav_manager
         self._config = config or NavigationConfig(pins=DEFAULT_PINS)
-        self._nav: Optional[NavigationManager] = None
+        self._nav: Optional[NavigationManagerLike] = None
         self._init_attempted = False
+
+        if default_speed_percent is not None:
+            initial_speed = int(default_speed_percent)
+        else:
+            initial_speed = int(self._config.default_speed_percent)
 
         self._lock = threading.RLock()
         self._state = {
             "connected": False,
-            "speed_pct": int(self._config.default_speed_percent),
+            "speed_pct": initial_speed,
             "direction": "idle",
             "brake": True,
             "reverse": False,
@@ -303,7 +339,10 @@ class DriveController(QObject):
             return
         self._init_attempted = True
         try:
-            self._nav = NavigationManager(self._config)
+            if self._injected_nav is not None:
+                self._nav = self._injected_nav
+            else:
+                self._nav = NavigationManager(self._config)
             self._nav.initialize()
             # JYQD_V7.3E2 has no software brake unless the BRK pin is
             # wired - the safest "armed but stationary" resting state

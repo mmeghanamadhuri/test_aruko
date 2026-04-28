@@ -1,26 +1,34 @@
 """
-Operator CLI for Nina's BLDC navigation (JYQD_V7.3E2 + Jetson Orin Nano).
+Operator CLI for Nina's BLDC navigation.
 
 Run with the package path so imports resolve correctly:
 
     python3 -m nina.app.motor_control
 
-Backend selection via env var NINA_NAV_BACKEND ("jetson" default, or "pigpio").
-All other tunables (default_speed_percent, invert_*_dir, etc.) come from
-`nina.config.settings.load_settings()` so this CLI behaves identically to
-the GUI's Drive screen - the same env-var overrides apply to both.
+Two backends are supported, chosen via `NINA_NAV_MODE`:
+
+  NINA_NAV_MODE=local   (default) - drive the JYQDs directly from the
+                          Jetson Orin Nano's GPIOs. `NINA_NAV_BACKEND`
+                          picks 'jetson' or 'pigpio' inside this mode.
+
+  NINA_NAV_MODE=remote  - send commands over serial to a Raspberry Pi
+                          running `pi_motor_bridge/motor_bridge.py`.
+                          Use this when the Pi is wired to the JYQDs.
+                          Set `NINA_NAV_REMOTE_PORT` (default
+                          /dev/ttyUSB0) and `NINA_NAV_REMOTE_BAUD`
+                          (default 115200).
+
+All other tunables (default_speed_percent, invert_*_dir, etc.) come
+from `nina.config.settings.load_settings()` so this CLI behaves
+identically to the GUI's Drive screen - the same env-var overrides
+apply to both.
 """
 
 import logging
-import os
 from pathlib import Path
 
 from nina.config.settings import load_settings
-from nina.controllers.navigation_manager import (
-    DEFAULT_PINS,
-    NavigationConfig,
-    NavigationManager,
-)
+from nina.controllers.navigation_factory import build_navigation_manager
 
 
 CONTROLS_HELP = (
@@ -46,18 +54,13 @@ def main() -> None:
 
     repo_root = Path(__file__).resolve().parents[2]
     nav_settings = load_settings(repo_root).navigation
-    backend_name = os.environ.get("NINA_NAV_BACKEND", nav_settings.backend_name)
-    nav = NavigationManager(
-        NavigationConfig(
-            pins=DEFAULT_PINS,
-            backend_name=backend_name,
-            pwm_frequency_hz=nav_settings.pwm_frequency_hz,
-            default_speed_percent=nav_settings.default_speed_percent,
-            turn_duration_sec=nav_settings.turn_duration_sec,
-            invert_left_dir=nav_settings.invert_left_dir,
-            invert_right_dir=nav_settings.invert_right_dir,
+    print(f"[INIT] Navigation mode: {nav_settings.mode}")
+    if nav_settings.mode == "remote":
+        print(
+            f"[INIT] Bridge target : {nav_settings.remote_serial_port} "
+            f"@ {nav_settings.remote_baudrate}"
         )
-    )
+    nav = build_navigation_manager(nav_settings)
     try:
         nav.initialize()
     except Exception as exc:
