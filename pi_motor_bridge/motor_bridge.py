@@ -79,7 +79,7 @@ import navigation_bldc as nav
 try:
     import serial  # pyserial
 except ImportError:
-    print("[FATAL] pyserial not installed. Run: sudo pip3 install pyserial")
+    print("[FATAL] pyserial not installed. Run: sudo apt install -y python3-serial")
     sys.exit(1)
 
 

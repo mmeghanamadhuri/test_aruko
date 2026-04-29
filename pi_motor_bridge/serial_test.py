@@ -37,7 +37,7 @@ import time
 try:
     import serial
 except ImportError:
-    print("[FATAL] pyserial not installed. Run: sudo pip3 install pyserial")
+    print("[FATAL] pyserial not installed. Run: sudo apt install -y python3-serial")
     sys.exit(1)
 
 
@@ -133,26 +133,40 @@ def cmd_client(args: argparse.Namespace) -> int:
     return 0
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--port", default="/dev/serial0")
-    parser.add_argument("--baud", type=int, default=115200)
-    parser.add_argument(
+def _add_common_args(p: argparse.ArgumentParser) -> None:
+    """Flags shared by every subcommand.
+
+    Putting them on a shared parent (via `parents=`) lets users type them
+    in either order: `serial_test.py loopback --port X` *or*
+    `serial_test.py --port X loopback`. argparse normally requires
+    parent-parser flags to come before the subcommand, which trips
+    everyone up.
+    """
+    p.add_argument("--port", default="/dev/serial0")
+    p.add_argument("--baud", type=int, default=115200)
+    p.add_argument(
         "--timeout",
         type=float,
         default=0.5,
         help="Per-line response timeout (seconds, client mode)",
     )
-    parser.add_argument(
+    p.add_argument(
         "--speed",
         type=int,
         default=20,
         help="Default per-wheel speed for shorthand commands (client mode)",
     )
 
+
+def main() -> int:
+    common = argparse.ArgumentParser(add_help=False)
+    _add_common_args(common)
+
+    parser = argparse.ArgumentParser(description=__doc__, parents=[common])
+
     sub = parser.add_subparsers(dest="mode", required=True)
-    sub.add_parser("loopback")
-    sub.add_parser("client")
+    sub.add_parser("loopback", parents=[common], help="Echo every byte back")
+    sub.add_parser("client", parents=[common], help="Interactive bridge client")
 
     args = parser.parse_args()
 

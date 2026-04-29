@@ -111,13 +111,67 @@ characters off it.
 
 ### 2.2 Install pigpio + pyserial
 
+> **Pi 5 warning**: `pigpio` does **not** work on the Raspberry Pi 5
+> (different GPIO controller). This bridge targets the Pi 4 / Pi 3 /
+> Zero 2 W. If you're on a Pi 5, swap to `lgpio` first - that's a
+> separate port, not covered here.
+
+On modern Raspberry Pi OS (Bookworm and newer) the `pigpio` daemon was
+dropped from the apt repos, and PEP 668 blocks `pip install` into the
+system Python. So the install is a touch longer than it used to be:
+
 ```bash
 sudo apt update
-sudo apt install -y pigpio python3-pigpio
-sudo pip3 install pyserial
-sudo systemctl enable pigpiod
-sudo systemctl start pigpiod
+# pyserial + the pigpio Python client + build deps
+sudo apt install -y python3-serial python3-pigpio \
+                    python3-setuptools python3-full \
+                    build-essential wget
+
+# Build pigpiod from source (~1-2 min on a Pi 4)
+cd /tmp
+wget https://github.com/joan2937/pigpio/archive/refs/tags/v79.tar.gz
+tar zxf v79.tar.gz
+cd pigpio-79
+make -j"$(nproc)"
+sudo make install
+sudo ldconfig
+
+# Drop a systemd unit (the v79 source install doesn't reliably do this
+# on Bookworm/Trixie - the binary lands but no service file does).
+# `-l` makes pigpiod listen only on localhost, which is all we need.
+sudo tee /etc/systemd/system/pigpiod.service > /dev/null <<'EOF'
+[Unit]
+Description=Daemon required to control GPIO pins via pigpio
+After=network.target
+
+[Service]
+Type=forking
+ExecStart=/usr/local/bin/pigpiod -l
+ExecStop=/bin/systemctl kill pigpiod
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now pigpiod
 ```
+
+Verify both libraries are importable and `pigpiod` is up:
+
+```bash
+systemctl status pigpiod --no-pager
+python3 -c "import pigpio, serial; print('pigpio', pigpio.VERSION, 'pyserial', serial.VERSION)"
+python3 -c "import pigpio; pi=pigpio.pi(); print('connected:', pi.connected); pi.stop()"
+```
+
+The second command should print `connected: True`. If it prints `False`,
+the daemon isn't reachable - re-check `systemctl status pigpiod`.
+
+> If you ever do need to install a Python package that isn't apt-packaged,
+> use a venv (`python3 -m venv ~/.sirena-venv && source
+> ~/.sirena-venv/bin/activate`) instead of `pip3 install --break-system-packages`,
+> which can corrupt the system Python.
 
 ### 2.3 Get the bridge files onto the Pi
 
@@ -275,6 +329,9 @@ driving, or the bot will park itself - by design.
 |----------------------------------------------|-----------------------------------------------------------------|
 | `[FATAL] Cannot open /dev/serial0`           | UART not enabled in raspi-config, or device is `/dev/ttyAMA0`   |
 | `[FATAL] pigpio connection failed`           | `pigpiod` isn't running -> `sudo systemctl start pigpiod`       |
+| `apt: Package 'pigpio' has no installation candidate` | Pi OS Bookworm/Trixie dropped the daemon from apt - build from source per section 2.2 |
+| `Failed to enable unit: Unit pigpiod.service does not exist` | The v79 source install didn't drop a systemd unit - create `/etc/systemd/system/pigpiod.service` per section 2.2 |
+| `pip: error: externally-managed-environment` | PEP 668 - install with apt (`python3-serial`, `python3-pigpio`) or use a venv, never `--break-system-packages` |
 | Loopback test sees nothing                   | TX/RX swapped, wrong adapter port, GND missing                  |
 | `READY` arrives but `PING` times out         | Pi -> Jetson direction is broken (Pi TX -> adapter RX wrong)    |
 | `OK` echoes but motors don't move            | JYQD power off, motor phase cable unplugged, EL screw loose     |
