@@ -69,7 +69,9 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import shutil
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -87,19 +89,37 @@ log = logging.getLogger("nina.pi.bridge")
 
 
 def ensure_pigpiod() -> bool:
-    """Start pigpiod if it isn't already running."""
-    is_running = os.system("pgrep -x pigpiod > /dev/null") == 0
-    if is_running:
-        log.info("pigpiod already running")
-        return True
+    """Verify pigpiod is running. Do NOT spawn a new daemon out-of-band.
 
-    log.info("pigpiod not running, starting...")
-    rc = os.system("pigpiod")
-    if rc != 0:
-        # Try with sudo in case we're not root yet (we should be).
-        rc = os.system("sudo pigpiod")
-    time.sleep(1.0)
-    return os.system("pgrep -x pigpiod > /dev/null") == 0
+    On a proper install the systemd unit shipped in
+    `motor-bridge.service` declares `Wants=pigpiod.service`, so pigpiod
+    is already up by the time the bridge starts. The previous version
+    of this function would `os.system("pigpiod")` (or
+    `os.system("sudo pigpiod")`!) when it found nothing running, which
+    could orphan a daemon process if the bridge crashed before
+    `nav.emergency_stop()` and would hang forever if `sudo` prompted
+    for a password on a headless boot.
+
+    Returns True if pigpiod is reachable, False otherwise. The caller
+    is expected to print actionable next steps and exit on False.
+    """
+    if shutil.which("pgrep") is None:
+        log.warning("`pgrep` not on PATH; skipping pigpiod liveness check")
+        return True
+    try:
+        rc = subprocess.call(
+            ["pgrep", "-x", "pigpiod"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except Exception as exc:
+        log.warning("pgrep for pigpiod failed (%s); will let pigpio.pi() decide", exc)
+        return True
+    if rc == 0:
+        log.info("pigpiod is running")
+        return True
+    log.error("pigpiod is NOT running")
+    return False
 
 
 class MotorBridge:
@@ -123,7 +143,15 @@ class MotorBridge:
 
     def start(self) -> None:
         if not ensure_pigpiod():
-            print("[FATAL] Could not start pigpiod")
+            print(
+                "[FATAL] pigpiod is not running on this Pi.\n"
+                "  Start it once:           sudo systemctl start pigpiod\n"
+                "  Enable on boot:          sudo systemctl enable pigpiod\n"
+                "  Or, manually:            sudo pigpiod\n"
+                "If pigpiod is missing entirely (Bookworm dropped it from\n"
+                "apt), build it from source - see pi_motor_bridge/README.md\n"
+                "section 0.2.d 'pigpio (build from source on Bookworm)'."
+            )
             sys.exit(1)
 
         if not nav.setup_gpio():

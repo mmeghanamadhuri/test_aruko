@@ -67,12 +67,29 @@ import time
 
 import pigpio
 
-logging.basicConfig(
-    filename="/tmp/ila_bot.log",
-    level=logging.INFO,
-    format="%(asctime)-15s %(levelname)s %(message)s",
-)
+# Module logger only - we deliberately do NOT call `logging.basicConfig`
+# at import time. Doing so would hijack the root logger for any process
+# that imports this module (e.g. `motor_bridge.py --verbose`'s argparse-
+# driven log setup, or the unit tests). Callers that want the legacy
+# `/tmp/ila_bot.log` file behaviour can opt in by calling
+# `enable_legacy_file_log()` after configuring their own root logger.
 log = logging.getLogger("nina.pi.bldc")
+
+
+def enable_legacy_file_log(path: str = "/tmp/ila_bot.log") -> None:
+    """Opt-in: tee this module's log records to the legacy file path.
+
+    Kept so the original RPi prototype's `/tmp/ila_bot.log` workflow
+    still works for anyone debugging directly on the Pi. Adds a
+    handler to *this module's* logger only, so it never touches the
+    root logger or other modules' configuration.
+    """
+    handler = logging.FileHandler(path)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)-15s %(levelname)s %(message)s")
+    )
+    log.addHandler(handler)
+    log.setLevel(logging.INFO)
 
 RED = 21
 GREEN = 20
@@ -198,7 +215,7 @@ def soft_stop() -> None:
 def stop() -> None:
     soft_stop()
     time.sleep(0.1)
-    logging.info("Stopped")
+    log.info("Stopped")
 
 
 def disable_drivers() -> None:

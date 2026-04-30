@@ -68,9 +68,17 @@ class RemoteNavigationConfig:
     response_timeout_sec   : per-line response wait. Keep small
                               (~0.4 s) so the GUI's tick loop never
                               blocks visibly.
-    connect_timeout_sec    : how long `initialize()` waits to see the
-                              bridge respond to a PING. Bridges that
-                              just booted may emit a `READY` first.
+    connect_timeout_sec    : how long `initialize()` keeps retrying
+                              the boot-time PING before giving up.
+                              Bridges that just booted may emit a
+                              `READY` line first; the retry loop
+                              tolerates that.
+    reconnect_min_interval_sec : when the link is broken, throttle
+                              `_ensure_port` reopen attempts to no
+                              more than once per this many seconds.
+                              Stops the GUI from busy-looping on a
+                              dead Pi at the drive_continuous tick
+                              rate.
     default_speed_percent  : exposed so `DriveController` and the
                               autonomy pilot can read a default the
                               same way they do in local mode.
@@ -82,6 +90,7 @@ class RemoteNavigationConfig:
     baudrate: int = 115200
     response_timeout_sec: float = 0.4
     connect_timeout_sec: float = 2.0
+    reconnect_min_interval_sec: float = 1.0
     default_speed_percent: int = 15
     turn_duration_sec: float = 2.3
     invert_left_dir: bool = False
@@ -104,12 +113,24 @@ class RemoteNavigationManager:
         self._port = None  # type: ignore[assignment]
         self._lock = threading.Lock()
         self._is_initialized = False
+        # Reconnect throttle: monotonic timestamp of the last failed
+        # `_open_port` attempt. `_ensure_port` won't retry until at
+        # least `reconnect_min_interval_sec` has elapsed since this.
+        self._last_reconnect_failure_ts: float = 0.0
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def initialize(self) -> None:
+        """Open the serial port and verify the bridge with a PING.
+
+        Retries the PING for up to `connect_timeout_sec` so a bridge
+        that's still emitting its boot `READY` (or hasn't quite come
+        up yet) is tolerated. Raises `RuntimeError` on failure so
+        `DriveController` falls into simulation mode with a useful
+        error string instead of pretending the link is up.
+        """
         if self._is_initialized:
             return
         try:
@@ -117,31 +138,48 @@ class RemoteNavigationManager:
         except ImportError as exc:
             raise RuntimeError(
                 "pyserial is required for remote navigation mode; "
-                "install with `pip install pyserial`"
+                "install with `sudo apt install -y python3-serial` "
+                "(or `pip install pyserial` in a venv)"
             ) from exc
         self._serial_module = serial_module
         self._open_port()
 
-        # Bridges send `READY` once on boot. If we caught the boot, drain
-        # it; otherwise the buffer is empty and we just probe with PING.
+        # Give the OS / USB stack a beat to settle, then drain anything
+        # left in the buffer (e.g. a `READY` from a bridge that just
+        # booted, or junk from a previous session).
         time.sleep(0.2)
         try:
             self._port.reset_input_buffer()
         except Exception:
             pass
 
-        if not self._send_command("PING", expect="PONG"):
-            log.warning(
-                "Bridge at %s did not reply to PING (it may still come up)",
-                self.config.serial_port,
-            )
-        else:
-            log.info(
-                "RemoteNavigationManager connected to %s @ %d",
-                self.config.serial_port,
-                self.config.baudrate,
-            )
-        self._is_initialized = True
+        deadline = time.monotonic() + max(0.0, self.config.connect_timeout_sec)
+        attempt = 0
+        while True:
+            attempt += 1
+            if self._send_command("PING", expect="PONG"):
+                log.info(
+                    "RemoteNavigationManager connected to %s @ %d (PING attempt %d)",
+                    self.config.serial_port,
+                    self.config.baudrate,
+                    attempt,
+                )
+                self._is_initialized = True
+                return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(0.2)
+
+        # PING never came back. Close the port and surface the failure;
+        # `DriveController._do_init` will catch this and put the GUI
+        # into simulation mode with a meaningful `driver_message`.
+        self._close_port()
+        raise RuntimeError(
+            f"Bridge at {self.config.serial_port} did not reply to PING "
+            f"within {self.config.connect_timeout_sec:.1f}s. Is "
+            "motor_bridge.py running on the Pi? "
+            "(`sudo systemctl status motor-bridge`)"
+        )
 
     def shutdown(self) -> None:
         if not self._is_initialized:
@@ -322,10 +360,28 @@ class RemoteNavigationManager:
         self._port = None
 
     def _ensure_port(self) -> bool:
-        """Lazily reopen the serial port if it dropped, e.g. Pi rebooted."""
+        """Lazily reopen the serial port if it dropped, e.g. Pi rebooted.
+
+        Throttled to one attempt per `reconnect_min_interval_sec` so a
+        dead Pi can't make the GUI's drive_continuous tick busy-loop.
+        Returns True only when the port is open and ready for I/O.
+        """
         if self._port is not None and getattr(self._port, "is_open", True):
             return True
         if self._serial_module is None:
+            return False
+        # Throttle: skip the reopen if we *just* failed and the cooldown
+        # hasn't elapsed yet. We deliberately gate on "have we ever
+        # failed?" (ts > 0) instead of comparing against the raw
+        # timestamp - `time.monotonic()` is process-relative on some
+        # platforms and can be small enough early in a run to make the
+        # `now - 0.0` math accidentally throttle the very first reopen.
+        now = time.monotonic()
+        cooldown = max(0.0, self.config.reconnect_min_interval_sec)
+        if (
+            self._last_reconnect_failure_ts > 0.0
+            and (now - self._last_reconnect_failure_ts) < cooldown
+        ):
             return False
         try:
             self._open_port()
@@ -334,17 +390,54 @@ class RemoteNavigationManager:
                 self._port.reset_input_buffer()
             except Exception:
                 pass
+            self._last_reconnect_failure_ts = 0.0
             log.info("Serial port reopened")
             return True
         except Exception as exc:
-            log.warning("Serial reopen failed: %s", exc)
+            self._last_reconnect_failure_ts = now
+            log.warning(
+                "Serial reopen failed (next retry in %.1fs): %s",
+                cooldown, exc,
+            )
             return False
+
+    def _read_response_line(self, deadline: float) -> str:
+        """Read one *response* line, ignoring async events.
+
+        The bridge can emit unsolicited `EVT WATCHDOG` / `READY` lines
+        at any time. Treat those as logging events and keep reading
+        until either we get a non-event line or the per-command
+        deadline expires. Without this filter a stray `EVT WATCHDOG`
+        between commands desyncs the response stream by exactly one
+        line - the next SET would consume the EVT and every command
+        after that would read the previous command's reply.
+        """
+        while time.monotonic() < deadline:
+            try:
+                raw = self._port.readline()
+            except Exception:
+                raise
+            line = raw.decode("utf-8", errors="ignore").strip()
+            if not line:
+                # readline() returned empty -> the per-call serial
+                # timeout fired. Loop only if we still have budget.
+                continue
+            if line == "READY":
+                log.info("bridge event: READY (Pi bridge (re)started)")
+                continue
+            if line.startswith("EVT "):
+                log.warning("bridge event: %s", line)
+                continue
+            return line
+        return ""
 
     def _send_command(self, cmd: str, *, expect: Optional[str] = None) -> bool:
         """Send one ASCII line and read one response line.
 
         Returns True on a clean reply (or any non-error reply when
         `expect` is None), False on timeout / error / mismatch.
+        Async `EVT ...` / `READY` lines from the bridge are skipped
+        (logged) so they can't desync the response stream.
         """
         if self._serial_module is None:
             log.error("RemoteNavigationManager.initialize() was never called")
@@ -355,11 +448,8 @@ class RemoteNavigationManager:
             try:
                 self._port.write((cmd + "\n").encode("utf-8"))
                 self._port.flush()
-                response = (
-                    self._port.readline()
-                    .decode("utf-8", errors="ignore")
-                    .strip()
-                )
+                deadline = time.monotonic() + self.config.response_timeout_sec
+                response = self._read_response_line(deadline)
             except Exception as exc:
                 log.error("Serial I/O failed for '%s': %s", cmd, exc)
                 self._close_port()
