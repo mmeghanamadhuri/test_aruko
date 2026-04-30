@@ -47,6 +47,14 @@ Environment=NINA_NAV_MODE=remote
 Environment=NINA_NAV_REMOTE_PORT=/dev/ttyTHS1
 Environment=NINA_NAV_REMOTE_BAUD=115200
 
+# Per-wheel polarity correction. The current Nina build has its left
+# BLDC wired the opposite way around from the right one - without this
+# flag, "Forward" spins the wheels in opposite directions instead of
+# both forward. Flip the matching INVERT_RIGHT instead (or both) on a
+# bot whose wiring is the other way around.
+Environment=NINA_NAV_INVERT_LEFT=1
+Environment=NINA_NAV_INVERT_RIGHT=0
+
 ExecStart=__EXEC__
 
 # Restart on transient failure so a one-off Qt / camera hiccup doesn't
