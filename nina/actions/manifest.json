@@ -4,47 +4,58 @@
     "neutral": "recordings/neutral.json",
     "namaste": {
       "file": "recordings/namaste.json",
-      "audio": "audio/namaste.mp3"
+      "audio": "audio/namaste.mp3",
+      "audio_offset": 5.0
     },
     "wave": {
       "file": "recordings/wave.json",
-      "audio": "audio/wave.mp3"
+      "audio": "audio/wave.mp3",
+      "audio_offset": 14.0
     },
     "salute_left": {
       "file": "recordings/salute_left.json",
-      "audio": "audio/salute_left.mp3"
+      "audio": "audio/salute_left.mp3",
+      "audio_offset": 7.0
     },
     "salute_right": {
       "file": "recordings/salute_right.json",
-      "audio": "audio/salute_right.mp3"
+      "audio": "audio/salute_right.mp3",
+      "audio_offset": 7.0
     },
     "point_right": {
       "file": "recordings/point_right.json",
-      "audio": "audio/point_right.mp3"
+      "audio": "audio/point_right.mp3",
+      "audio_offset": 3.0
     },
     "point_left": {
       "file": "recordings/point_left.json",
-      "audio": "audio/point_left.mp3"
+      "audio": "audio/point_left.mp3",
+      "audio_offset": 3.0
     },
     "right_handshake": {
       "file": "recordings/right_handshake.json",
-      "audio": "audio/right_handshake.mp3"
+      "audio": "audio/right_handshake.mp3",
+      "audio_offset": 6.0
     },
     "left_handshake": {
       "file": "recordings/left_handshake.json",
-      "audio": "audio/left_handshake.mp3"
+      "audio": "audio/left_handshake.mp3",
+      "audio_offset": 6.0
     },
     "fold_arms": {
       "file": "recordings/fold_arms.json",
-      "audio": "audio/fold_arms.mp3"
+      "audio": "audio/fold_arms.mp3",
+      "audio_offset": 6.0
     },
     "clap": {
       "file": "recordings/clap.json",
-      "audio": "audio/clap.mp3"
+      "audio": "audio/clap.mp3",
+      "audio_offset": 4.0
     },
     "bye": {
       "file": "recordings/bye.json",
-      "audio": "audio/bye.mp3"
+      "audio": "audio/bye.mp3",
+      "audio_offset": 4.0
     }
   }
 }
