@@ -32,6 +32,7 @@ set -u
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOG_DIR="${HOME}/.cache/sirena"
 LOG_FILE="${LOG_DIR}/launch.log"
+LOCK_FILE="${LOG_DIR}/launch.lock"
 mkdir -p "${LOG_DIR}"
 
 # Trim the log so it doesn't grow without bound between runs.
@@ -39,6 +40,38 @@ if [[ -f "${LOG_FILE}" ]]; then
     LOG_BYTES=$(stat -c %s "${LOG_FILE}" 2>/dev/null || echo 0)
     if [[ "${LOG_BYTES}" -gt 51200 ]]; then
         tail -c 32768 "${LOG_FILE}" > "${LOG_FILE}.tmp" && mv "${LOG_FILE}.tmp" "${LOG_FILE}"
+    fi
+fi
+
+# ---------------------------------------------------------------------
+# Single-instance guard.
+#
+# Symptom this fixes: on boot the panel shows two Nina windows, because
+# both the kiosk systemd user unit AND a freedesktop autostart entry
+# (~/.config/autostart/sirena.desktop, or a "Startup Applications" GUI
+# entry the operator added by hand) fire on login. Either of them can
+# legitimately want to start the GUI; the second one needs to no-op.
+#
+# We hold an advisory lock on ~/.cache/sirena/launch.lock for the
+# lifetime of *this script* (which only exits when the python process
+# exits), so any second launcher invocation while the GUI is up sees
+# the lock taken and exits cleanly. flock auto-releases when the
+# holding process dies, so a crash doesn't strand the lock.
+#
+# Without ``flock`` (very rare on JetPack) we fall through and accept
+# the risk of a duplicate launch rather than break the boot path.
+# ---------------------------------------------------------------------
+if command -v flock >/dev/null 2>&1; then
+    exec 9>"${LOCK_FILE}"
+    if ! flock -n 9; then
+        {
+            echo
+            echo "===== skipping launch $(date '+%Y-%m-%d %H:%M:%S') ====="
+            echo "another Sirena launcher is already running (lock held on ${LOCK_FILE});"
+            echo "this invocation is a no-op. To run a second instance, stop the first:"
+            echo "  systemctl --user stop nina-ui-kiosk"
+        } | tee -a "${LOG_FILE}" >&2
+        exit 0
     fi
 fi
 

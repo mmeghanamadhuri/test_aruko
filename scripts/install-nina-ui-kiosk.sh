@@ -49,6 +49,27 @@ mkdir -p "${UNIT_DIR}"
 
 sed "s|__EXEC__|${LAUNCHER}|g" "${TEMPLATE}" > "${UNIT_DEST}"
 
+# Evict any conflicting autostart .desktop entries. If the operator
+# previously installed a freedesktop autostart copy (manual `cp` to
+# ~/.config/autostart/, or via a GUI "Startup Applications" tool), it
+# would fire on login *in addition to* this systemd unit and the panel
+# would launch two Nina windows. Move them aside (with a timestamped
+# .disabled-by-kiosk-installer suffix) so the unit is the sole
+# autostarter. The launcher itself also has a flock-based single-
+# instance guard as a belt-and-braces second line of defence.
+AUTOSTART_DIR="${HOME}/.config/autostart"
+if [[ -d "${AUTOSTART_DIR}" ]]; then
+    shopt -s nullglob
+    for stale in "${AUTOSTART_DIR}"/sirena*.desktop \
+                 "${AUTOSTART_DIR}"/nina*.desktop; do
+        backup="${stale}.disabled-by-kiosk-installer.$(date +%s)"
+        mv "${stale}" "${backup}"
+        echo "[INSTALL] evicted ${stale}"
+        echo "[INSTALL]   -> ${backup} (delete if you don't need it)"
+    done
+    shopt -u nullglob
+fi
+
 # loginctl enable-linger so the user systemd manager keeps running
 # across reboots even if no one logs in. Required for kiosk.
 # Best-effort - some restricted images don't allow this and the user
