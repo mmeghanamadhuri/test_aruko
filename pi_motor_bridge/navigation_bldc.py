@@ -108,6 +108,19 @@ PWM_L = 12
 
 PWM_FREQ_HZ = 2000
 
+# JYQD speed-feedback signal lines (one tachometer-style pulse per
+# commutation step). The OLD Sirena_Humanoid prototype configures these
+# as INPUT at module load and we mirror that here. We don't read them
+# yet, but leaving them un-configured caused enough drift in the JYQD
+# wake-up sequence on at least one bench Pi to be worth fixing.
+R_SIG = 27
+L_SIG = 24
+
+# Kick parameters - see kick_and_set() docstring. Tuned to match what
+# the OLD prototype produced via two consecutive forward_forever() calls.
+KICK_PWM_PERCENT = 15      # warm-up PWM duty; below the JYQD's torque threshold
+KICK_DWELL_SEC = 0.1       # matches OLD's stop()/forward_forever() sleep
+
 object_pi: "pigpio.pi | None" = None
 
 
@@ -141,6 +154,11 @@ def setup_gpio() -> bool:
     object_pi.set_mode(R_DIR, pigpio.OUTPUT)
     object_pi.set_mode(L_EN, pigpio.OUTPUT)
     object_pi.set_mode(L_DIR, pigpio.OUTPUT)
+
+    # JYQD speed-feedback signal lines - input only, mirrors the OLD
+    # Sirena_Humanoid prototype's GPIO.setup(...,GPIO.IN) for these pins.
+    object_pi.set_mode(L_SIG, pigpio.INPUT)
+    object_pi.set_mode(R_SIG, pigpio.INPUT)
 
     # Park in a known-safe state: both EL HIGH (chip armed), both DIR
     # forward, both PWM 0. Identical to what stop() would leave us in.
@@ -196,6 +214,70 @@ def set_wheels(
     right_direction: str,
 ) -> None:
     """Update both wheels in one call. Both EL stay HIGH (chip armed)."""
+    control_speed("left", "enable", left_speed, left_direction)
+    control_speed("right", "enable", right_speed, right_direction)
+
+
+def kick_and_set(
+    left_speed: int,
+    left_direction: str,
+    right_speed: int,
+    right_direction: str,
+) -> None:
+    """JYQD startup kick - guarantees the rotor begins commutating.
+
+    The JYQD_V7.3E2 drivers we ship with Nina need a very specific
+    edge sequence on EL and PWM to start spinning a stopped rotor.
+    Without it the chip happily accepts a (EL HIGH, PWM=N>0) command
+    but never commutates - the wheel just sits there with a faint
+    buzz. This was the "I have to send forward TWICE before it
+    moves" behaviour we observed on the OLD Sirena_Humanoid prototype.
+
+    For each wheel that's being commanded to non-zero speed, this
+    function reproduces the verified-working sequence:
+
+        1. Warm-up   : EL HIGH, PWM 0 -> KICK_PWM_PERCENT, target DIR.
+                       Pushes a non-zero PWM level into the chip so we
+                       have a real falling edge to give it next.
+        2. Falling   : EL HIGH -> LOW, PWM KICK_PWM_PERCENT -> 0.
+                       Hard stop. The DIR pin is left at its target
+                       value (the JYQD samples DIR on the EL rising
+                       edge, not while it's HIGH).
+        3. Rising    : EL LOW -> HIGH, PWM 0 -> requested speed.
+                       The actual go command. The chip sees a clean
+                       LOW->HIGH on EL *and* a 0 -> N rising edge on
+                       PWM, both within the same control cycle, and
+                       reliably starts commutation.
+
+    Wheels whose target speed is 0 are left alone during the warm-up
+    and falling-edge steps - we don't want to twitch a wheel the
+    caller explicitly wants stopped (e.g. a one-wheel pivot). They
+    still get their final EL/PWM written in step 3 so the chip is
+    in a known-safe (PWM=0, EL HIGH) state at exit.
+
+    Total wall time is ~2 * KICK_DWELL_SEC (default 200 ms) when at
+    least one wheel is being kicked, near-zero otherwise. The bridge
+    only calls this on transitions out of a stopped state or on
+    direction changes - steady-state SETs that are just nudging
+    the speed call set_wheels() instead and stream at full rate.
+    """
+    left_needs_kick = left_speed > 0
+    right_needs_kick = right_speed > 0
+
+    if left_needs_kick:
+        control_speed("left", "enable", KICK_PWM_PERCENT, left_direction)
+    if right_needs_kick:
+        control_speed("right", "enable", KICK_PWM_PERCENT, right_direction)
+    if left_needs_kick or right_needs_kick:
+        time.sleep(KICK_DWELL_SEC)
+
+    if left_needs_kick:
+        control_speed("left", "disable", 0, left_direction)
+    if right_needs_kick:
+        control_speed("right", "disable", 0, right_direction)
+    if left_needs_kick or right_needs_kick:
+        time.sleep(KICK_DWELL_SEC)
+
     control_speed("left", "enable", left_speed, left_direction)
     control_speed("right", "enable", right_speed, right_direction)
 

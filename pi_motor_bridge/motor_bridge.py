@@ -54,6 +54,19 @@ watchdog only fires when the wheels are actually commanded to non-zero
 PWM, so an idle bot that's just listening doesn't generate spurious
 WATCHDOG events.
 
+JYQD startup kick
+-----------------
+The JYQD_V7.3E2 BLDC drivers won't reliably start commutating from a
+stopped rotor with a single (EL HIGH, PWM=N) command - they need an
+explicit EL falling-then-rising edge plus a PWM 0->N rising edge to
+pick up commutation cleanly. The bridge handles this transparently:
+the first SET after STOP / ESTOP / boot, and any SET that changes
+direction on either wheel, is routed through `nav.kick_and_set()`
+which applies a ~200 ms warm-up / disable / re-enable pulse before
+landing on the requested speed. Steady-state SETs that just nudge
+the speed in the same direction call `nav.set_wheels()` and stream
+through with no kick, so the GUI slider stays smooth.
+
 Run
 ---
     sudo python3 motor_bridge.py                 # default port /dev/serial0 @ 115200
@@ -134,6 +147,12 @@ class MotorBridge:
         self._lock = threading.Lock()
         self._running = True
         self._wheels_active = False  # True while non-zero PWM is commanded
+        # Last commanded direction per side ("front"/"back"). Used to
+        # decide whether the next SET needs the JYQD startup kick - a
+        # direction change always requires a kick because the chip has
+        # to re-arm in the new commutation order.
+        self._last_ldir: "str | None" = None
+        self._last_rdir: "str | None" = None
         self._last_cmd_time = time.time()
         self._watchdog_already_tripped = False
 
@@ -281,21 +300,57 @@ class MotorBridge:
                 except ValueError:
                     return "ERR speed must be int 0..100"
 
+                target_active = (lspeed > 0) or (rspeed > 0)
+                # The JYQDs need an explicit EL/PWM edge sequence to
+                # start commutating. Kick when:
+                #   - we're transitioning out of a stopped state, OR
+                #   - either wheel's direction changed since the last SET.
+                # A steady-state SET that's just nudging the speed
+                # streams through nav.set_wheels() with no kick so the
+                # GUI slider still feels responsive.
+                needs_kick = target_active and (
+                    not self._wheels_active
+                    or ldir != self._last_ldir
+                    or rdir != self._last_rdir
+                )
+
                 with self._lock:
-                    nav.set_wheels(lspeed, ldir, rspeed, rdir)
-                    self._wheels_active = (lspeed > 0) or (rspeed > 0)
+                    if needs_kick:
+                        log.debug(
+                            "SET kick: active=%s last=(%s,%s) -> (%s,%s)",
+                            self._wheels_active,
+                            self._last_ldir,
+                            self._last_rdir,
+                            ldir,
+                            rdir,
+                        )
+                        nav.kick_and_set(lspeed, ldir, rspeed, rdir)
+                    else:
+                        nav.set_wheels(lspeed, ldir, rspeed, rdir)
+                    self._wheels_active = target_active
+                    self._last_ldir = ldir
+                    self._last_rdir = rdir
                 return "OK"
 
             if cmd == "STOP":
                 with self._lock:
                     nav.soft_stop()
                     self._wheels_active = False
+                    # Direction is intentionally NOT cleared - the next
+                    # SET in the same direction still needs a kick (the
+                    # rotor is stopped) but it's still useful to know
+                    # which way we last commanded each wheel for logs.
                 return "OK"
 
             if cmd == "ESTOP":
                 with self._lock:
                     nav.disable_drivers()
                     self._wheels_active = False
+                    # ESTOP drops EL LOW, so any next SET must kick
+                    # regardless of direction. Force a re-kick by
+                    # invalidating the cached direction.
+                    self._last_ldir = None
+                    self._last_rdir = None
                 return "OK"
 
             if cmd == "LED":
