@@ -88,6 +88,53 @@ if [[ ! -x "${PYTHON_BIN}" ]]; then
 fi
 
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
+
+# ---------------------------------------------------------------------
+# Defeat OpenCV's bundled-Qt vs system PyQt5 collision.
+#
+# Symptom: "Could not load the Qt platform plugin 'xcb' in
+# /home/.../site-packages/cv2/qt/plugins" + Aborted (core dumped) on
+# launch (exit 134 / SIGABRT).
+#
+# Root cause: the pip wheel for ``opencv-python`` (NOT the
+# ``opencv-python-headless`` we declare in requirements) ships its own
+# Qt5 platform plugins under ``cv2/qt/plugins``. Once cv2 is imported,
+# Qt scans that directory first and tries to load *its* libqxcb.so,
+# which is built against a different Qt5 minor and aborts when it
+# tries to wire into the system Qt5 runtime that PyQt5 actually uses.
+#
+# Fix: pin ``QT_QPA_PLATFORM_PLUGIN_PATH`` to the system PyQt5 plugin
+# dir BEFORE we exec python, so Qt looks there first and never visits
+# cv2's broken copy. We probe a short list of well-known locations for
+# both apt-installed PyQt5 (the recommended path on Jetson) and pip-
+# installed PyQt5 (dev workstations) and take the first one that
+# actually contains a ``platforms/libqxcb.so``.
+#
+# Operator-side belt-and-braces fix that's still worth doing once:
+#     pip uninstall -y opencv-python opencv-python-headless
+#     pip install opencv-python-headless    # the ONE that doesn't bundle Qt
+# but the env-var pin above means this script no longer DEPENDS on
+# the operator having done that.
+# ---------------------------------------------------------------------
+if [[ -z "${QT_QPA_PLATFORM_PLUGIN_PATH:-}" ]]; then
+    for _qt_plugins in \
+        "/usr/lib/aarch64-linux-gnu/qt5/plugins" \
+        "/usr/lib/x86_64-linux-gnu/qt5/plugins" \
+        "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt5/plugins" \
+        "${HOME}/.local/lib/python3.10/site-packages/PyQt5/Qt/plugins" \
+        "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt5/plugins" \
+        "${HOME}/.local/lib/python3.8/site-packages/PyQt5/Qt/plugins"
+    do
+        if [[ -f "${_qt_plugins}/platforms/libqxcb.so" ]]; then
+            export QT_QPA_PLATFORM_PLUGIN_PATH="${_qt_plugins}"
+            echo "[qt] pinned QT_QPA_PLATFORM_PLUGIN_PATH=${_qt_plugins}"
+            break
+        fi
+    done
+    if [[ -z "${QT_QPA_PLATFORM_PLUGIN_PATH:-}" ]]; then
+        echo "[qt] WARNING: no system PyQt5 platforms/libqxcb.so found - if the GUI 134s with a 'Could not load the Qt platform plugin xcb' error, install python3-pyqt5 (sudo apt install -y python3-pyqt5) or pip-uninstall opencv-python and use opencv-python-headless." >&2
+    fi
+fi
 # Ensure the repo is importable even if the user has nuked PYTHONPATH.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 

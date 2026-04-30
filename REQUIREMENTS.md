@@ -346,6 +346,52 @@ While the GUI is running:
 * `F10` — quit the GUI (the unit will auto-restart it)
 * `Esc` (Drive screen) — EMERGENCY STOP
 
+### Troubleshooting: GUI 134s on launch with "Could not load the Qt platform plugin 'xcb'"
+
+Symptom: launching the GUI (kiosk OR `python3 -m sirena_ui` from a
+terminal) prints
+
+```
+qt.qpa.plugin: Could not load the Qt platform plugin "xcb" in
+"/home/.../site-packages/cv2/qt/plugins" even though it was found.
+This application failed to start because no Qt platform plugin could
+be initialized.
+Aborted (core dumped)
+```
+
+and exits with code 134 (SIGABRT).
+
+Root cause: the pip wheel **`opencv-python`** (NOT
+`opencv-python-headless`, which is what we declare in the requirements
+files) ships its own Qt5 platform plugins under `cv2/qt/plugins/`. Once
+`cv2` is imported, Qt scans that directory first and tries to load
+*its* `libqxcb.so`, which is built against a different Qt5 minor and
+crashes when wired into the system PyQt5 runtime.
+
+Two fixes — either is sufficient, both is best:
+
+1. **Operator-side cleanup** (do this once on every Jetson):
+   ```bash
+   pip uninstall -y opencv-python opencv-python-headless
+   pip install opencv-python-headless          # the ONE that doesn't bundle Qt
+   ```
+2. **Launcher-side belt-and-braces** (already in `scripts/launch-sirena.sh`):
+   the launcher pins `QT_QPA_PLATFORM_PLUGIN_PATH` to the system
+   PyQt5 plugin dir before exec-ing python, so Qt looks there first
+   and never visits cv2's broken copy. Logged as `[qt] pinned ...`
+   in `~/.cache/sirena/launch.log`.
+
+Verify either fix worked:
+
+```bash
+python3 -c "import cv2; print(cv2.__file__)"
+# If the path is …/site-packages/cv2/__init__.py and `ls` of that
+# folder has NO `qt/` subfolder, you're on opencv-python-headless. Good.
+
+tail -n 40 ~/.cache/sirena/launch.log
+# Look for: "[qt] pinned QT_QPA_PLATFORM_PLUGIN_PATH=/usr/lib/.../qt5/plugins"
+```
+
 ### Troubleshooting: GUI looks stretched / overflows the panel on boot
 
 Symptom: the kiosk-launched GUI is huge and parts run off the screen,
