@@ -91,6 +91,72 @@ export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-xcb}"
 # Ensure the repo is importable even if the user has nuked PYTHONPATH.
 export PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}"
 
+# ---------------------------------------------------------------------
+# Kiosk-mode panel: force 1024 x 600 on the connected display.
+#
+# Symptom this fixes: when launched by the systemd user unit on boot
+# the GUI comes up huge / stretched, with parts running off the edges
+# of the 10.1" panel. Same code launched manually from a terminal looks
+# correct. Root cause is that the cheap HDMI panel reports a generic
+# EDID (often 1920x1080) and X11 happily renders into that virtual
+# surface; ``showFullScreen()`` then sizes our window to that surface,
+# but every screen in sirena_ui/ is laid out for 1024 x 600 design
+# pixels - hence the overflow.
+#
+# Fix: ask xrandr to put the panel into a real 1024 x 600 mode before
+# we hand off to Qt. Only runs in kiosk mode (``NINA_UI_FULLSCREEN=1``)
+# so dev workflows on a normal 1920x1080 / 4K monitor aren't downscaled
+# behind the operator's back.
+#
+# The whole block is best-effort: missing xrandr / unsupported mode /
+# locked panel all fall through silently with a log line; the GUI still
+# launches, just at whatever resolution the panel was already in.
+# ---------------------------------------------------------------------
+_force_panel_resolution_1024x600() {
+    case "${NINA_UI_FULLSCREEN:-}" in
+        1|true|TRUE|yes|YES|y|Y|on|ON) ;;
+        *) return 0 ;;
+    esac
+    if ! command -v xrandr >/dev/null 2>&1; then
+        echo "[panel] xrandr not installed - skipping resolution forcing" >&2
+        return 0
+    fi
+    if [[ -z "${DISPLAY:-}" ]]; then
+        echo "[panel] DISPLAY unset - skipping resolution forcing" >&2
+        return 0
+    fi
+
+    local output
+    output="$(xrandr --query 2>/dev/null \
+              | awk '/ connected/ {print $1; exit}')"
+    if [[ -z "${output}" ]]; then
+        echo "[panel] no connected output reported by xrandr" >&2
+        return 0
+    fi
+
+    # Try the existing mode first - if the panel's EDID already exposes
+    # a 1024x600 mode, this is the one xrandr trusts most.
+    if xrandr --output "${output}" --mode 1024x600 >/dev/null 2>&1; then
+        echo "[panel] forced ${output} -> 1024x600 (existing mode)"
+        return 0
+    fi
+
+    # Otherwise inject a CVT-derived 1024x600 modeline and retry. Values
+    # come from ``cvt 1024 600 60`` and are stable across xrandr
+    # versions; the ``|| true`` lets the call no-op if the mode is
+    # already registered from a previous run.
+    local mode_name="1024x600_60.00"
+    local modeline="49.00 1024 1072 1168 1312 600 603 613 624 -hsync +vsync"
+    xrandr --newmode "${mode_name}" ${modeline} 2>/dev/null || true
+    xrandr --addmode "${output}" "${mode_name}" 2>/dev/null || true
+    if xrandr --output "${output}" --mode "${mode_name}" >/dev/null 2>&1; then
+        echo "[panel] forced ${output} -> ${mode_name} (custom CVT modeline)"
+        return 0
+    fi
+
+    echo "[panel] WARNING: could not force ${output} to 1024x600 - GUI may overflow" >&2
+}
+
 EXIT=0
 {
     echo
@@ -99,9 +165,11 @@ EXIT=0
     echo "PYTHON=${PYTHON_BIN}"
     echo "DISPLAY=${DISPLAY:-<unset>}"
     echo "QT_QPA_PLATFORM=${QT_QPA_PLATFORM}"
+    echo "NINA_UI_FULLSCREEN=${NINA_UI_FULLSCREEN:-<unset>}"
     echo "PATH=${PATH}"
     echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
     echo "PYTHONPATH=${PYTHONPATH}"
+    _force_panel_resolution_1024x600
     if [[ -z "${PYTHON_BIN}" ]]; then
         echo "FATAL: no python3 interpreter found on PATH" >&2
         exit 127

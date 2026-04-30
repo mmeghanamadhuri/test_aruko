@@ -2,6 +2,15 @@
 
 PyQt5 desktop cockpit (`sirena_ui/`) for the Nina robot, designed for the Jetson's 10.1" touchscreen. Persistent left charcoal sidebar, Sirena red header (clock / Wi‑Fi / battery), charcoal status footer.
 
+> **Kiosk display sizing.** Every screen is laid out for a **1024 × 600**
+> design surface. The kiosk launcher (`scripts/launch-sirena.sh`) runs
+> `xrandr` to force the panel into a real 1024 × 600 mode before Qt
+> starts; without that step the cheap HDMI 10.1" panels advertise a
+> generic 1920 × 1080 EDID and `showFullScreen()` overflows into that
+> larger surface, leaving widgets stretched / clipped on the bot.
+> See `REQUIREMENTS.md` § 5.2 step 10 (and § 6 troubleshooting) if the
+> kiosk GUI looks wrong but the CLI launch looks correct.
+
 > Every screenshot in this document is captured from the **real running app**
 > (`PYTHONPATH=. python3 -m sirena_ui` under offscreen Qt) — no design
 > mockups. Hardware that isn't present on the host shows up as

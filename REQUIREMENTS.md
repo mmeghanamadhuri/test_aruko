@@ -244,6 +244,7 @@ reference if you hit anything weird.
 10. Install the GUI kiosk autostart so the panel boots straight into
     the cockpit, fullscreen, on every reboot:
     ```bash
+    sudo apt install -y x11-xserver-utils    # provides xrandr (next step depends on it)
     ./scripts/install-nina-ui-kiosk.sh
     ```
     The installer:
@@ -255,6 +256,14 @@ reference if you hit anything weird.
       `NINA_NAV_REMOTE_PORT=/dev/ttyTHS1`, `NINA_NAV_INVERT_LEFT=1`,
     * `systemctl --user enable --now`s the unit, so the GUI is on
       the panel within a few seconds of running it.
+
+    `launch-sirena.sh` runs `xrandr` on the kiosk path **only** to
+    force the panel into a real 1024 × 600 mode before Qt starts. The
+    cheap HDMI 10.1" panels almost universally advertise a 1920 × 1080
+    EDID and rely on their internal scaler — without this step the
+    GUI launches frameless across that virtual surface and the
+    layouts (which are pinned to 1024 × 600 design pixels) end up
+    stretched and clipped.
 11. Verify on the panel: the GUI should be up, fullscreen at
     1024 × 600. From the **Drive** screen, hold *Forward* — both
     wheels should turn the same direction. *Back* reverses both.
@@ -314,6 +323,43 @@ While the GUI is running:
 * `F11` — toggle fullscreen / windowed
 * `F10` — quit the GUI (the unit will auto-restart it)
 * `Esc` (Drive screen) — EMERGENCY STOP
+
+### Troubleshooting: GUI looks stretched / overflows the panel on boot
+
+Symptom: the kiosk-launched GUI is huge and parts run off the screen,
+but `python3 -m sirena_ui` from a terminal looks correct.
+
+Root cause: the panel is being driven at >1024 × 600 (typically 1920 × 1080
+from a generic EDID + the panel's internal scaler). Qt's
+`showFullScreen()` happily fills that whole virtual surface; the
+sirena_ui layouts are designed for 1024 × 600 and overflow.
+
+Diagnose:
+
+```bash
+# What X11 actually thinks the panel is right now:
+xrandr
+
+# What size Qt grabbed when the kiosk app launched (look for "[kiosk] screen=..."):
+tail -n 50 ~/.cache/sirena/launch.log
+```
+
+A correct kiosk launch logs something like:
+
+```
+[panel] forced HDMI-0 -> 1024x600 (existing mode)
+[kiosk] screen='HDMI-0' geometry=1024x600 window=1024x600 devicePixelRatio=1.0
+```
+
+If the `[panel]` line is missing or warns, install xrandr
+(`sudo apt install -y x11-xserver-utils`), restart the kiosk
+(`systemctl --user restart nina-ui-kiosk`), and re-check the log. If
+the `[kiosk] screen=` line still reports anything other than
+`1024x600`, the panel won't accept the mode — work around it by
+forcing a panel-friendly mode in `/etc/X11/xorg.conf.d/` or by editing
+the `_force_panel_resolution_1024x600` helper in
+`scripts/launch-sirena.sh` to use the modeline your panel does
+support.
 
 ---
 

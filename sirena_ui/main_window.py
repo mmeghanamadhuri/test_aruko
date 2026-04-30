@@ -122,6 +122,25 @@ class MainWindow(QMainWindow):
         super().showEvent(event)
         if self._kiosk and not self.isFullScreen():
             self.showFullScreen()
+            # Log the actual surface Qt grabbed so launch.log shows
+            # whether xrandr-forced 1024x600 actually took. If you ever
+            # see a size other than 1024x600 here on the bot, the panel
+            # is being driven at a virtual EDID resolution and the
+            # layouts will overflow - re-check launch-sirena.sh's
+            # `_force_panel_resolution_1024x600`.
+            try:
+                screen = self.windowHandle().screen() if self.windowHandle() else None
+                if screen is not None:
+                    geom = screen.geometry()
+                    print(
+                        f"[kiosk] screen={screen.name()!r} "
+                        f"geometry={geom.width()}x{geom.height()} "
+                        f"window={self.width()}x{self.height()} "
+                        f"devicePixelRatio={screen.devicePixelRatio()}",
+                        flush=True,
+                    )
+            except Exception:
+                pass
 
     def keyPressEvent(self, event) -> None:
         """Kiosk-mode escape hatch: F11 toggles fullscreen, F10 quits.
