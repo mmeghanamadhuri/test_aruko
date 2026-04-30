@@ -195,16 +195,41 @@ class MotorBridge:
         self._ser.reset_input_buffer()
 
         print(f"[BRIDGE] Listening on {self.port_path} @ {self.baud} 8N1")
-        print(f"[BRIDGE] Watchdog timeout: {self.watchdog_timeout_sec}s")
         self._send_line("READY")
 
         signal.signal(signal.SIGINT, self._signal_shutdown)
         signal.signal(signal.SIGTERM, self._signal_shutdown)
 
-        wd = threading.Thread(target=self._watchdog_loop, name="watchdog", daemon=True)
-        wd.start()
+        self._start_watchdog_thread()
 
         self._read_loop()
+
+    def _start_watchdog_thread(self) -> bool:
+        """Spawn the watchdog thread if the watchdog is enabled.
+
+        Setting `--watchdog` (or `NINA_BRIDGE_WATCHDOG_SEC`) to 0 (or
+        any non-positive value) is the supported way to DISABLE the
+        bridge-side watchdog entirely. Useful when debugging erratic
+        stops / direction glitches that may be triggered by the
+        watchdog kicking in faster than the Jetson's heartbeat. With
+        the watchdog off, the wheels only stop when the Jetson
+        explicitly says STOP / ESTOP / commands a direction change
+        with zero PWM - so the operator must be ready to hit ESTOP
+        from the GUI if a heartbeat goes silent.
+
+        Returns True if the watchdog thread was started, False if
+        it was disabled.
+        """
+        if self.watchdog_timeout_sec <= 0:
+            print("[BRIDGE] Watchdog: DISABLED (watchdog_timeout_sec<=0)")
+            return False
+
+        print(f"[BRIDGE] Watchdog timeout: {self.watchdog_timeout_sec}s")
+        wd = threading.Thread(
+            target=self._watchdog_loop, name="watchdog", daemon=True
+        )
+        wd.start()
+        return True
 
     def shutdown(self) -> None:
         self._running = False
@@ -420,7 +445,13 @@ def main() -> int:
         "--watchdog",
         type=float,
         default=float(os.environ.get("NINA_BRIDGE_WATCHDOG_SEC", "1.5")),
-        help="Stop wheels if no command for this many seconds while moving (default: 1.5)",
+        help=(
+            "Stop wheels if no command for this many seconds while moving "
+            "(default: 1.5). Set to 0 (or any non-positive number) to "
+            "DISABLE the watchdog entirely - in that mode the bridge will "
+            "only stop on explicit STOP / ESTOP from the Jetson. Same as "
+            "NINA_BRIDGE_WATCHDOG_SEC=0."
+        ),
     )
     parser.add_argument(
         "--verbose",

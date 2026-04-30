@@ -19,7 +19,13 @@ TimeoutStopSec=5
 # Optional environment overrides (uncomment + edit):
 # Environment=NINA_BRIDGE_PORT=/dev/serial0
 # Environment=NINA_BRIDGE_BAUD=115200
-# Environment=NINA_BRIDGE_WATCHDOG_SEC=1.5
+#
+# Watchdog: stops wheels if no command for N seconds while moving.
+# Default 1.5s. Set to 0 to DISABLE the watchdog entirely - useful
+# when debugging erratic stops / direction glitches and you want the
+# wheels to keep going until the Jetson explicitly says STOP. Re-enable
+# by setting back to 1.5 (or commenting this line out).
+# Environment=NINA_BRIDGE_WATCHDOG_SEC=0
 
 StandardOutput=journal
 StandardError=journal

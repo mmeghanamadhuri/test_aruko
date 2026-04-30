@@ -564,3 +564,99 @@ def test_speed_clamped_to_0_100(
     # Last write for each is the steady-state target.
     assert l_pwm_writes[-1] == 100 * 10000
     assert r_pwm_writes[-1] == 0
+
+
+# ---------------------------------------------------------------------
+# motor_bridge watchdog enable/disable
+# ---------------------------------------------------------------------
+
+
+def test_watchdog_thread_started_when_timeout_positive(
+    nav_module: Any, bridge_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A positive watchdog_timeout_sec must spawn the watchdog thread."""
+    spawned: list = []
+
+    class _RecordingThread:
+        def __init__(self, *, target=None, name=None, daemon=None) -> None:
+            spawned.append((name, target, daemon))
+            self._target = target
+
+        def start(self) -> None:
+            spawned.append(("started", self._target.__name__))
+
+    monkeypatch.setattr(bridge_module.threading, "Thread", _RecordingThread)
+
+    bridge = bridge_module.MotorBridge(
+        port="/dev/fake0", baud=115200, watchdog_timeout_sec=1.5
+    )
+    assert bridge._start_watchdog_thread() is True
+    assert ("watchdog", bridge._watchdog_loop, True) in spawned
+    assert ("started", "_watchdog_loop") in spawned
+
+
+def test_watchdog_thread_skipped_when_timeout_zero(
+    nav_module: Any, bridge_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """watchdog_timeout_sec=0 must DISABLE the watchdog: no thread, no
+    timer, no auto-stop. The wheels only stop on explicit STOP / ESTOP."""
+    spawned: list = []
+    monkeypatch.setattr(
+        bridge_module.threading,
+        "Thread",
+        lambda **kw: spawned.append(kw) or pytest.fail("watchdog thread should not start"),
+    )
+
+    bridge = bridge_module.MotorBridge(
+        port="/dev/fake0", baud=115200, watchdog_timeout_sec=0
+    )
+    assert bridge._start_watchdog_thread() is False
+    assert spawned == []
+
+
+def test_watchdog_thread_skipped_when_timeout_negative(
+    nav_module: Any, bridge_module: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Defensive: a negative timeout (e.g. someone fat-fingered an env
+    var) is treated identically to 0 - watchdog DISABLED, not 'fires
+    instantly'."""
+    monkeypatch.setattr(
+        bridge_module.threading,
+        "Thread",
+        lambda **kw: pytest.fail("watchdog thread should not start"),
+    )
+
+    bridge = bridge_module.MotorBridge(
+        port="/dev/fake0", baud=115200, watchdog_timeout_sec=-3.2
+    )
+    assert bridge._start_watchdog_thread() is False
+
+
+def test_watchdog_disabled_set_and_long_silence_keeps_motors_running(
+    nav_module: Any, bridge_module: Any
+) -> None:
+    """End-to-end: with the watchdog disabled, dispatching a SET and
+    then sitting silent for a 'long' time (we fast-forward the clock)
+    must NOT issue any soft_stop or EVT WATCHDOG. The bridge stays in
+    'wheels_active' until told otherwise."""
+    nav_module.setup_gpio()
+    bridge = bridge_module.MotorBridge(
+        port="/dev/fake0", baud=115200, watchdog_timeout_sec=0
+    )
+    bridge._send_line = lambda line: None  # no serial in tests
+
+    bridge._dispatch("SET F 30 F 30")
+    assert bridge._wheels_active is True
+
+    fake = nav_module._test_fake_pi
+    fake.calls.clear()
+
+    # Simulate "Jetson went silent for 60 seconds" - in real life with
+    # the watchdog enabled this would fire ~1.5s in. With it disabled,
+    # no GPIO writes whatsoever should happen.
+    bridge._last_cmd_time = bridge._last_cmd_time - 60.0
+    # Even if someone called the loop body manually, the disabled
+    # bridge has no thread. The wheels-active flag stays True until
+    # an explicit STOP / ESTOP / SET 0 0 arrives.
+    assert bridge._wheels_active is True
+    assert fake.calls == []  # no soft_stop, no nothing

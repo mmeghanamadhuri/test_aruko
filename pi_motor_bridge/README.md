@@ -798,6 +798,36 @@ The bridge's **watchdog** stops the wheels if no command arrives for
 to move**. Send a fresh `SET ...` at >= 1 Hz from the Jetson while
 driving, or the bot will park itself - by design.
 
+### Disabling the watchdog (debug aid)
+
+If you suspect the watchdog is firing prematurely (e.g. mid-drive
+hiccups, asymmetric stalls, "stops randomly after 1-2 seconds"),
+disable it temporarily and see whether the symptom goes away. With
+the watchdog off, the wheels only stop on an explicit `STOP` /
+`ESTOP` from the Jetson - so be ready to hit ESTOP from the GUI if
+the heartbeat goes silent.
+
+```bash
+# Foreground / one-shot (testing):
+sudo python3 motor_bridge.py --watchdog 0
+
+# Or via env var (works with the systemd unit too):
+sudo NINA_BRIDGE_WATCHDOG_SEC=0 python3 motor_bridge.py
+```
+
+For the long-running systemd service, edit `motor-bridge.service`
+and uncomment the `Environment=NINA_BRIDGE_WATCHDOG_SEC=0` line,
+then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart motor-bridge
+journalctl -u motor-bridge -n 5 --no-pager   # confirm: "Watchdog: DISABLED"
+```
+
+Re-enable later by setting it back to `1.5` (or commenting the line
+out and reloading).
+
 ---
 
 ## 6. Troubleshooting
