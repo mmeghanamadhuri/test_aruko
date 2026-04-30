@@ -59,12 +59,16 @@ JYQD startup kick
 The JYQD_V7.3E2 BLDC drivers won't reliably start commutating from a
 stopped rotor with a single (EL HIGH, PWM=N) command - they need an
 explicit EL falling-then-rising edge plus a PWM 0->N rising edge to
-pick up commutation cleanly. The bridge handles this transparently:
-the first SET after STOP / ESTOP / boot, and any SET that changes
-direction on either wheel, is routed through `nav.kick_and_set()`
-which applies a ~200 ms warm-up / disable / re-enable pulse before
-landing on the requested speed. Steady-state SETs that just nudge
-the speed in the same direction call `nav.set_wheels()` and stream
+pick up commutation cleanly. Reverse cold-starts are even harder:
+hub motors with non-canonical hall-sensor wiring (very common with
+cheap parts) stall completely if you ask the chip to commutate
+reverse from a stopped rotor. The bridge handles both cases
+transparently via `nav.warm_reverse_and_set()`: pure-forward kicks
+get the standard ~200 ms warm-up / disable / re-enable pulse, and
+reverse kicks get an additional ~200 ms forward "puff" first so the
+rotor is already moving when the chip re-arms in reverse. Steady-
+state SETs that just nudge the speed in the same direction call
+`nav.set_wheels()` and stream
 through with no kick, so the GUI slider stays smooth.
 
 Run
@@ -324,7 +328,16 @@ class MotorBridge:
                             ldir,
                             rdir,
                         )
-                        nav.kick_and_set(lspeed, ldir, rspeed, rdir)
+                        # warm_reverse_and_set is a strict superset of
+                        # kick_and_set: pure-forward kicks pass through
+                        # at zero extra cost, while any wheel commanded
+                        # to reverse gets a forward "puff" first to give
+                        # the rotor momentum the JYQD's fallback
+                        # commutation table can latch onto. Without it,
+                        # cheap hub motors with non-canonical hall
+                        # wiring stall on cold-start reverse no matter
+                        # how high the PWM duty.
+                        nav.warm_reverse_and_set(lspeed, ldir, rspeed, rdir)
                     else:
                         nav.set_wheels(lspeed, ldir, rspeed, rdir)
                     self._wheels_active = target_active

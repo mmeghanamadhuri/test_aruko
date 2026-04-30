@@ -121,6 +121,16 @@ L_SIG = 24
 KICK_PWM_PERCENT = 15      # warm-up PWM duty; below the JYQD's torque threshold
 KICK_DWELL_SEC = 0.1       # matches OLD's stop()/forward_forever() sleep
 
+# Reverse warm-start parameters - see warm_reverse_and_set() docstring.
+# Cheap BLDC hub motors with non-canonical hall-sensor wiring can fail
+# to commutate in reverse from a stopped rotor. Briefly puffing the
+# wheel forward gives the rotor enough momentum that the JYQD's
+# fallback commutation table can latch onto the reverse hall sequence
+# at the moment the kick re-arms the chip.
+PUFF_PWM_PERCENT = 25      # forward puff duty; above static stiction on free wheels
+PUFF_FWD_SEC = 0.15        # how long the forward puff stays on
+PUFF_COAST_SEC = 0.05      # coast at PWM=0 before reversing the kick
+
 object_pi: "pigpio.pi | None" = None
 
 
@@ -280,6 +290,67 @@ def kick_and_set(
 
     control_speed("left", "enable", left_speed, left_direction)
     control_speed("right", "enable", right_speed, right_direction)
+
+
+def warm_reverse_and_set(
+    left_speed: int,
+    left_direction: str,
+    right_speed: int,
+    right_direction: str,
+) -> None:
+    """JYQD startup that handles cold-start reverse on hub motors.
+
+    Cheap BLDC hub motors don't always have hall sensors wired in the
+    sequence the JYQD assumes (ABC). The chip can fudge forward via a
+    fallback commutation table, but starting reverse from a stopped
+    rotor frequently fails - the wheel jerks once or twice and stalls,
+    no matter how high the PWM duty.
+
+    The trick is to give the rotor a tiny bit of forward momentum
+    *first*. A spinning rotor is easier for the chip to track in
+    either direction because it can sample multiple hall transitions
+    in quick succession, so the moment the kick re-arms the chip in
+    reverse, commutation latches cleanly.
+
+    Sequence per wheel that's commanded to non-zero REVERSE speed:
+
+        1. Forward puff : EL HIGH, DIR=front, PWM=PUFF_PWM_PERCENT.
+                          Wheel spins forward briefly to build rotor
+                          momentum.
+        2. Coast        : PWM=0, EL HIGH, DIR=front. Lets the rotor
+                          coast (no electrical brake) so it still has
+                          RPM when the kick re-arms.
+        3. Standard kick: hand off to kick_and_set() which does the
+                          warm-up / falling / rising sequence in the
+                          requested (reverse) direction.
+
+    Wheels commanded to FORWARD or zero speed bypass the puff entirely
+    and go straight to step 3, so this function is a drop-in
+    replacement for kick_and_set() for any SET that involves a kick.
+    Pure-forward kicks pay zero extra cost.
+
+    Total wall time when at least one wheel is being warmed in
+    reverse: ~PUFF_FWD_SEC + PUFF_COAST_SEC + 2 * KICK_DWELL_SEC
+    (default ~400 ms). For pure-forward kicks the cost is the same as
+    kick_and_set() (~200 ms).
+    """
+    left_needs_warm = left_speed > 0 and left_direction != "front"
+    right_needs_warm = right_speed > 0 and right_direction != "front"
+
+    if left_needs_warm or right_needs_warm:
+        if left_needs_warm:
+            control_speed("left", "enable", PUFF_PWM_PERCENT, "front")
+        if right_needs_warm:
+            control_speed("right", "enable", PUFF_PWM_PERCENT, "front")
+        time.sleep(PUFF_FWD_SEC)
+
+        if left_needs_warm:
+            control_speed("left", "enable", 0, "front")
+        if right_needs_warm:
+            control_speed("right", "enable", 0, "front")
+        time.sleep(PUFF_COAST_SEC)
+
+    kick_and_set(left_speed, left_direction, right_speed, right_direction)
 
 
 def soft_stop() -> None:

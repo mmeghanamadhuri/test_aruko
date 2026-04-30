@@ -201,6 +201,151 @@ def test_kick_and_set_handles_both_wheels_zero(nav_module: Any) -> None:
 
 
 # ---------------------------------------------------------------------
+# navigation_bldc.warm_reverse_and_set
+# ---------------------------------------------------------------------
+
+
+def test_warm_reverse_pure_forward_is_identical_to_kick(nav_module: Any) -> None:
+    """A pure-forward warm_reverse_and_set must produce exactly the same
+    GPIO calls as kick_and_set - no puff, no extra cost."""
+    nav = nav_module
+    assert nav.setup_gpio() is True
+    fake = nav._test_fake_pi
+
+    fake.calls.clear()
+    nav.kick_and_set(40, "front", 40, "front")
+    kick_calls = list(fake.calls)
+
+    fake.calls.clear()
+    nav.warm_reverse_and_set(40, "front", 40, "front")
+    warm_calls = list(fake.calls)
+
+    assert kick_calls == warm_calls, (
+        "warm_reverse_and_set must be a no-op puff for pure-forward "
+        f"commands.\nkick:\n{kick_calls}\nwarm:\n{warm_calls}"
+    )
+
+
+def test_warm_reverse_both_wheels_puffs_forward_then_kicks_reverse(
+    nav_module: Any,
+) -> None:
+    """For a reverse SET on both wheels, both wheels see:
+        1. forward puff (DIR=front, PWM=PUFF_PWM_PERCENT)
+        2. coast      (DIR=front, PWM=0)
+        3. kick       (DIR=back, PWM warm/0/target)
+    """
+    nav = nav_module
+    assert nav.setup_gpio() is True
+    fake = nav._test_fake_pi
+    fake.calls.clear()
+
+    nav.warm_reverse_and_set(40, "back", 40, "back")
+
+    # Left PWM sequence: PUFF, 0 (coast), KICK warm, 0 (kick fall), 40 (target)
+    l_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_L)]
+    assert l_pwm == [
+        nav.PUFF_PWM_PERCENT * 10000,
+        0,
+        nav.KICK_PWM_PERCENT * 10000,
+        0,
+        40 * 10000,
+    ], f"L PWM sequence wrong: {l_pwm}"
+
+    r_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_R)]
+    assert r_pwm == l_pwm, f"R PWM should mirror L: {r_pwm}"
+
+    # Left DIR (BCM 25): front during puff/coast, back during kick.
+    l_dir_writes = [c[2] for c in _filter(fake.calls, "write", nav.L_DIR)]
+    # 1=front (puff), 1=front (coast), 0=back (kick warm),
+    # 0=back (kick fall), 0=back (kick rise)
+    assert l_dir_writes == [1, 1, 0, 0, 0], f"L DIR sequence wrong: {l_dir_writes}"
+
+    # Right DIR (BCM 22): mirrored - front=0, back=1.
+    r_dir_writes = [c[2] for c in _filter(fake.calls, "write", nav.R_DIR)]
+    assert r_dir_writes == [0, 0, 1, 1, 1], f"R DIR sequence wrong: {r_dir_writes}"
+
+
+def test_warm_reverse_mixed_only_puffs_the_reverse_wheel(nav_module: Any) -> None:
+    """left=back, right=front: ONLY left should puff. Right goes
+    straight into the standard kick."""
+    nav = nav_module
+    assert nav.setup_gpio() is True
+    fake = nav._test_fake_pi
+    fake.calls.clear()
+
+    nav.warm_reverse_and_set(30, "back", 30, "front")
+
+    # Left: PUFF -> 0 -> KICK_warm -> 0 -> 30
+    l_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_L)]
+    assert l_pwm == [
+        nav.PUFF_PWM_PERCENT * 10000,
+        0,
+        nav.KICK_PWM_PERCENT * 10000,
+        0,
+        30 * 10000,
+    ]
+
+    # Right: NO puff. Just KICK_warm -> 0 -> 30.
+    r_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_R)]
+    assert r_pwm == [
+        nav.KICK_PWM_PERCENT * 10000,
+        0,
+        30 * 10000,
+    ], f"Right wheel should not have puff pulses, got {r_pwm}"
+
+
+def test_warm_reverse_zero_speed_wheel_skips_puff(nav_module: Any) -> None:
+    """A wheel commanded to PWM=0 must NEVER twitch - not during the
+    puff and not during the kick warm-up."""
+    nav = nav_module
+    assert nav.setup_gpio() is True
+    fake = nav._test_fake_pi
+    fake.calls.clear()
+
+    # Left: reverse 30. Right: hold still.
+    nav.warm_reverse_and_set(30, "back", 0, "back")
+
+    # Right wheel: only the final write (lands at 0). No puff, no kick.
+    r_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_R)]
+    assert r_pwm == [0], (
+        f"Right wheel commanded to 0 must not move during the puff: {r_pwm}"
+    )
+
+    # Left wheel: full puff + kick.
+    l_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav.PWM_L)]
+    assert l_pwm == [
+        nav.PUFF_PWM_PERCENT * 10000,
+        0,
+        nav.KICK_PWM_PERCENT * 10000,
+        0,
+        30 * 10000,
+    ]
+
+
+def test_bridge_set_reverse_uses_warm_reverse(
+    nav_module: Any, bridge_module: Any
+) -> None:
+    """A SET that asks for reverse from a stopped state must route
+    through warm_reverse_and_set, not bare kick_and_set - we observe
+    the puff PWM write that only the warm-reverse path produces."""
+    nav_module.setup_gpio()
+    bridge = _make_bridge(bridge_module)
+    fake = nav_module._test_fake_pi
+    fake.calls.clear()
+
+    bridge._dispatch("SET B 40 B 40")
+
+    # First PWM write on each wheel must be PUFF_PWM_PERCENT (the puff),
+    # NOT KICK_PWM_PERCENT (the bare kick warm-up).
+    l_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav_module.PWM_L)]
+    assert l_pwm[0] == nav_module.PUFF_PWM_PERCENT * 10000, (
+        f"reverse SET should puff first, but L PWM started with {l_pwm[0]}"
+    )
+    # And the final landing PWM must be the requested 40%.
+    assert l_pwm[-1] == 40 * 10000
+
+
+# ---------------------------------------------------------------------
 # motor_bridge.MotorBridge.SET dispatch (transition detection)
 # ---------------------------------------------------------------------
 
