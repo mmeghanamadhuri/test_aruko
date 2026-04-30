@@ -5,6 +5,46 @@
     "namaste": {
       "file": "recordings/namaste.json",
       "audio": "audio/namaste.mp3"
+    },
+    "wave": {
+      "file": "recordings/wave.json",
+      "audio": "audio/wave.mp3"
+    },
+    "salute_left": {
+      "file": "recordings/salute_left.json",
+      "audio": "audio/salute_left.mp3"
+    },
+    "salute_right": {
+      "file": "recordings/salute_right.json",
+      "audio": "audio/salute_right.mp3"
+    },
+    "point_right": {
+      "file": "recordings/point_right.json",
+      "audio": "audio/point_right.mp3"
+    },
+    "point_left": {
+      "file": "recordings/point_left.json",
+      "audio": "audio/point_left.mp3"
+    },
+    "right_handshake": {
+      "file": "recordings/right_handshake.json",
+      "audio": "audio/right_handshake.mp3"
+    },
+    "left_handshake": {
+      "file": "recordings/left_handshake.json",
+      "audio": "audio/left_handshake.mp3"
+    },
+    "fold_arms": {
+      "file": "recordings/fold_arms.json",
+      "audio": "audio/fold_arms.mp3"
+    },
+    "clap": {
+      "file": "recordings/clap.json",
+      "audio": "audio/clap.mp3"
+    },
+    "bye": {
+      "file": "recordings/bye.json",
+      "audio": "audio/bye.mp3"
     }
   }
 }
