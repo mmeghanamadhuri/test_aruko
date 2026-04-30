@@ -1,0 +1,61 @@
+# systemd USER unit: Sirena Nina control center, kiosk mode.
+#
+# Installed by scripts/install-nina-ui-kiosk.sh (which substitutes
+# __EXEC__ for the absolute path of scripts/launch-sirena.sh in the
+# checked-out repo).
+#
+# This is a USER unit, not a system one - graphical apps must run as
+# the desktop user so they can talk to X / Wayland. Enable it with:
+#
+#   systemctl --user enable --now nina-ui-kiosk.service
+#
+# And, on Jetson where the bot is supposed to come up automatically
+# without a human typing a password:
+#
+#   sudo loginctl enable-linger "$USER"
+#
+# so the user manager survives across reboots even before a login.
+#
+# Logs:
+#   journalctl --user -u nina-ui-kiosk -f
+#   tail -f ~/.cache/sirena/launch.log
+
+[Unit]
+Description=Sirena Nina control center (kiosk fullscreen)
+# Don't try to start before the graphical session is up - launch-sirena.sh
+# needs DISPLAY / XAUTHORITY which graphical-session.target sets.
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+
+# This is the toggle introduced in sirena_ui main_window for the 10.1"
+# panel: makes the GUI launch frameless and fullscreen at the panel's
+# native 1024x600. F11 toggles fullscreen, F10 quits, both kept as
+# escape hatches.
+Environment=NINA_UI_FULLSCREEN=1
+
+# launch-sirena.sh already sets QT_QPA_PLATFORM=xcb, but we re-export
+# it here too so a stale env from the user session can't override it.
+Environment=QT_QPA_PLATFORM=xcb
+
+# Default the bot to talking to the Pi-side BLDC bridge over UART.
+# Override per-host via `systemctl --user edit nina-ui-kiosk` if a
+# given Jetson uses a USB-TTL adapter or the simulation backend.
+Environment=NINA_NAV_MODE=remote
+Environment=NINA_NAV_REMOTE_PORT=/dev/ttyTHS1
+Environment=NINA_NAV_REMOTE_BAUD=115200
+
+ExecStart=__EXEC__
+
+# Restart on transient failure so a one-off Qt / camera hiccup doesn't
+# leave the bot with a dead screen, but back off after a handful of
+# crashes so a real bug doesn't pin a CPU.
+Restart=on-failure
+RestartSec=3
+StartLimitBurst=5
+StartLimitIntervalSec=60
+
+[Install]
+WantedBy=graphical-session.target
