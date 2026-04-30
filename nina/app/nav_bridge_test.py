@@ -84,15 +84,48 @@ def main() -> int:
         action="store_true",
         help="Skip the left/right in-place spin phases.",
     )
+    # Honour NINA_NAV_INVERT_LEFT / RIGHT as defaults so the test tool
+    # behaves identically to the GUI / kiosk service when those env vars
+    # are set. Pass --invert-left / --invert-right on the command line to
+    # force a flip independently of the env. Use --no-invert-left /
+    # --no-invert-right to override an env-provided default back to False.
+    def _env_truthy(name: str) -> bool:
+        return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+    invert_left_default = _env_truthy("NINA_NAV_INVERT_LEFT")
+    invert_right_default = _env_truthy("NINA_NAV_INVERT_RIGHT")
+
     parser.add_argument(
         "--invert-left",
+        dest="invert_left",
         action="store_true",
-        help="Flip left wheel direction (debug aid; same as NINA_NAV_INVERT_LEFT=1)",
+        default=invert_left_default,
+        help=(
+            "Flip left wheel direction. "
+            f"Default from NINA_NAV_INVERT_LEFT env: {invert_left_default}."
+        ),
+    )
+    parser.add_argument(
+        "--no-invert-left",
+        dest="invert_left",
+        action="store_false",
+        help="Force left wheel inversion OFF, ignoring NINA_NAV_INVERT_LEFT.",
     )
     parser.add_argument(
         "--invert-right",
+        dest="invert_right",
         action="store_true",
-        help="Flip right wheel direction (debug aid; same as NINA_NAV_INVERT_RIGHT=1)",
+        default=invert_right_default,
+        help=(
+            "Flip right wheel direction. "
+            f"Default from NINA_NAV_INVERT_RIGHT env: {invert_right_default}."
+        ),
+    )
+    parser.add_argument(
+        "--no-invert-right",
+        dest="invert_right",
+        action="store_false",
+        help="Force right wheel inversion OFF, ignoring NINA_NAV_INVERT_RIGHT.",
     )
     args = parser.parse_args()
 
@@ -105,6 +138,11 @@ def main() -> int:
     print("Nina motor bridge - Jetson-side end-to-end test")
     print(f"  port: {args.port}  baud: {args.baud}")
     print(f"  speed: {args.speed}%  per-phase duration: {args.duration}s")
+    print(
+        f"  invert: left={args.invert_left} right={args.invert_right} "
+        f"(env: NINA_NAV_INVERT_LEFT={os.environ.get('NINA_NAV_INVERT_LEFT', '<unset>')} "
+        f"NINA_NAV_INVERT_RIGHT={os.environ.get('NINA_NAV_INVERT_RIGHT', '<unset>')})"
+    )
     print("--------------------------------------------------")
 
     cfg = RemoteNavigationConfig(
