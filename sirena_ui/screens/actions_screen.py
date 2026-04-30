@@ -46,8 +46,8 @@ class ActionsScreen(QWidget):
         self._bus_initialized = False
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(12)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(6)
 
         # Top breadcrumb + status pill row
         top = QHBoxLayout()
@@ -65,10 +65,10 @@ class ActionsScreen(QWidget):
         # Body: Nina image left, content stack right
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
-        body.setSpacing(16)
+        body.setSpacing(8)
 
         self._image_panel = NinaImagePanel()
-        body.addWidget(self._image_panel, stretch=42)
+        body.addWidget(self._image_panel, stretch=38)
 
         self._stack = QStackedWidget()
         self._playback_panel = PlaybackPanel(service)
@@ -83,7 +83,7 @@ class ActionsScreen(QWidget):
         self._stack.addWidget(self._playback_panel)
         self._stack.addWidget(self._record_panel)
         self._stack.addWidget(self._audio_panel)
-        body.addWidget(self._stack, stretch=58)
+        body.addWidget(self._stack, stretch=62)
 
         outer.addLayout(body, stretch=1)
 

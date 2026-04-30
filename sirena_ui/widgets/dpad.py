@@ -21,12 +21,15 @@ class DPad(QWidget):
         super().__init__(parent)
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
-        grid.setSpacing(10)
+        grid.setSpacing(6)
 
-        self._fwd = self._make_btn("\u25B2  Forward", "forward")
-        self._back = self._make_btn("\u25BC  Back", "back")
-        self._left = self._make_btn("\u25C0  Left", "left")
-        self._right = self._make_btn("\u25B6  Right", "right")
+        # Glyph-only labels - the chevron alone makes the direction
+        # obvious and saves the horizontal space the words "Forward"
+        # / "Back" used to claim. Critical at 1024 wide.
+        self._fwd = self._make_btn("\u25B2", "forward")
+        self._back = self._make_btn("\u25BC", "back")
+        self._left = self._make_btn("\u25C0", "left")
+        self._right = self._make_btn("\u25B6", "right")
 
         self._stop = QPushButton("STOP")
         self._stop.setObjectName("dpadStop")

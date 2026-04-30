@@ -21,8 +21,8 @@ class Card(QFrame):
     def __init__(
         self,
         *,
-        padding: int = 20,
-        spacing: int = 12,
+        padding: int = 12,
+        spacing: int = 8,
         subtle: bool = False,
         hero: bool = False,
         parent: Optional[QWidget] = None,
@@ -55,7 +55,7 @@ class CardTitle(QLabel):
     def __init__(self, text: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(text, parent)
         self.setProperty("class", "cardTitle")
-        self.setStyleSheet("font-size: 18px; font-weight: 600;")
+        self.setStyleSheet("font-size: 15px; font-weight: 600;")
 
 
 class SectionLabel(QLabel):
@@ -74,7 +74,12 @@ class MutedLabel(QLabel):
     def __init__(self, text: str, parent: Optional[QWidget] = None) -> None:
         super().__init__(text, parent)
         self.setProperty("class", "cardMuted")
-        self.setStyleSheet("color: #6e6e73; font-size: 13px;")
+        self.setStyleSheet("color: #6e6e73; font-size: 12px;")
+        # Word wrap by default - on the 1024 x 600 panel any long
+        # supporting copy must reflow rather than expand the parent
+        # layout's minimum width (which we hit on the Settings screen
+        # with the 'Controls for this category...' string).
+        self.setWordWrap(True)
 
 
 class Pill(QLabel):

@@ -58,12 +58,12 @@ class MapScreen(QWidget):
         self._autonomy = service.autonomy
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(14)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         top = QHBoxLayout()
-        top.setSpacing(8)
-        top.addWidget(Breadcrumb("Nina", "Map (SLAM)"))
+        top.setSpacing(6)
+        top.addWidget(Breadcrumb("Nina", "Map"))
         top.addStretch(1)
         self._sensor_pill = Pill("Sensors idle", Pill.KIND_NEUTRAL)
         top.addWidget(self._sensor_pill)
@@ -72,11 +72,11 @@ class MapScreen(QWidget):
         outer.addLayout(top)
 
         body = QHBoxLayout()
-        body.setSpacing(16)
+        body.setSpacing(10)
         outer.addLayout(body, stretch=1)
 
-        body.addWidget(self._build_map_card(), stretch=62)
-        body.addWidget(self._build_side_card(), stretch=38)
+        body.addWidget(self._build_map_card(), stretch=60)
+        body.addWidget(self._build_side_card(), stretch=40)
 
         self._wire_signals()
 
@@ -85,7 +85,7 @@ class MapScreen(QWidget):
     # ------------------------------------------------------------------
 
     def _build_map_card(self) -> Card:
-        card = Card(padding=16, spacing=10)
+        card = Card(padding=10, spacing=6)
 
         header = QHBoxLayout()
         card.add_layout(header)

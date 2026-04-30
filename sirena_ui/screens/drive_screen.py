@@ -73,8 +73,10 @@ class DriveScreen(QWidget):
         self._kb_active_key: Optional[int] = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(14)
+        # Trim from 20 -> 10 on each side. At 1024 x 600 we cannot
+        # afford 40 wasted px in either direction.
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         top = QHBoxLayout()
         top.setSpacing(8)
@@ -87,11 +89,13 @@ class DriveScreen(QWidget):
         outer.addLayout(top)
 
         body = QHBoxLayout()
-        body.setSpacing(16)
+        body.setSpacing(10)
         outer.addLayout(body, stretch=1)
 
-        body.addWidget(self._build_camera_card(), stretch=58)
-        body.addWidget(self._build_control_card(), stretch=42)
+        # Slightly more weight to the control card now (was 58/42) so
+        # the D-pad isn't squeezed out at 1024 wide.
+        body.addWidget(self._build_camera_card(), stretch=55)
+        body.addWidget(self._build_control_card(), stretch=45)
 
         # Push initial state into the HUD / pills.
         self._render_state(self._drive.state())
@@ -99,10 +103,10 @@ class DriveScreen(QWidget):
     # ---------- camera card ----------
 
     def _build_camera_card(self) -> Card:
-        card = Card(padding=16, spacing=10)
+        card = Card(padding=10, spacing=6)
 
         header = QHBoxLayout()
-        header.setSpacing(8)
+        header.setSpacing(6)
         card.add_layout(header)
         header.addWidget(CardTitle("Front camera"))
         header.addStretch(1)
@@ -112,21 +116,26 @@ class DriveScreen(QWidget):
         # The camera viewport is a soft grey panel until the USB camera
         # service is wired up. Once it is, this label gets replaced with
         # a QLabel-fed QPixmap stream.
+        #
+        # Min height was 360 px - too tall for the 600-tall panel after
+        # accounting for chrome (44 + 26), screen margins (20), HUD row
+        # (~70), top pill row (~30), and card padding (~30). 200 leaves
+        # the HUD and top row visible with ~520 of content height.
         viewport = QFrame()
         viewport.setObjectName("cardSubtle")
-        viewport.setMinimumHeight(360)
+        viewport.setMinimumHeight(200)
         v = QVBoxLayout(viewport)
         v.setContentsMargins(0, 0, 0, 0)
         v.setAlignment(Qt.AlignCenter)
         glyph = QLabel("\u25C9")
         glyph.setStyleSheet(
-            "color: #c4c4c8; font-size: 88px; background-color: transparent;"
+            "color: #c4c4c8; font-size: 64px; background-color: transparent;"
         )
         glyph.setAlignment(Qt.AlignCenter)
         v.addWidget(glyph)
-        msg = QLabel("Front-camera feed will appear here once the USB camera is connected.")
+        msg = QLabel("USB camera not connected")
         msg.setStyleSheet(
-            "color: #8e8e93; font-size: 13px; background-color: transparent;"
+            "color: #8e8e93; font-size: 12px; background-color: transparent;"
         )
         msg.setAlignment(Qt.AlignCenter)
         v.addWidget(msg)
@@ -134,7 +143,7 @@ class DriveScreen(QWidget):
 
         # HUD row beneath the viewport with the live drive state.
         hud = QHBoxLayout()
-        hud.setSpacing(12)
+        hud.setSpacing(8)
         card.add_layout(hud)
         self._hud_speed = self._make_hud("Speed", "0%")
         self._hud_heading = self._make_hud("Heading", "0\u00b0")
@@ -146,11 +155,13 @@ class DriveScreen(QWidget):
         return card
 
     def _make_hud(self, label: str, value: str) -> Card:
-        box = Card(padding=12, spacing=4, subtle=True)
+        # Tight HUD tile - was padding=12, spacing=4. At 1024 x 600 we
+        # need every px the camera viewport can borrow.
+        box = Card(padding=8, spacing=2, subtle=True)
         box.add(SectionLabel(label))
         v = QLabel(value)
         v.setStyleSheet(
-            "color: #1c1c1e; font-size: 18px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 16px; font-weight: 700;"
             " background-color: transparent;"
         )
         box.add(v)
@@ -161,9 +172,12 @@ class DriveScreen(QWidget):
     # ---------- control card ----------
 
     def _build_control_card(self) -> Card:
-        card = Card(padding=20, spacing=14)
+        # Was padding=20 spacing=14. Trim to 12/8 to fit the autonomy
+        # toggle + banner + dpad + speed slider + brake/reverse rows
+        # within a 600-tall window.
+        card = Card(padding=12, spacing=8)
         card.add(CardTitle("Manual Control"))
-        card.add(MutedLabel("Hold a direction to drive \u00b7 release to stop"))
+        card.add(MutedLabel("Hold a direction \u00b7 release to stop"))
 
         # Autonomous-mode toggle. Mirrors the same control on the Map
         # screen - both feed into `service.autonomy.set_enabled()`.
@@ -175,10 +189,9 @@ class DriveScreen(QWidget):
         self._autonomy_btn.toggled.connect(self._on_autonomy_toggle)
         card.add(self._autonomy_btn)
 
+        # Was a paragraph; trimmed for the 1024 x 600 panel.
         self._auto_banner = MutedLabel(
-            "Manual D-pad below is active. Toggle Autonomous mode to "
-            "let Nina drive herself using lidar + ultrasonic + IR + "
-            "depth-camera obstacle avoidance."
+            "Toggle Autonomous to let Nina drive on her own."
         )
         self._auto_banner.setWordWrap(True)
         card.add(self._auto_banner)
@@ -197,7 +210,9 @@ class DriveScreen(QWidget):
         minus = QPushButton("\u2212")
         minus.setObjectName("secondaryButton")
         minus.setCursor(Qt.PointingHandCursor)
-        minus.setFixedWidth(40)
+        # 44 px is the standard touch-target minimum (Apple HIG /
+        # Material). 40 felt small on the 10.1" panel.
+        minus.setFixedSize(44, 44)
         minus.setFocusPolicy(Qt.NoFocus)
         minus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] - 5))
         speed_row.addWidget(minus)
@@ -211,7 +226,7 @@ class DriveScreen(QWidget):
         plus = QPushButton("+")
         plus.setObjectName("secondaryButton")
         plus.setCursor(Qt.PointingHandCursor)
-        plus.setFixedWidth(40)
+        plus.setFixedSize(44, 44)
         plus.setFocusPolicy(Qt.NoFocus)
         plus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] + 5))
         speed_row.addWidget(plus)
@@ -248,12 +263,11 @@ class DriveScreen(QWidget):
         self._estop_btn.clicked.connect(self._on_emergency_stop)
         card.add(self._estop_btn)
 
-        # Keyboard hint - critical for non-touch displays where a single
-        # mouse click is too short for the BLDC to spin up.
+        # Keyboard hint - shorter form for the 1024-wide panel where
+        # the long version wraps to 4-5 lines and pushes the rest of
+        # the card off-screen.
         kb_hint = MutedLabel(
-            "Keyboard: W A S D = drive (held) \u00b7 "
-            "Space = stop \u00b7 Esc = EMERGENCY STOP. "
-            "On-screen D-pad: press-and-HOLD the mouse button."
+            "Keys: WASD drive \u00b7 Space stop \u00b7 Esc E-STOP"
         )
         kb_hint.setWordWrap(True)
         card.add(kb_hint)

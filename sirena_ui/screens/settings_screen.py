@@ -41,16 +41,19 @@ from sirena_ui.workers.nina_service import NinaService
 
 
 # (key, label, glyph)
+# Labels intentionally short - the sub-sidebar is 150 px wide on the
+# 1024 x 600 panel and longer strings ("Voice Module \u00b7 ESP",
+# "Network \u00b7 Wi-Fi") forced the whole pane to overflow.
 SETTINGS_CATEGORIES: List[Tuple[str, str, str]] = [
     ("general", "General", "\u2699"),
-    ("network", "Network \u00b7 Wi-Fi", "\u2706"),
+    ("network", "Network", "\u2706"),
     ("display", "Display", "\u25A1"),
     ("audio", "Audio", "\u266B"),
     ("privacy", "Privacy", "\u26C4"),  # umbrella - placeholder
     ("autodock", "Autodock", "\u2693"),
-    ("voice", "Voice Module \u00b7 ESP", "\u2693"),
+    ("voice", "Voice", "\u2693"),
     ("power", "Power", "\u26A1"),
-    ("ota", "OTA Update", "\u21BB"),
+    ("ota", "OTA", "\u21BB"),
 ]
 
 
@@ -62,13 +65,13 @@ class SettingsScreen(QWidget):
         self._buttons: Dict[str, QPushButton] = {}
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(14)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         outer.addWidget(Breadcrumb("Nina", "Settings"))
 
         body = QHBoxLayout()
-        body.setSpacing(16)
+        body.setSpacing(8)
         outer.addLayout(body, stretch=1)
 
         body.addWidget(self._build_subsidebar())
@@ -79,10 +82,12 @@ class SettingsScreen(QWidget):
     def _build_subsidebar(self) -> QFrame:
         frame = QFrame()
         frame.setObjectName("subSidebar")
-        frame.setFixedWidth(220)
+        # 150 (was 220). Combined with the 160 main sidebar that's
+        # 310 of 1024 wide for navigation chrome - tight but workable.
+        frame.setFixedWidth(150)
 
         v = QVBoxLayout(frame)
-        v.setContentsMargins(8, 12, 8, 12)
+        v.setContentsMargins(6, 8, 6, 8)
         v.setSpacing(2)
 
         group = QButtonGroup(self)
@@ -138,19 +143,19 @@ class SettingsScreen(QWidget):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(14)
+        v.setSpacing(8)
 
         # About hero
-        hero = Card(padding=16, spacing=10)
+        hero = Card(padding=10, spacing=6)
         h = QHBoxLayout()
-        h.setSpacing(14)
+        h.setSpacing(10)
         hero.add_layout(h)
 
         thumb = QLabel()
         thumb.setStyleSheet("background-color: transparent;")
         pix = QPixmap(asset_path("nina.png"))
         if not pix.isNull():
-            thumb.setPixmap(pix.scaledToHeight(72, Qt.SmoothTransformation))
+            thumb.setPixmap(pix.scaledToHeight(48, Qt.SmoothTransformation))
         h.addWidget(thumb)
 
         text = QVBoxLayout()
@@ -158,13 +163,13 @@ class SettingsScreen(QWidget):
         h.addLayout(text, stretch=1)
         title = QLabel("Nina")
         title.setStyleSheet(
-            "color: #1c1c1e; font-size: 18px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
             " background-color: transparent;"
         )
         text.addWidget(title)
         sub = QLabel("Sirena Robotics \u00b7 v0.4 \u00b7 serial NN-0042")
         sub.setStyleSheet(
-            "color: #6e6e73; font-size: 13px; background-color: transparent;"
+            "color: #6e6e73; font-size: 12px; background-color: transparent;"
         )
         text.addWidget(sub)
 
@@ -175,19 +180,19 @@ class SettingsScreen(QWidget):
         h.addWidget(view_health, alignment=Qt.AlignTop)
         v.addWidget(hero)
 
-        # Form card
-        form_card = Card(padding=20, spacing=12)
+        # Form card - tighter padding to fit on the 1024 x 600 panel.
+        form_card = Card(padding=12, spacing=8)
         v.addWidget(form_card, stretch=1)
 
         section_title = QLabel("General")
         section_title.setStyleSheet(
-            "color: #1c1c1e; font-size: 18px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
             " background-color: transparent;"
         )
         form_card.add(section_title)
 
         form = QFormLayout()
-        form.setSpacing(12)
+        form.setSpacing(8)
         form.setLabelAlignment(Qt.AlignRight)
         form_card.add_layout(form)
 
@@ -258,9 +263,9 @@ class SettingsScreen(QWidget):
         container = QWidget()
         v = QVBoxLayout(container)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(14)
+        v.setSpacing(8)
 
-        card = Card(padding=24, spacing=10)
+        card = Card(padding=12, spacing=6)
         v.addWidget(card, stretch=1)
 
         title = QLabel(label)

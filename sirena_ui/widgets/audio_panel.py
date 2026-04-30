@@ -44,7 +44,7 @@ class AudioPanel(QWidget):
         self._existing_path: Optional[Path] = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(14)
 
         title = CardTitle("Action Audio")

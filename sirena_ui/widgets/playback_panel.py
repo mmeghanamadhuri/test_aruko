@@ -106,7 +106,7 @@ class PlaybackPanel(QWidget):
         self._rows: list[_ActionRow] = []
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(12)
 
         title = QLabel("Playback Actions")

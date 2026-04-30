@@ -15,16 +15,20 @@ class HeaderBar(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("headerBar")
-        self.setFixedHeight(56)
+        # 44 px is tight enough for the 600-tall panel but still tall
+        # enough for the 20 px title font + 6 px breathing room on each
+        # side. Was 56; trimmed to free 12 px of vertical real estate
+        # for screen content.
+        self.setFixedHeight(44)
 
         h = QHBoxLayout(self)
-        h.setContentsMargins(20, 6, 16, 6)
-        h.setSpacing(12)
+        h.setContentsMargins(16, 4, 12, 4)
+        h.setSpacing(10)
 
         # Brand / logo area lives in the sidebar; keep header light and
         # leave room for the centered title.
         self._left_spacer = QLabel("")
-        self._left_spacer.setMinimumWidth(60)
+        self._left_spacer.setMinimumWidth(40)
         h.addWidget(self._left_spacer)
 
         h.addStretch(1)
@@ -60,7 +64,10 @@ class HeaderBar(QFrame):
         self._menu = QPushButton("\u22EE")
         self._menu.setObjectName("headerTray")
         self._menu.setCursor(Qt.PointingHandCursor)
-        self._menu.setFixedSize(28, 28)
+        # 36 x 36 - the tray button isn't strictly tap-critical (it's
+        # decorative right now) but 28 x 28 was clearly too small for
+        # touch at arm's length on the 10.1" panel.
+        self._menu.setFixedSize(36, 36)
         h.addWidget(self._menu)
 
         # Refresh the clock every 30 s. Cheap; QTimer parented to self

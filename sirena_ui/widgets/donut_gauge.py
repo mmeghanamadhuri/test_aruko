@@ -18,7 +18,10 @@ class DonutGauge(QWidget):
         self._warn = warn
         self._err = err
         self._total = max(total, ok + warn + err) or 1
-        self.setFixedSize(180, 180)
+        # Was 180 x 180 - eats too much vertical space on a 600 px panel
+        # where the Health screen also has 4-5 cards beneath it. 130 x
+        # 130 keeps the donut readable and leaves room for the rest.
+        self.setFixedSize(130, 130)
         self._photo = QPixmap(asset_path("nina.png"))
 
     def set_counts(self, ok: int, warn: int, err: int, total: int) -> None:
@@ -32,11 +35,12 @@ class DonutGauge(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing, True)
 
-        pad = 10
+        pad = 8
         rect = QRect(pad, pad, self.width() - 2 * pad, self.height() - 2 * pad)
 
-        # Background ring
-        pen = QPen(QColor("#ececef"), 14, Qt.SolidLine, Qt.FlatCap)
+        # Ring thickness scales with overall size so the 130 px donut
+        # has the same visual proportions as the original 180 px one.
+        pen = QPen(QColor("#ececef"), 10, Qt.SolidLine, Qt.FlatCap)
         p.setPen(pen)
         p.drawArc(rect, 0, 360 * 16)
 
@@ -59,7 +63,7 @@ class DonutGauge(QWidget):
 
         # Nina photo in the hole
         if not self._photo.isNull():
-            inner_pad = 30
+            inner_pad = 22
             inner = rect.adjusted(inner_pad, inner_pad, -inner_pad, -inner_pad)
             p.setBrush(QBrush(QColor("#ffffff")))
             p.setPen(Qt.NoPen)
@@ -83,7 +87,7 @@ class DonutGauge(QWidget):
         p.setPen(QColor("#1c1c1e"))
         font = p.font()
         font.setBold(True)
-        font.setPointSize(11)
+        font.setPointSize(10)
         p.setFont(font)
-        text_rect = QRect(rect.x(), rect.bottom() - 26, rect.width(), 22)
+        text_rect = QRect(rect.x(), rect.bottom() - 22, rect.width(), 18)
         p.drawText(text_rect, Qt.AlignCenter, ok_total)

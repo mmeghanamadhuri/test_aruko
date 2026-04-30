@@ -38,16 +38,19 @@ class Sidebar(QFrame):
     def __init__(self, version_label: str = "v0.4", host_label: str = "", parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("sidebar")
-        self.setFixedWidth(200)
+        # 160 px (was 200) - the nav rows ("  ⌂   Home") fit cleanly at
+        # 14 px font with the 17 px left padding, and we get 40 px back
+        # for screen content. Critical at 1024 wide.
+        self.setFixedWidth(160)
         self._buttons: Dict[str, QPushButton] = {}
 
         v = QVBoxLayout(self)
-        v.setContentsMargins(0, 14, 0, 14)
+        v.setContentsMargins(0, 8, 0, 8)
         v.setSpacing(2)
 
         v.addWidget(self._build_brand())
 
-        v.addSpacing(10)
+        v.addSpacing(6)
 
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
@@ -76,18 +79,18 @@ class Sidebar(QFrame):
         bar = QFrame()
         bar.setStyleSheet("background-color: transparent;")
         h = QHBoxLayout(bar)
-        h.setContentsMargins(16, 0, 16, 4)
-        h.setSpacing(10)
+        h.setContentsMargins(12, 0, 12, 2)
+        h.setSpacing(8)
 
         logo = QLabel()
         pix = QPixmap(asset_path("sirena_logo.png"))
         if not pix.isNull():
-            logo.setPixmap(pix.scaledToHeight(28, Qt.SmoothTransformation))
+            logo.setPixmap(pix.scaledToHeight(22, Qt.SmoothTransformation))
         h.addWidget(logo)
 
         word = QLabel("Sirena")
         word.setStyleSheet(
-            "color: white; font-size: 17px; font-weight: 700;"
+            "color: white; font-size: 15px; font-weight: 700;"
             " background-color: transparent;"
         )
         h.addWidget(word)

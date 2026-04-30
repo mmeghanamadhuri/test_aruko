@@ -50,38 +50,41 @@ class _QuickTile(QPushButton):
         self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(110)
+        # 80 (was 110) so the 2-row tile grid fits beside the hero on
+        # a 600-tall panel after chrome (~70) and outer margins (~20).
+        # Still well above the 44 px touch-target minimum.
+        self.setMinimumHeight(80)
         self.setStyleSheet(
             """
             QPushButton#card {
                 background-color: white;
                 border: 1px solid #e3e3e6;
-                border-radius: 14px;
+                border-radius: 12px;
                 text-align: left;
             }
-            QPushButton#card:hover {
+            QPushButton#card:hover, QPushButton#card:pressed {
                 border-color: #c8102e;
                 background-color: #fbe7eb;
             }
             """
         )
         v = QVBoxLayout(self)
-        v.setContentsMargins(16, 14, 16, 14)
-        v.setSpacing(6)
+        v.setContentsMargins(12, 8, 12, 8)
+        v.setSpacing(2)
         glyph_label = QLabel(glyph)
         glyph_label.setStyleSheet(
-            "color: #c8102e; font-size: 22px; background-color: transparent;"
+            "color: #c8102e; font-size: 18px; background-color: transparent;"
         )
         v.addWidget(glyph_label)
         title = QLabel(label)
         title.setStyleSheet(
-            "color: #1c1c1e; font-size: 16px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 14px; font-weight: 700;"
             " background-color: transparent;"
         )
         v.addWidget(title)
         sub = QLabel(blurb)
         sub.setStyleSheet(
-            "color: #6e6e73; font-size: 12px; background-color: transparent;"
+            "color: #6e6e73; font-size: 11px; background-color: transparent;"
         )
         v.addWidget(sub)
 
@@ -94,8 +97,8 @@ class HomeScreen(QWidget):
         self._service = service
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(14)
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         outer.addWidget(Breadcrumb("Nina", "Home"))
 
@@ -110,9 +113,13 @@ class HomeScreen(QWidget):
     # ---------- hero ----------
 
     def _build_hero(self) -> Card:
-        card = Card(padding=24, spacing=16, hero=True)
+        # Was padding=24 spacing=16 with a 180-tall image. On a 600 px
+        # panel that hero alone ate ~220 px of the ~510 px content area
+        # and pushed the tile grid + status strip off-screen. Trimmed
+        # everything by ~40%.
+        card = Card(padding=12, spacing=8, hero=True)
         h = QHBoxLayout()
-        h.setSpacing(20)
+        h.setSpacing(12)
         card.add_layout(h)
 
         # Nina image, scaled to a comfortable hero size
@@ -121,28 +128,28 @@ class HomeScreen(QWidget):
         image.setStyleSheet("background-color: transparent;")
         pix = QPixmap(asset_path("nina.png"))
         if not pix.isNull():
-            image.setPixmap(pix.scaledToHeight(180, Qt.SmoothTransformation))
-        image.setFixedWidth(220)
+            image.setPixmap(pix.scaledToHeight(110, Qt.SmoothTransformation))
+        image.setFixedWidth(140)
         h.addWidget(image)
 
         text = QVBoxLayout()
-        text.setSpacing(6)
+        text.setSpacing(4)
         h.addLayout(text, stretch=1)
 
         hello = QLabel("Hi, I'm Nina.")
         hello.setStyleSheet(
-            "color: #1c1c1e; font-size: 28px; font-weight: 700;"
+            "color: #1c1c1e; font-size: 20px; font-weight: 700;"
             " background-color: transparent;"
         )
         text.addWidget(hello)
 
         sub = QLabel("Sirena Robotics \u00b7 ready when you are.")
         sub.setStyleSheet(
-            "color: #6e6e73; font-size: 14px; background-color: transparent;"
+            "color: #6e6e73; font-size: 12px; background-color: transparent;"
         )
         text.addWidget(sub)
 
-        text.addSpacing(8)
+        text.addSpacing(4)
 
         chip_row = QHBoxLayout()
         chip_row.setSpacing(8)
@@ -165,7 +172,7 @@ class HomeScreen(QWidget):
         play_btn = QPushButton("Play actions")
         play_btn.setObjectName("primaryButton")
         play_btn.setCursor(Qt.PointingHandCursor)
-        play_btn.setMinimumWidth(200)
+        play_btn.setMinimumWidth(140)
         play_btn.clicked.connect(
             lambda: self.navigate_requested.emit("actions:playback")
         )
@@ -174,7 +181,7 @@ class HomeScreen(QWidget):
         record_btn = QPushButton("Record new")
         record_btn.setObjectName("secondaryButton")
         record_btn.setCursor(Qt.PointingHandCursor)
-        record_btn.setMinimumWidth(200)
+        record_btn.setMinimumWidth(140)
         record_btn.clicked.connect(
             lambda: self.navigate_requested.emit("actions:record")
         )
@@ -198,7 +205,7 @@ class HomeScreen(QWidget):
     # ---------- status strip ----------
 
     def _build_status_strip(self) -> Card:
-        card = Card(padding=16, spacing=10)
+        card = Card(padding=10, spacing=6)
         title_row = QHBoxLayout()
         title_row.setSpacing(8)
         card.add_layout(title_row)
@@ -207,7 +214,7 @@ class HomeScreen(QWidget):
         title_row.addWidget(MutedLabel("Tap Health for details"))
 
         row = QHBoxLayout()
-        row.setSpacing(12)
+        row.setSpacing(8)
         card.add_layout(row)
         items = [
             ("Bus", "Connecting...", Pill.KIND_NEUTRAL),
@@ -217,7 +224,7 @@ class HomeScreen(QWidget):
             ("Wi-Fi", "Online", Pill.KIND_OK),
         ]
         for label, value, kind in items:
-            box = Card(padding=12, spacing=4, subtle=True)
+            box = Card(padding=8, spacing=2, subtle=True)
             box.add(SectionLabel(label))
             box.add(Pill(value, kind))
             row.addWidget(box, stretch=1)

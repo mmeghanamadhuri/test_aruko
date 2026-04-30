@@ -25,7 +25,7 @@ class RecordPanel(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(8, 8, 8, 8)
         outer.setSpacing(14)
 
         title = QLabel("Record Action")

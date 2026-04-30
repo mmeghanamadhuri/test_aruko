@@ -344,11 +344,15 @@ QPushButton#dpadButton {{
     background-color: {BRAND_PANEL};
     color: {BRAND_TEXT};
     border: 1px solid {BRAND_BORDER};
-    border-radius: 16px;
-    font-size: 18px;
+    border-radius: 14px;
+    font-size: 14px;
     font-weight: 600;
-    min-width: 96px;
-    min-height: 96px;
+    /* Was 96 x 96 - too big for the 1024 x 600 panel after the
+       sidebar (160), camera card (~430), and card padding (~30)
+       leave only ~250 wide for the D-pad's 3-column grid. 70 x 70
+       still well above the 44 px touch-target minimum. */
+    min-width: 70px;
+    min-height: 70px;
 }}
 QPushButton#dpadButton:hover {{
     background-color: {BRAND_RED_TINT};
@@ -367,12 +371,13 @@ QPushButton#dpadStop {{
     background-color: {BRAND_RED};
     color: {BRAND_WHITE};
     border: none;
-    border-radius: 48px;
-    font-size: 18px;
+    /* radius half of min-size keeps the circular look */
+    border-radius: 35px;
+    font-size: 14px;
     font-weight: 800;
     letter-spacing: 1px;
-    min-width: 96px;
-    min-height: 96px;
+    min-width: 70px;
+    min-height: 70px;
 }}
 QPushButton#dpadStop:hover {{
     background-color: {BRAND_RED_HOVER};
@@ -429,21 +434,24 @@ QComboBox QAbstractItemView {{
 
 QSlider::groove:horizontal {{
     border: none;
-    height: 6px;
+    height: 8px;
     background: #e6e6e9;
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 QSlider::sub-page:horizontal {{
     background: {BRAND_RED};
-    border-radius: 3px;
+    border-radius: 4px;
 }}
 QSlider::handle:horizontal {{
     background: {BRAND_PANEL};
     border: 2px solid {BRAND_RED};
-    width: 18px;
-    height: 18px;
-    margin: -7px 0;
-    border-radius: 9px;
+    /* Bumped from 18 -> 24 px for finger-friendly dragging on the
+       10.1" touchscreen. The negative vertical margin keeps the
+       handle visually centred on the 8 px groove. */
+    width: 24px;
+    height: 24px;
+    margin: -8px 0;
+    border-radius: 12px;
 }}
 
 /* ---------- Lists / scroll ---------- */

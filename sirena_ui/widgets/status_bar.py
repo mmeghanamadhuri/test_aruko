@@ -20,11 +20,14 @@ class StatusBar(QFrame):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setObjectName("footerBar")
-        self.setFixedHeight(32)
+        # 26 px (was 32) - tight, but the row contains only 12 px text
+        # so 7 px of vertical padding on each side is plenty. Frees
+        # 6 px of vertical space for the screen content above.
+        self.setFixedHeight(26)
 
         h = QHBoxLayout(self)
-        h.setContentsMargins(16, 0, 16, 0)
-        h.setSpacing(20)
+        h.setContentsMargins(12, 0, 12, 0)
+        h.setSpacing(16)
 
         self._dots: Dict[str, QLabel] = {}
         for key, label in (

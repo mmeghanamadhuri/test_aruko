@@ -15,7 +15,7 @@ class NinaImagePanel(QWidget):
     Used as the left rail of the Actions screen.
     """
 
-    def __init__(self, image_height: int = 420, parent=None) -> None:
+    def __init__(self, image_height: int = 280, parent=None) -> None:
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -24,7 +24,7 @@ class NinaImagePanel(QWidget):
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
-        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(10)
 
         self._image = QLabel()

@@ -140,8 +140,9 @@ class VisionScreen(QWidget):
         self._play_objects_btn: Optional[QPushButton] = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
-        outer.setSpacing(14)
+        # 10 / 8 trim from 20 / 14 to fit 1024 x 600.
+        outer.setContentsMargins(10, 10, 10, 10)
+        outer.setSpacing(8)
 
         top = QHBoxLayout()
         top.setSpacing(8)
@@ -152,11 +153,11 @@ class VisionScreen(QWidget):
         outer.addLayout(top)
 
         body = QHBoxLayout()
-        body.setSpacing(16)
+        body.setSpacing(10)
         outer.addLayout(body, stretch=1)
 
-        body.addWidget(self._build_camera_card(), stretch=64)
-        body.addWidget(self._build_recognition_card(), stretch=36)
+        body.addWidget(self._build_camera_card(), stretch=62)
+        body.addWidget(self._build_recognition_card(), stretch=38)
 
         self._wire_signals()
 
@@ -192,7 +193,7 @@ class VisionScreen(QWidget):
     # ---------- camera ----------
 
     def _build_camera_card(self) -> Card:
-        card = Card(padding=16, spacing=10)
+        card = Card(padding=10, spacing=6)
 
         header = QHBoxLayout()
         card.add_layout(header)
@@ -203,7 +204,11 @@ class VisionScreen(QWidget):
 
         viewport = QFrame()
         viewport.setObjectName("cardSubtle")
-        viewport.setMinimumHeight(420)
+        # Was 420 - too tall for the 600-px panel. 280 leaves room for
+        # the title row and a stretch so the viewport still fills the
+        # available vertical space when present, but doesn't dictate
+        # an overflow on the 1024 x 600 native resolution.
+        viewport.setMinimumHeight(280)
         viewport.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # IMPORTANT: do NOT call setAlignment() on this layout. With an
         # alignment set, QBoxLayout hands children their sizeHint instead
@@ -225,17 +230,16 @@ class VisionScreen(QWidget):
         ph_layout.addStretch(1)
         glyph = QLabel("\u25CE", placeholder)
         glyph.setStyleSheet(
-            "color: #c4c4c8; font-size: 96px; background-color: transparent;"
+            "color: #c4c4c8; font-size: 64px; background-color: transparent;"
         )
         glyph.setAlignment(Qt.AlignCenter)
         ph_layout.addWidget(glyph)
         msg = QLabel(
-            "Plug in a USB camera and the live feed will appear here.\n"
-            "Detected faces and objects will be drawn on top.",
+            "Plug in a USB camera to see the live feed here.",
             placeholder,
         )
         msg.setStyleSheet(
-            "color: #8e8e93; font-size: 13px; background-color: transparent;"
+            "color: #8e8e93; font-size: 12px; background-color: transparent;"
         )
         msg.setAlignment(Qt.AlignCenter)
         ph_layout.addWidget(msg)
@@ -261,7 +265,8 @@ class VisionScreen(QWidget):
     # ---------- recognition rail ----------
 
     def _build_recognition_card(self) -> Card:
-        card = Card(padding=20, spacing=10)
+        # Was padding=20. Trim to 12 to fit the 13-row rail in 530 px.
+        card = Card(padding=12, spacing=6)
 
         card.add(SectionLabel("Recognition"))
         face = _ToggleRow("Face recognition")

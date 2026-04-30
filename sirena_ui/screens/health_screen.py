@@ -41,7 +41,7 @@ class HealthScreen(QWidget):
         self._last_run: datetime | None = None
 
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(20, 20, 20, 20)
+        outer.setContentsMargins(10, 10, 10, 10)
         outer.setSpacing(14)
 
         outer.addWidget(Breadcrumb("Nina", "Health"))

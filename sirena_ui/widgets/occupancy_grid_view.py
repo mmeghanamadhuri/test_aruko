@@ -33,7 +33,11 @@ from PyQt5.QtWidgets import QWidget
 class OccupancyGridView(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self.setMinimumSize(360, 360)
+        # Was 360 x 360 - too large for the 1024 x 600 panel after the
+        # sidebar (160), the side card (~330), and chrome (~110). 240
+        # still gives a usable map and the QImage scales up to fill
+        # whatever extra space the parent layout grants us.
+        self.setMinimumSize(240, 240)
         self.setStyleSheet("background-color: #f5f5f7; border-radius: 12px;")
         self._image: Optional[QImage] = None
         self._image_width = 0
