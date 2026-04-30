@@ -181,6 +181,22 @@ _force_panel_resolution_1024x600() {
         return 0
     fi
 
+    # Idempotency: if the panel is ALREADY at 1024x600, don't touch
+    # xrandr at all. Reapplying the same mode (or re-adding the same
+    # CVT modeline) on every launcher invocation appears to upset
+    # gnome-session / mutter on JetPack 6 (Ubuntu 22.04 arm64) -
+    # users see "gnome-session-binary crashed with SIGABRT in
+    # g_assertion_..." apport pop-ups on most reboots. Treating the
+    # whole xrandr block as a one-shot fixes that without giving up
+    # the panel-resolution fix on first boot.
+    local current_mode
+    current_mode="$(xrandr --query 2>/dev/null \
+                    | awk '/\*current/ {print $1; exit}')"
+    if [[ "${current_mode}" == "1024x600" ]]; then
+        echo "[panel] ${output} already at 1024x600 - no xrandr change needed"
+        return 0
+    fi
+
     # Try the existing mode first - if the panel's EDID already exposes
     # a 1024x600 mode, this is the one xrandr trusts most.
     if xrandr --output "${output}" --mode 1024x600 >/dev/null 2>&1; then

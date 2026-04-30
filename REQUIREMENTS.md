@@ -346,6 +346,42 @@ While the GUI is running:
 * `F10` — quit the GUI (the unit will auto-restart it)
 * `Esc` (Drive screen) — EMERGENCY STOP
 
+### Troubleshooting: "Sorry, Ubuntu 22.04 has experienced an internal error" pop-up
+
+Symptom: an Ubuntu apport crash dialog appears over the kiosk GUI on
+most reboots, often reporting `gnome-session-binary crashed with
+SIGABRT in g_assertion_...`.
+
+This is **not Nina** — it's the GNOME session manager itself
+asserting. On JetPack 6 (Ubuntu 22.04 arm64) the kiosk launcher's
+`xrandr` mode-switch on every launch occasionally tickles a known
+mutter / gnome-session race.
+
+Two fixes, both already in the repo:
+
+1. `scripts/launch-sirena.sh` is now idempotent — if the panel is
+   already at 1024 × 600 (`xrandr --query | awk '/\*current/'` returns
+   `1024x600`), the launcher leaves xrandr alone instead of re-adding
+   the CVT modeline and re-applying the same mode. After the first
+   successful boot, no further xrandr calls happen on this Jetson.
+2. `scripts/install-nina-ui-kiosk.sh` writes
+   `~/.config/autostart/apport-gtk.desktop` with `Hidden=true`,
+   which shadows the system-wide `/etc/xdg/autostart/apport-gtk.desktop`
+   so apport's pop-up dialog does not appear on the kiosk panel.
+   `apport.service` still runs and crash reports still get captured
+   to `/var/crash/` — only the GUI dialog is suppressed.
+
+To re-enable apport pop-ups on a given Jetson (e.g. for debugging),
+delete `~/.config/autostart/apport-gtk.desktop` or set
+`X-GNOME-Autostart-enabled=true` in it.
+
+To pull the captured crash reports for analysis:
+
+```bash
+ls -lt /var/crash/ | head
+sudo apport-cli /var/crash/_usr_libexec_gnome-session-binary.<id>.crash
+```
+
 ### Troubleshooting: GUI 134s on launch with "Could not load the Qt platform plugin 'xcb'"
 
 Symptom: launching the GUI (kiosk OR `python3 -m sirena_ui` from a
