@@ -213,8 +213,11 @@ QPushButton#primary, QPushButton#primaryButton {{
     background-color: {BRAND_RED};
     color: {BRAND_WHITE};
     border: none;
-    border-radius: 18px;
-    padding: 10px 20px;
+    /* Trimmed padding 10/20 -> 6/14 and radius 18 -> 14 for the
+       1024 x 600 panel so primary buttons aren't ~44 px tall by
+       default (which compounds across stacked rows). */
+    border-radius: 14px;
+    padding: 6px 14px;
     font-weight: 600;
 }}
 QPushButton#primary:hover, QPushButton#primaryButton:hover {{
@@ -232,8 +235,8 @@ QPushButton#secondary, QPushButton#secondaryButton {{
     background-color: {BRAND_PANEL};
     color: {BRAND_RED};
     border: 1px solid {BRAND_RED};
-    border-radius: 16px;
-    padding: 8px 16px;
+    border-radius: 12px;
+    padding: 5px 12px;
     font-weight: 600;
 }}
 QPushButton#secondary:hover, QPushButton#secondaryButton:hover {{
@@ -250,8 +253,8 @@ QPushButton#dangerButton {{
     background-color: {BRAND_PANEL};
     color: {BRAND_DANGER};
     border: 1px solid {BRAND_DANGER};
-    border-radius: 16px;
-    padding: 8px 14px;
+    border-radius: 12px;
+    padding: 5px 12px;
     font-weight: 600;
 }}
 QPushButton#dangerButton:hover {{
@@ -344,15 +347,15 @@ QPushButton#dpadButton {{
     background-color: {BRAND_PANEL};
     color: {BRAND_TEXT};
     border: 1px solid {BRAND_BORDER};
-    border-radius: 14px;
+    border-radius: 12px;
     font-size: 14px;
     font-weight: 600;
-    /* Was 96 x 96 - too big for the 1024 x 600 panel after the
-       sidebar (160), camera card (~430), and card padding (~30)
-       leave only ~250 wide for the D-pad's 3-column grid. 70 x 70
-       still well above the 44 px touch-target minimum. */
-    min-width: 70px;
-    min-height: 70px;
+    /* 60 x 60 - fits a 3-row D-pad in ~210 px of vertical space and
+       leaves room for the autonomy / speed / brake / E-stop rows in
+       the same control card on a 600-tall panel. Still well above
+       the 44 px touch-target minimum. */
+    min-width: 60px;
+    min-height: 60px;
 }}
 QPushButton#dpadButton:hover {{
     background-color: {BRAND_RED_TINT};
@@ -372,12 +375,12 @@ QPushButton#dpadStop {{
     color: {BRAND_WHITE};
     border: none;
     /* radius half of min-size keeps the circular look */
-    border-radius: 35px;
-    font-size: 14px;
+    border-radius: 30px;
+    font-size: 12px;
     font-weight: 800;
     letter-spacing: 1px;
-    min-width: 70px;
-    min-height: 70px;
+    min-width: 60px;
+    min-height: 60px;
 }}
 QPushButton#dpadStop:hover {{
     background-color: {BRAND_RED_HOVER};
@@ -392,8 +395,8 @@ QPushButton#togglePill {{
     background-color: #ececef;
     color: {BRAND_TEXT};
     border: none;
-    border-radius: 16px;
-    padding: 8px 18px;
+    border-radius: 12px;
+    padding: 5px 14px;
     font-weight: 600;
 }}
 QPushButton#togglePill:checked {{

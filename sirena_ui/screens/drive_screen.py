@@ -172,47 +172,64 @@ class DriveScreen(QWidget):
     # ---------- control card ----------
 
     def _build_control_card(self) -> Card:
-        # Was padding=20 spacing=14. Trim to 12/8 to fit the autonomy
-        # toggle + banner + dpad + speed slider + brake/reverse rows
-        # within a 600-tall window.
-        card = Card(padding=12, spacing=8)
-        card.add(CardTitle("Manual Control"))
-        card.add(MutedLabel("Hold a direction \u00b7 release to stop"))
+        # Tight stack designed for the 1024 x 600 panel: title row +
+        # autonomy + D-pad + speed + brake/reverse + ESTOP all need to
+        # fit in ~470 px of vertical space inside the card.
+        card = Card(padding=10, spacing=6)
 
-        # Autonomous-mode toggle. Mirrors the same control on the Map
-        # screen - both feed into `service.autonomy.set_enabled()`.
-        self._autonomy_btn = QPushButton("Autonomous mode: OFF")
+        # Title + autonomy toggle on the same row so the toggle isn't
+        # full-width (it stretched and looked oversized on the panel).
+        title_row = QHBoxLayout()
+        title_row.setSpacing(6)
+        card.add_layout(title_row)
+        title_row.addWidget(CardTitle("Manual"))
+        title_row.addStretch(1)
+        self._autonomy_btn = QPushButton("Auto: OFF")
         self._autonomy_btn.setObjectName("primaryButton")
         self._autonomy_btn.setCursor(Qt.PointingHandCursor)
         self._autonomy_btn.setCheckable(True)
         self._autonomy_btn.setFocusPolicy(Qt.NoFocus)
+        self._autonomy_btn.setMinimumHeight(34)
+        self._autonomy_btn.setMaximumHeight(34)
         self._autonomy_btn.toggled.connect(self._on_autonomy_toggle)
-        card.add(self._autonomy_btn)
+        title_row.addWidget(self._autonomy_btn)
 
-        # Was a paragraph; trimmed for the 1024 x 600 panel.
-        self._auto_banner = MutedLabel(
-            "Toggle Autonomous to let Nina drive on her own."
-        )
-        self._auto_banner.setWordWrap(True)
-        card.add(self._auto_banner)
+        # Banner removed - the "Auto: OFF/ON" pill above is enough
+        # surface area to communicate the mode at this resolution. We
+        # keep the attribute set to None so handlers that reach for it
+        # don't need to be conditional everywhere.
+        self._auto_banner = None  # type: ignore[assignment]
 
+        # D-pad sits in a horizontal row centered with stretches so it
+        # doesn't pin to the left edge when the card is wider.
+        dpad_row = QHBoxLayout()
+        dpad_row.setContentsMargins(0, 0, 0, 0)
+        dpad_row.addStretch(1)
         self._dpad = DPad()
         self._dpad.direction_pressed.connect(self._drive.drive)
         self._dpad.direction_released.connect(lambda _d: self._drive.stop())
         self._dpad.stop_clicked.connect(self._drive.stop)
-        card.add(self._dpad)
+        dpad_row.addWidget(self._dpad)
+        dpad_row.addStretch(1)
+        card.add_layout(dpad_row)
 
-        card.add(SectionLabel("Speed"))
+        # Speed row - inline label + - slider + + pill, no SECTION label
+        # above it (the "-" / "+" / "%" cluster is self-explanatory and
+        # the section header was eating 16 px of vertical space).
         speed_row = QHBoxLayout()
-        speed_row.setSpacing(8)
+        speed_row.setSpacing(6)
         card.add_layout(speed_row)
+
+        speed_lbl = QLabel("Speed")
+        speed_lbl.setStyleSheet(
+            "color: #6e6e73; font-size: 12px; background-color: transparent;"
+        )
+        speed_row.addWidget(speed_lbl)
 
         minus = QPushButton("\u2212")
         minus.setObjectName("secondaryButton")
         minus.setCursor(Qt.PointingHandCursor)
-        # 44 px is the standard touch-target minimum (Apple HIG /
-        # Material). 40 felt small on the 10.1" panel.
-        minus.setFixedSize(44, 44)
+        minus.setFixedSize(36, 36)
         minus.setFocusPolicy(Qt.NoFocus)
         minus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] - 5))
         speed_row.addWidget(minus)
@@ -226,7 +243,7 @@ class DriveScreen(QWidget):
         plus = QPushButton("+")
         plus.setObjectName("secondaryButton")
         plus.setCursor(Qt.PointingHandCursor)
-        plus.setFixedSize(44, 44)
+        plus.setFixedSize(36, 36)
         plus.setFocusPolicy(Qt.NoFocus)
         plus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] + 5))
         speed_row.addWidget(plus)
@@ -234,45 +251,58 @@ class DriveScreen(QWidget):
         self._speed_pill = Pill("15%", Pill.KIND_ERROR)
         speed_row.addWidget(self._speed_pill)
 
-        # Brake / Reverse toggle pills
-        toggles = QHBoxLayout()
-        toggles.setSpacing(10)
-        card.add_layout(toggles)
+        # Brake / Reverse on the SAME row as ESTOP so the bottom of the
+        # card collapses from three rows into one.
+        bottom_row = QHBoxLayout()
+        bottom_row.setSpacing(6)
+        card.add_layout(bottom_row)
         self._brake_btn = QPushButton("Brake: ON")
         self._brake_btn.setObjectName("togglePill")
         self._brake_btn.setCheckable(True)
         self._brake_btn.setChecked(True)
         self._brake_btn.setFocusPolicy(Qt.NoFocus)
+        self._brake_btn.setMinimumHeight(34)
+        self._brake_btn.setMaximumHeight(34)
         self._brake_btn.clicked.connect(self._on_brake_toggle)
-        toggles.addWidget(self._brake_btn)
+        bottom_row.addWidget(self._brake_btn)
 
         self._reverse_btn = QPushButton("Reverse: OFF")
         self._reverse_btn.setObjectName("togglePill")
         self._reverse_btn.setCheckable(True)
         self._reverse_btn.setFocusPolicy(Qt.NoFocus)
+        self._reverse_btn.setMinimumHeight(34)
+        self._reverse_btn.setMaximumHeight(34)
         self._reverse_btn.clicked.connect(self._on_reverse_toggle)
-        toggles.addWidget(self._reverse_btn)
-        toggles.addStretch(1)
+        bottom_row.addWidget(self._reverse_btn)
+        bottom_row.addStretch(1)
 
-        # Big red panic button. Bypasses the brake toggle so the operator
-        # can fire it without first releasing whatever direction is held.
-        self._estop_btn = QPushButton("\u26A0  EMERGENCY STOP")
+        # Big red panic button - shrunk from the default `stopButton`
+        # styling (16/24 padding, 18 px font) which was ~50 px tall and
+        # pushed the kb hint off-screen on the 10.1" panel.
+        self._estop_btn = QPushButton("\u26A0  E-STOP")
         self._estop_btn.setObjectName("stopButton")
         self._estop_btn.setCursor(Qt.PointingHandCursor)
         self._estop_btn.setFocusPolicy(Qt.NoFocus)
-        self._estop_btn.clicked.connect(self._on_emergency_stop)
-        card.add(self._estop_btn)
-
-        # Keyboard hint - shorter form for the 1024-wide panel where
-        # the long version wraps to 4-5 lines and pushes the rest of
-        # the card off-screen.
-        kb_hint = MutedLabel(
-            "Keys: WASD drive \u00b7 Space stop \u00b7 Esc E-STOP"
+        self._estop_btn.setMinimumHeight(34)
+        self._estop_btn.setMaximumHeight(34)
+        self._estop_btn.setStyleSheet(
+            "QPushButton#stopButton {"
+            "  padding: 4px 12px; font-size: 14px; border-radius: 17px;"
+            "}"
         )
-        kb_hint.setWordWrap(True)
+        self._estop_btn.clicked.connect(self._on_emergency_stop)
+        bottom_row.addWidget(self._estop_btn)
+
+        # Keyboard hint as a single small line right above the bottom.
+        kb_hint = QLabel(
+            "WASD drive \u00b7 Space stop \u00b7 Esc E-STOP"
+        )
+        kb_hint.setStyleSheet(
+            "color: #8e8e93; font-size: 11px; background-color: transparent;"
+        )
+        kb_hint.setAlignment(Qt.AlignCenter)
         card.add(kb_hint)
 
-        card.add_stretch()
         return card
 
     # ---------- handlers ----------
@@ -314,9 +344,10 @@ class DriveScreen(QWidget):
     def _on_autonomy_enabled(self, on: bool) -> None:
         self._autonomy_btn.blockSignals(True)
         self._autonomy_btn.setChecked(on)
-        self._autonomy_btn.setText(
-            f"Autonomous mode: {'ON' if on else 'OFF'}"
-        )
+        # Short label - we removed the explanatory banner below the
+        # button when refitting for the 1024 x 600 panel, so the pill
+        # in the title row carries the "ON / OFF" affordance alone.
+        self._autonomy_btn.setText(f"Auto: {'ON' if on else 'OFF'}")
         self._autonomy_btn.blockSignals(False)
 
         self._auto_pill.setText(
@@ -330,19 +361,8 @@ class DriveScreen(QWidget):
         self._brake_btn.setEnabled(not on)
         self._reverse_btn.setEnabled(not on)
         self._speed_slider.setEnabled(not on)
-
-        if on:
-            self._auto_banner.setText(
-                "Autonomous mode active \u2014 Nina is driving herself. "
-                "Manual controls are disabled. Toggle off to take back "
-                "control."
-            )
-        else:
-            self._auto_banner.setText(
-                "Manual D-pad below is active. Toggle Autonomous mode "
-                "to let Nina drive herself using lidar + ultrasonic + "
-                "IR + depth-camera obstacle avoidance."
-            )
+        # _auto_banner was removed in the 1024 x 600 refit; nothing to
+        # update here. The title-row pill conveys the same state.
 
     def on_enter(self) -> None:
         """Lazily initialise the BLDC drivers the first time the user

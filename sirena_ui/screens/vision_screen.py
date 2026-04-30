@@ -349,37 +349,42 @@ class VisionScreen(QWidget):
 
         card.add_stretch()
 
+        # All three action buttons on a single row to save vertical
+        # space on the 1024 x 600 panel. Each gets equal stretch so
+        # they share the rail width without one ballooning past the
+        # others. Shorter labels keep the row from wrapping.
         button_row = QHBoxLayout()
-        button_row.setSpacing(8)
+        button_row.setSpacing(6)
         card.add_layout(button_row)
-        train = QPushButton("Train a new face")
+
+        train = QPushButton("Train face")
         train.setObjectName("primaryButton")
         train.setCursor(Qt.PointingHandCursor)
+        train.setMinimumHeight(34)
+        train.setMaximumHeight(34)
         train.clicked.connect(self._on_train)
-        button_row.addWidget(train)
+        button_row.addWidget(train, stretch=1)
+
         snap = QPushButton("Snapshot")
         snap.setObjectName("secondaryButton")
         snap.setCursor(Qt.PointingHandCursor)
+        snap.setMinimumHeight(34)
+        snap.setMaximumHeight(34)
         snap.clicked.connect(self._on_snapshot)
-        button_row.addWidget(snap)
+        button_row.addWidget(snap, stretch=1)
 
-        # "Play Objects" speaks the current detector output via gTTS.
-        # Disabled by default; enabled the moment object detection sees
-        # at least one thing, so the operator can't tap it on an empty
-        # scene by accident.
-        play_row = QHBoxLayout()
-        play_row.setSpacing(8)
-        card.add_layout(play_row)
-        play = QPushButton("Play Objects")
+        play = QPushButton("Speak")
         play.setObjectName("primaryButton")
         play.setCursor(Qt.PointingHandCursor)
+        play.setMinimumHeight(34)
+        play.setMaximumHeight(34)
         play.setToolTip(
             "Speak the names of the objects currently in view. "
             "Turn on 'Object detection' first."
         )
         play.setEnabled(False)
         play.clicked.connect(self._on_play_objects)
-        play_row.addWidget(play)
+        button_row.addWidget(play, stretch=1)
         self._play_objects_btn = play
 
         return card
