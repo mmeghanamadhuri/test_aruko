@@ -45,7 +45,7 @@ from __future__ import annotations
 import logging
 import queue
 import threading
-from typing import Callable, Optional
+from typing import Callable, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -69,6 +69,25 @@ _DIR_LEFT = "left"
 _DIR_RIGHT = "right"
 
 _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
+
+# Heartbeat interval for re-issuing the current SET while a D-pad
+# button or arrow key is held. Only matters when the active backend is
+# the remote Pi bridge - the bridge has a safety watchdog (default
+# 1.5 s) that calls soft_stop() if no command arrives while the wheels
+# are commanded to non-zero PWM. We tick well under that so a held
+# button doesn't time out.
+#
+# Local Jetson-GPIO mode doesn't have a watchdog (PWM stays asserted
+# until we change it) but a re-issued SET in the same direction is
+# essentially free - it just re-writes the same duty cycle - so we
+# leave the heartbeat on for both backends to keep the code path
+# uniform.
+_HEARTBEAT_INTERVAL_SEC = 0.3
+# If the worker queue already has more than this many commands
+# pending, we skip enqueueing the next heartbeat tick instead of
+# piling up. Prevents runaway growth if the bridge / serial link
+# stalls and SETs start taking longer than the heartbeat interval.
+_HEARTBEAT_MAX_QUEUED = 2
 
 
 class DriveController(QObject):
@@ -127,6 +146,15 @@ class DriveController(QObject):
             "driver_message": "",
         }
 
+        # Last (left_dir, left_speed, right_dir, right_speed) that was
+        # actually sent to the underlying nav backend. The heartbeat
+        # thread replays this verbatim rather than re-deriving from
+        # `state["direction"]` so the autonomous pilot's per-wheel
+        # speeds (which can differ from the GUI slider) are preserved.
+        # Cleared whenever the wheels are commanded to stop / brake /
+        # estop so the heartbeat goes quiet between drives.
+        self._active_drive: Optional[Tuple[str, int, str, int]] = None
+
         # All hardware-touching work runs on a single worker thread, in
         # the order commands were issued, so GUI clicks never collide
         # with a still-blocking turn.
@@ -138,6 +166,18 @@ class DriveController(QObject):
             daemon=True,
         )
         self._worker.start()
+
+        # Heartbeat thread: while a direction is active and the brake
+        # is off, re-issues the current SET at _HEARTBEAT_INTERVAL_SEC
+        # so the remote bridge's watchdog never trips during a held
+        # button press / arrow key. See `_heartbeat_loop` for details.
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat = threading.Thread(
+            target=self._heartbeat_loop,
+            name="DriveControllerHeartbeat",
+            daemon=True,
+        )
+        self._heartbeat.start()
 
     # ------------------------------------------------------------------
     # Public API (matches the old DriveStub)
@@ -162,12 +202,14 @@ class DriveController(QObject):
 
     def shutdown(self) -> None:
         """Tear down the worker thread and release GPIO."""
+        self._heartbeat_stop.set()
         self._enqueue(self._do_shutdown)
         self._cmd_q.put(None)
         self._stop_evt.set()
-        # Best-effort join: the worker is daemon so we don't hang shutdown
-        # forever if something inside NavigationManager wedges.
+        # Best-effort join: both threads are daemon so we don't hang
+        # shutdown forever if something inside NavigationManager wedges.
         self._worker.join(timeout=2.0)
+        self._heartbeat.join(timeout=2.0)
 
     def set_speed(self, pct: int) -> None:
         pct = max(0, min(100, int(pct)))
@@ -330,6 +372,59 @@ class DriveController(QObject):
             except Exception as exc:
                 log.exception("DriveController worker raised: %s", exc)
 
+    def _heartbeat_loop(self) -> None:
+        """Re-issue the most recent SET while the wheels are active.
+
+        The remote Pi bridge has a safety watchdog (default 1.5 s) that
+        calls `soft_stop()` if no command arrives while the wheels are
+        commanded to non-zero PWM, so a single press-and-hold from the
+        D-pad / arrow keys would otherwise coast to a stop after ~1.5 s.
+        We tick at `_HEARTBEAT_INTERVAL_SEC` (well under the watchdog)
+        and enqueue `_do_heartbeat_tick` only when there's actually a
+        live SET to maintain.
+
+        We also skip the enqueue if the worker queue already has more
+        than `_HEARTBEAT_MAX_QUEUED` pending commands, so a stalled
+        bridge / serial link can't make us pile up SETs faster than the
+        worker can drain them.
+
+        `wait()` returns True only when shutdown has been requested,
+        so this loop exits cleanly.
+        """
+        while not self._heartbeat_stop.wait(_HEARTBEAT_INTERVAL_SEC):
+            with self._lock:
+                if self._active_drive is None:
+                    continue
+            if self._cmd_q.qsize() > _HEARTBEAT_MAX_QUEUED:
+                continue
+            self._enqueue(self._do_heartbeat_tick)
+
+    def _do_heartbeat_tick(self) -> None:
+        """Worker-thread side of the heartbeat: re-read the last SET we
+        actually sent and replay it verbatim.
+
+        Replays the cached per-wheel command (not derived from
+        `state["direction"]`) so the autonomous pilot's per-wheel
+        speeds - which can differ from the GUI slider - aren't
+        overridden by the heartbeat. The user/pilot may have released
+        the button between when the heartbeat enqueued and when this
+        runs; in that case `_active_drive` is None and we no-op.
+        """
+        if self._nav is None:
+            return
+        with self._lock:
+            active = self._active_drive
+        if active is None:
+            return
+        ldir, lspeed, rdir, rspeed = active
+        try:
+            self._nav.set_wheels(
+                left_dir=ldir, left_speed=lspeed,
+                right_dir=rdir, right_speed=rspeed,
+            )
+        except Exception as exc:
+            log.exception("heartbeat tick failed: %s", exc)
+
     # ------------------------------------------------------------------
     # Hardware ops (run on the worker thread)
     # ------------------------------------------------------------------
@@ -383,6 +478,8 @@ class DriveController(QObject):
             return
         try:
             self._nav.engage_brake()
+            with self._lock:
+                self._active_drive = None
         except Exception as exc:
             log.exception("engage_brake failed: %s", exc)
 
@@ -409,6 +506,8 @@ class DriveController(QObject):
                 right_dir=rdir,
                 speed_percent=speed_pct,
             )
+            with self._lock:
+                self._active_drive = (ldir, speed_pct, rdir, speed_pct)
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
 
@@ -428,6 +527,8 @@ class DriveController(QObject):
                 right_dir=rdir,
                 right_speed=speed_pct,
             )
+            with self._lock:
+                self._active_drive = (ldir, speed_pct, rdir, speed_pct)
         except Exception as exc:
             log.exception(
                 "apply_live_speed(%s, %s) failed: %s",
@@ -453,6 +554,8 @@ class DriveController(QObject):
             return
         try:
             self._nav.stop()
+            with self._lock:
+                self._active_drive = None
         except Exception as exc:
             log.exception("stop() failed: %s", exc)
 
@@ -467,6 +570,7 @@ class DriveController(QObject):
         try:
             self._nav.emergency_stop()
             with self._lock:
+                self._active_drive = None
                 self._state["driver_message"] = (
                     "EMERGENCY STOP - brake engaged, release brake to resume"
                 )
@@ -501,6 +605,13 @@ class DriveController(QObject):
                 right_dir=rdir,
                 right_speed=right_speed,
             )
+            with self._lock:
+                # 0/0 from autonomy is "coast" - don't try to maintain
+                # a stopped state with a heartbeat (no point).
+                if left_speed == 0 and right_speed == 0:
+                    self._active_drive = None
+                else:
+                    self._active_drive = (ldir, left_speed, rdir, right_speed)
         except Exception as exc:
             log.exception(
                 "drive_wheels(%s/%s, %s/%s) failed: %s",
