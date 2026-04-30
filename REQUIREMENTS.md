@@ -197,10 +197,19 @@ reference if you hit anything weird.
    spins the wrong way, leave it for now — fix in software via
    `NINA_NAV_INVERT_LEFT=1` on the Jetson side later (already set in
    the kiosk unit by default, see step 5.2.7).
-10. Install the bridge as a systemd service:
+10. Install the bridge as a systemd service. The installer enables
+    **both** `pigpiod` and `motor-bridge.service` for autostart, so
+    after this one-time step the bridge comes up on every Pi reboot
+    with no further action — including ordering: `motor-bridge.service`
+    waits for `pigpiod` (`After=` + `Wants=` in the unit file), and a
+    crashed bridge auto-restarts after 2 s (`Restart=on-failure`):
     ```bash
     sudo bash install_service.sh
     sudo systemctl status motor-bridge      # expect: active (running)
+
+    # Confirm autostart on next boot (both should print "enabled"):
+    systemctl is-enabled pigpiod
+    systemctl is-enabled motor-bridge
     ```
 
 ### 5.2 Jetson Orin Nano (brain + GUI)
@@ -285,6 +294,19 @@ systemctl status pigpiod
 # bridge service up?
 systemctl status motor-bridge
 journalctl -u motor-bridge -f          # tail live
+
+# Both should autostart on every Pi reboot - verify without rebooting:
+systemctl is-enabled pigpiod           # expect "enabled"
+systemctl is-enabled motor-bridge      # expect "enabled"
+systemctl is-active  pigpiod           # expect "active"
+systemctl is-active  motor-bridge      # expect "active"
+
+# Belt-and-braces - actually power-cycle the Pi and re-check after login:
+sudo reboot
+# (after SSH back in, ~30 s later)
+systemctl is-active motor-bridge
+journalctl -u motor-bridge -b --no-pager | head -20
+# expect "[INFO] pigpiod is running" then "READY" within the first 10 lines
 
 # /dev/serial0 is the right device?
 ls -l /dev/serial0                     # expect -> ttyAMA0
