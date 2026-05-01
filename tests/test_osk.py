@@ -452,3 +452,98 @@ def test_event_filter_swallows_exceptions(
     # Must not raise.
     _send_focus_in(edit)
     edit.deleteLater()
+
+
+# ---------------------------------------------------------------------
+# Diagnostic / death-detection
+# ---------------------------------------------------------------------
+
+
+def test_stderr_is_not_redirected_to_devnull(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """We pass onboard's stderr through to the parent so launch.log
+    captures whatever onboard says when it can't start (no DISPLAY,
+    no D-Bus session, etc.). Pinning this in a test so we don't
+    silently regress and re-blind ourselves on the next refactor."""
+    import subprocess as _subprocess
+
+    make_osk(mode="always")
+    inst = fake_subprocess.instances[0]
+    # The keyword may be missing from kwargs entirely (Popen default
+    # is to inherit the parent's stderr) or may be set to something
+    # other than DEVNULL. What it must NOT be is subprocess.DEVNULL.
+    assert inst.kwargs.get("stderr", None) is not _subprocess.DEVNULL
+
+
+def test_spawn_immediate_death_disables_manager(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """If onboard dies within the first 500 ms (typical when DISPLAY
+    isn't set on the systemd user service, or another OSK is grabbing
+    the input device) the manager must disable itself rather than
+    spawn-storming on every subsequent FocusIn. We simulate that by
+    marking the just-spawned process as dead and invoking the health
+    check directly (the QTimer fires it asynchronously in production)."""
+    osk = make_osk(mode="auto")
+
+    edit = QLineEdit()
+    _send_focus_in(edit)
+    assert len(fake_subprocess.instances) == 1
+    fake_subprocess.instances[0].die(returncode=1)  # onboard exited 1
+
+    osk._check_spawn_health()  # what QTimer.singleShot(500, ...) calls
+    assert osk.enabled is False
+
+    # Subsequent FocusIns must NOT trigger another spawn now that the
+    # manager has disabled itself.
+    edit2 = QLineEdit()
+    _send_focus_in(edit2)
+    assert len(fake_subprocess.instances) == 1  # still only one
+    edit.deleteLater()
+    edit2.deleteLater()
+
+
+def test_spawn_health_check_with_live_process_does_nothing(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """Health check on a still-alive process must be a no-op. This is
+    the happy-path branch of _check_spawn_health and the case the
+    QTimer hits 99% of the time."""
+    osk = make_osk(mode="always")
+    assert osk.is_running
+
+    osk._check_spawn_health()
+    assert osk.enabled is True
+    assert osk.is_running is True
+
+
+def test_first_focus_logs_diagnostic_line(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """One INFO line per session that proves the event filter saw a
+    text-widget FocusIn. Without this an operator has no way to tell
+    'OSK never launched because the filter never fires' from
+    'OSK launched but onboard died silently'."""
+    import logging as _logging
+
+    osk = make_osk(mode="auto")
+
+    edit = QLineEdit()
+    with caplog.at_level(_logging.INFO, logger="sirena_ui.osk"):
+        _send_focus_in(edit)
+        # Second focus on a different widget must NOT log again - the
+        # diagnostic is one-shot per session by design.
+        edit2 = QLineEdit()
+        _send_focus_in(edit2)
+
+    diagnostic_lines = [r for r in caplog.records
+                        if "first text-widget focus" in r.message]
+    assert len(diagnostic_lines) == 1, (
+        f"expected exactly one first-focus log line, got {len(diagnostic_lines)}: "
+        f"{[r.message for r in diagnostic_lines]}"
+    )
+
+    edit.deleteLater()
+    edit2.deleteLater()

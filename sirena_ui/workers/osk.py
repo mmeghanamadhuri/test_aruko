@@ -42,7 +42,7 @@ import shutil
 import subprocess
 from typing import Iterable, Optional, Tuple
 
-from PyQt5.QtCore import QEvent, QObject
+from PyQt5.QtCore import QEvent, QObject, QTimer
 from PyQt5.QtWidgets import (
     QApplication,
     QComboBox,
@@ -170,6 +170,12 @@ class OnScreenKeyboardManager(QObject):
         self._process: Optional[subprocess.Popen] = None
         self._enabled: bool = self._resolve_enabled()
         self._missing_binary_logged: bool = False
+        # One-shot flag so we log the first FocusIn-on-text-widget exactly
+        # once per session. That single log line is what proves to the
+        # operator that the event filter is actually firing on touchscreen
+        # taps - without it, "no keyboard appeared" could equally mean
+        # the filter never saw a focus event OR onboard died on launch.
+        self._first_focus_logged: bool = False
 
         if not self._enabled:
             return
@@ -259,6 +265,17 @@ class OnScreenKeyboardManager(QObject):
         """
         try:
             if event.type() == QEvent.FocusIn and self._is_text_widget(obj):
+                if not self._first_focus_logged:
+                    # Single INFO line per session; proves the event
+                    # filter is reaching text widgets on this device.
+                    # If you see "OSK launched" but never see this line,
+                    # touch isn't producing FocusIn events on text
+                    # widgets at all (different bug class entirely).
+                    log.info(
+                        "OSK: first text-widget focus seen (%s) - calling show()",
+                        type(obj).__name__,
+                    )
+                    self._first_focus_logged = True
                 self.show()
         except Exception as exc:  # noqa: BLE001 - never propagate from filter
             log.warning("OSK event filter raised: %s", exc)
@@ -299,14 +316,24 @@ class OnScreenKeyboardManager(QObject):
         return False
 
     def _spawn(self) -> None:
-        """Start the OSK subprocess. Failures disable the manager."""
+        """Start the OSK subprocess. Failures disable the manager.
+
+        stderr is intentionally NOT redirected to DEVNULL - we let
+        onboard's complaints (no DISPLAY, no D-Bus session bus, missing
+        layout file, etc.) bubble up to the parent's stderr so they
+        land in launch.log / journalctl. The previous DEVNULL silenced
+        every "I died because X" message and made "no keyboard" cases
+        impossible to diagnose without bench access. stdin/stdout do
+        get muted because onboard is a GUI app whose prompts and
+        startup chatter aren't useful and would muddy the launcher
+        log.
+        """
         argv = [self._binary, *self._extra_args]
         try:
             self._process = subprocess.Popen(
                 argv,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
                 # New session so a Ctrl-C in the parent terminal during
                 # development doesn't also kill the OSK in a way the
                 # user can see (it'll still die when the app exits via
@@ -322,7 +349,53 @@ class OnScreenKeyboardManager(QObject):
                 self._missing_binary_logged = True
             self._enabled = False
             self._process = None
+            return
         except Exception as exc:  # noqa: BLE001
             log.warning("Failed to spawn OSK %r: %s", self._binary, exc)
             self._enabled = False
             self._process = None
+            return
+
+        # Schedule a one-shot health check 500 ms after spawn. If the
+        # OSK process exited that fast it never came up - log the exit
+        # code and disable the manager so we don't spawn-storm onboard
+        # on every subsequent FocusIn (which would also re-trigger
+        # whatever environmental problem killed it). Done via QTimer
+        # so we don't block the GUI thread, and only registered when
+        # we actually have a Qt event loop available (the manager is
+        # parented to QApplication, so this is always true at runtime;
+        # tests construct the manager without an event loop and would
+        # hit the QTimer path harmlessly - the singleShot just fires
+        # later if/when an event loop runs).
+        try:
+            QTimer.singleShot(500, self._check_spawn_health)
+        except Exception:
+            pass
+
+    def _check_spawn_health(self) -> None:
+        """Called ~500 ms after `_spawn()` to detect immediate-death.
+
+        If the OSK is still alive, do nothing. If it died, log the
+        return code and disable the manager - nine times out of ten
+        the cause is environmental (no DISPLAY, no D-Bus, conflicting
+        keyboard already grabbing the input device) and won't fix
+        itself on a retry. With the manager disabled, focus events
+        no longer trigger spawn attempts, the GUI keeps working, and
+        the operator gets one clear log line to act on instead of
+        an infinitely-restarting onboard subprocess.
+        """
+        if self._process is None:
+            return
+        rc = self._process.poll()
+        if rc is None:
+            return  # still alive - good
+        log.warning(
+            "OSK %r exited %s within 500 ms of spawn - disabling further "
+            "auto-launches. Try running %r from a terminal to see why; "
+            "common causes are missing DISPLAY env on the systemd user "
+            "service, no D-Bus session bus, or a conflicting OSK already "
+            "holding the input grab.",
+            self._binary, rc, self._binary,
+        )
+        self._enabled = False
+        self._process = None
