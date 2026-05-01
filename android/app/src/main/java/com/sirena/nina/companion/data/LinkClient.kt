@@ -103,6 +103,12 @@ class LinkClient {
             post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
         }
 
+    /** Ask the Jetson host to power off (requires passwordless sudo on the robot — see nina-link docs). */
+    suspend fun systemPoweroff(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/system/poweroff", bearer, "{}")
+        }
+
     /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
     suspend fun robotDriveStatus(baseUrl: String): JSONObject =
         withContext(Dispatchers.IO) {

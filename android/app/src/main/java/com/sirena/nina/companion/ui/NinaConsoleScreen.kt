@@ -27,6 +27,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -92,6 +93,7 @@ fun NinaConsoleScreen(
         )
 
     val ready = state as? CompanionUiState.Ready
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
     val footerRight =
         when {
             ready != null ->
@@ -133,7 +135,7 @@ fun NinaConsoleScreen(
         },
         bottomBar = {
             SirenaStatusFooter(
-                busConnected = false,
+                busConnected = jetsonLink.isOnline,
                 wifiOnline = ready != null,
                 batteryOk = false,
                 voiceReady = false,

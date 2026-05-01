@@ -40,6 +40,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -75,6 +76,11 @@ fun SirenaDriveScreen(
     var cameraPreviewOn by remember { mutableStateOf(false) }
     var bldcConnected by remember { mutableStateOf<Boolean?>(null) }
     var bldcDetail by remember { mutableStateOf<String?>(null) }
+    var brakeOn by remember { mutableStateOf(true) }
+    var reverseOn by remember { mutableStateOf(false) }
+
+    val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
+    val jetsonOnline = jetsonLink.isOnline
 
     val streamRoot = daemonUrl?.trimEnd('/') ?: ""
 
@@ -91,8 +97,8 @@ fun SirenaDriveScreen(
         vm.visionStop()
     }
 
-    LaunchedEffect(bridgeOn) {
-        if (!bridgeOn) {
+    LaunchedEffect(bridgeOn, jetsonOnline) {
+        if (!bridgeOn || !jetsonOnline) {
             bldcConnected = null
             bldcDetail = null
             return@LaunchedEffect
@@ -125,6 +131,7 @@ fun SirenaDriveScreen(
                     Text(
                         when {
                             !bridgeOn -> "Drive bridge off"
+                            !jetsonOnline -> "Jetson offline — BLDC unknown"
                             bldcConnected == true -> "BLDC L+R connected"
                             bldcConnected == false -> {
                                 val d = bldcDetail
@@ -216,6 +223,10 @@ fun SirenaDriveScreen(
                         .weight(0.45f)
                         .fillMaxHeight(),
                 bridgeOn = bridgeOn,
+                brakeOn = brakeOn,
+                reverseOn = reverseOn,
+                onBrakeChange = { brakeOn = it },
+                onReverseChange = { reverseOn = it },
                 defaultMs = defaultMs,
                 speedMin = speedMin,
                 speedMax = speedMax,
@@ -224,7 +235,17 @@ fun SirenaDriveScreen(
                 onDrive = { dir ->
                     scope.launch {
                         try {
-                            vm.robotDriveMomentary(dir, defaultMs, speedPct.toInt())
+                            if (brakeOn && dir in setOf("forward", "back", "left", "right")) {
+                                actionErr = "Release brake to drive."
+                                return@launch
+                            }
+                            val effective =
+                                when (dir) {
+                                    "forward" -> if (reverseOn) "back" else "forward"
+                                    "back" -> if (reverseOn) "forward" else "back"
+                                    else -> dir
+                                }
+                            vm.robotDriveMomentary(effective, defaultMs, speedPct.toInt())
                             actionErr = null
                         } catch (e: Exception) {
                             actionErr = e.message
@@ -232,6 +253,7 @@ fun SirenaDriveScreen(
                     }
                 },
                 onEstop = {
+                    brakeOn = true
                     scope.launch {
                         try {
                             vm.robotEmergencyStop()
@@ -245,7 +267,8 @@ fun SirenaDriveScreen(
         }
 
         Text(
-            "Pulse ≈ ${defaultMs} ms each tap. Speed slider is visual until the daemon accepts percent.",
+            "Pulse ≈ ${defaultMs} ms per tap; speed ${speedPct.toInt()}% is sent with each pulse. " +
+                "Brake blocks D‑pad (like Sirena UI); reverse swaps forward and back.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -347,6 +370,10 @@ private fun DriveMjpegWebView(html: String) {
 private fun ControlCard(
     modifier: Modifier = Modifier,
     bridgeOn: Boolean,
+    brakeOn: Boolean,
+    reverseOn: Boolean,
+    onBrakeChange: (Boolean) -> Unit,
+    onReverseChange: (Boolean) -> Unit,
     defaultMs: Int,
     speedMin: Int,
     speedMax: Int,
@@ -358,9 +385,44 @@ private fun ControlCard(
     val smin = speedMin.toFloat()
     val smax = speedMax.toFloat()
     val steps = (speedMax - speedMin).coerceAtLeast(0)
+    val padMovesEnabled = bridgeOn && !brakeOn
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Manual control", fontWeight = FontWeight.Bold)
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Brake", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        if (brakeOn) "Motion blocked (release to drive)" else "Released",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                SirenaSwitch(
+                    checked = brakeOn,
+                    onCheckedChange = onBrakeChange,
+                    enabled = bridgeOn,
+                )
+            }
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Reverse", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Swap forward / back on D‑pad",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                SirenaSwitch(checked = reverseOn, onCheckedChange = onReverseChange, enabled = bridgeOn)
+            }
             Text("Speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Slider(
                 value = speedPct.coerceIn(smin, smax),
@@ -372,13 +434,13 @@ private fun ControlCard(
             Text("${speedPct.toInt()}%", style = MaterialTheme.typography.labelSmall)
 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                DrivePadButton("Forward", bridgeOn) { onDrive("forward") }
+                DrivePadButton("Forward", padMovesEnabled) { onDrive("forward") }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    DrivePadButton("Left", bridgeOn) { onDrive("left") }
+                    DrivePadButton("Left", padMovesEnabled) { onDrive("left") }
                     DrivePadButton("Stop", bridgeOn, PadEmphasis.Stop) { onDrive("stop") }
-                    DrivePadButton("Right", bridgeOn) { onDrive("right") }
+                    DrivePadButton("Right", padMovesEnabled) { onDrive("right") }
                 }
-                DrivePadButton("Back", bridgeOn) { onDrive("back") }
+                DrivePadButton("Back", padMovesEnabled) { onDrive("back") }
             }
 
             OutlinedButton(

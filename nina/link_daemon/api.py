@@ -21,6 +21,7 @@ from nina.link_daemon import media_static
 from nina.link_daemon import record_bridge
 from nina.link_daemon import robot_bridge
 from nina.link_daemon import session_claim
+from nina.link_daemon import host_control
 from nina.link_daemon import vision_http
 from nina.services.audio_generator import AudioGeneratorError
 from nina.link_daemon.nm import NMError
@@ -476,6 +477,15 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
         st = robot_bridge.navigation_hw_status()
         st["bridge_enabled"] = True
         return st
+
+    @app.post("/v1/system/poweroff")
+    def system_poweroff_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        """Shut down the Jetson host (requires passwordless sudo for poweroff — see docs)."""
+        auth_mutate(authorization, request)
+        return host_control.queue_poweroff()
 
     @app.get("/v1/actions")
     def list_actions_http() -> Dict[str, Any]:

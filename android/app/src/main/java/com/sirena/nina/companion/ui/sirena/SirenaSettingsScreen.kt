@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -17,6 +18,7 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -97,6 +99,7 @@ fun SirenaSettingsScreen(
                         }
                     }
                     SessionScriptCard(caps)
+                    JetsonShutdownCard(vm)
                     DaemonLinkCard(daemonUrl)
                 }
 
@@ -297,6 +300,75 @@ private fun CapabilitiesBridgesCard(caps: JSONObject?) {
             FeatureToggleRow("Recording", caps.optBoolean("record_bridge_enabled"))
             FeatureToggleRow("Vision", caps.optBoolean("vision_bridge_enabled"))
             FeatureToggleRow("Static media & manifest audio", caps.optBoolean("actions_static_enabled"))
+        }
+    }
+}
+
+@Composable
+private fun JetsonShutdownCard(vm: CompanionViewModel) {
+    var confirm by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    var feedbackIsError by remember { mutableStateOf(false) }
+    if (confirm) {
+        AlertDialog(
+            onDismissRequest = { confirm = false },
+            title = { Text("Shut down Jetson?") },
+            text = {
+                Text(
+                    "The host will run power-off. The robot may stop moving and the link will drop. " +
+                        "Mutating API calls need a valid bearer token if the daemon is locked down.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        confirm = false
+                        vm.requestJetsonShutdown { err ->
+                            feedbackIsError = err != null
+                            feedback =
+                                err
+                                    ?: "Power-off requested — expect disconnect within a few seconds."
+                        }
+                    },
+                ) {
+                    Text("Shut down", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirm = false }) { Text("Cancel") }
+            },
+        )
+    }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Jetson host power-off", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Calls POST /v1/system/poweroff on nina-link. The service user on the Jetson needs " +
+                    "passwordless sudo for poweroff or shutdown (see robot docs).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = {
+                    feedback = null
+                    feedbackIsError = false
+                    confirm = true
+                },
+            ) {
+                Text("Shut down Jetson…")
+            }
+            feedback?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color =
+                        if (feedbackIsError) {
+                            MaterialTheme.colorScheme.error
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                )
+            }
         }
     }
 }

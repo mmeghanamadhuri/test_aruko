@@ -16,7 +16,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
@@ -41,6 +43,12 @@ data class SavedNetUi(
     val uuid: String,
     val ssid: String,
     val nmAutoconnect: Boolean,
+)
+
+/** Fast HTTP liveness to saved daemon URL (independent of full status refresh). */
+data class JetsonLinkState(
+    val isOnline: Boolean = false,
+    val lastError: String? = null,
 )
 
 /** One row from Jetson `GET /v1/actions` (manifest). */
@@ -79,8 +87,34 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow<CompanionUiState>(CompanionUiState.Loading)
     val state: StateFlow<CompanionUiState> = _state.asStateFlow()
 
+    private val _jetsonLink = MutableStateFlow(JetsonLinkState())
+    val jetsonLink: StateFlow<JetsonLinkState> = _jetsonLink.asStateFlow()
+
     init {
         refreshStatus()
+        viewModelScope.launch {
+            while (isActive) {
+                val url =
+                    try {
+                        prefs.baseUrl.first()
+                    } catch (_: Exception) {
+                        ""
+                    }
+                if (url.isBlank()) {
+                    _jetsonLink.value = JetsonLinkState(false, null)
+                    delay(3000)
+                    continue
+                }
+                try {
+                    client.health(url)
+                    _jetsonLink.value = JetsonLinkState(true, null)
+                } catch (e: Exception) {
+                    val msg = e.message?.trim()?.take(120)
+                    _jetsonLink.value = JetsonLinkState(false, msg)
+                }
+                delay(2500)
+            }
+        }
     }
 
     fun refreshStatus() {
@@ -423,6 +457,20 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
         client.robotEmergencyStop(url, bearer)
+    }
+
+    fun requestJetsonShutdown(onResult: (String?) -> Unit) {
+        NinaLog.tap("System", "jetson_poweroff", "")
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.systemPoweroff(url, bearer)
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message ?: "Poweroff request failed")
+            }
+        }
     }
 
     private fun parseStatus(j: JSONObject): StatusUi {
