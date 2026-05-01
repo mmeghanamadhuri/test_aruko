@@ -165,32 +165,81 @@ popd >/dev/null
 USER_SITE="$(${PYTHON_EXEC} -c 'import site; print(site.getusersitepackages())')"
 mkdir -p "${USER_SITE}"
 PTH_FILE="${USER_SITE}/pyrealsense2-system.pth"
-SYSTEM_DIST="$(${PYTHON_EXEC} -c '
-import sys, glob
-for c in glob.glob("/usr/local/lib/python*/dist-packages"):
-    if c not in sys.path:
-        print(c)
-        break
-')"
 
-if [[ -n "${SYSTEM_DIST}" ]]; then
-    echo "${SYSTEM_DIST}" > "${PTH_FILE}"
-    log "Wrote ${PTH_FILE} -> ${SYSTEM_DIST}"
+# Resolve the dist-packages path that matches THIS Python interp's
+# major.minor. Earlier the script globbed `/usr/local/lib/python*/
+# dist-packages` and grabbed the first hit alphabetically, which on a
+# system with both python2.7 (legacy) and python3.10 (Nina venv)
+# yields the python2.7 directory - completely useless for a Python 3
+# .pth file. We now ask the running interp what its version is and
+# build the path explicitly.
+PY_VER_TAG="$(${PYTHON_EXEC} -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
+CANDIDATE="/usr/local/lib/${PY_VER_TAG}/dist-packages"
+
+# Fallback: if cmake landed the bindings somewhere else (custom prefix,
+# different Python layout), find the directory that actually contains
+# pyrealsense2. `find -name pyrealsense2 -type d` returns the package
+# dir; we want its PARENT (the site-packages-like directory that needs
+# to go on sys.path).
+if [[ ! -d "${CANDIDATE}/pyrealsense2" ]]; then
+    DETECTED="$(find /usr/local/lib /usr/lib -maxdepth 6 -type d -name pyrealsense2 2>/dev/null | head -1)"
+    if [[ -n "${DETECTED}" ]]; then
+        CANDIDATE="$(dirname "${DETECTED}")"
+    fi
+fi
+
+if [[ -d "${CANDIDATE}" ]]; then
+    echo "${CANDIDATE}" > "${PTH_FILE}"
+    log "Wrote ${PTH_FILE} -> ${CANDIDATE}"
 else
-    warn "Could not locate /usr/local/lib/python*/dist-packages; you may
-need to set PYTHONPATH manually for pyrealsense2 to import."
+    warn "Could not locate the directory containing pyrealsense2.
+The smoke test below may still pass if cmake installed the bindings
+into a Python path that's already on sys.path; if it fails, set
+PYTHONPATH manually to wherever 'find / -name pyrealsense2 -type d'
+turns up."
 fi
 
 # --------------------------------------------------------------------
 # 6) Smoke test
 # --------------------------------------------------------------------
+#
+# Don't probe rs.__version__ - that attribute isn't exposed on every
+# librealsense build and we'd report a false failure on installs that
+# actually work (the previous version of this script did exactly that).
+# Instead, confirm the module loads AND has the public symbols we
+# actually use from it (rs.pipeline, rs.config, rs.stream) - if any
+# are missing the bindings are broken in a way that matters for Nina.
 
 log "Smoke-testing the import"
-if "${PYTHON_EXEC}" -c "import pyrealsense2 as rs; print('pyrealsense2 OK, version:', rs.__version__)"; then
+SMOKE_PY="$(cat <<'PY'
+import sys
+try:
+    import pyrealsense2 as rs
+except Exception as exc:
+    print(f"FAIL: import pyrealsense2 raised: {exc}", file=sys.stderr)
+    sys.exit(1)
+missing = [name for name in ("pipeline", "config", "stream", "format")
+           if not hasattr(rs, name)]
+if missing:
+    print(f"FAIL: pyrealsense2 imported but missing symbols: {missing}",
+          file=sys.stderr)
+    sys.exit(2)
+# Optional version probe - not all builds expose it; print "unknown"
+# instead of crashing.
+ver = getattr(rs, "__version__", None) or getattr(
+    getattr(rs, "pyrealsense2", None), "__version__", None
+) or "unknown"
+print(f"pyrealsense2 OK (version: {ver})")
+PY
+)"
+
+if "${PYTHON_EXEC}" -c "${SMOKE_PY}"; then
     log "Done. Plug in the D435 (USB 3 port!) and re-launch the Nina UI."
     log "The Map / Drive screen Autonomous-mode toggle will now light"
     log "the Depth pill green when enabled."
 else
-    die "pyrealsense2 import still failing - check the warning above
-and confirm /usr/local/lib/python*/dist-packages is on your sys.path."
+    die "pyrealsense2 import or symbol check failed - see the message
+above. Confirm /usr/local/lib/${PY_VER_TAG}/dist-packages contains a
+pyrealsense2/ folder; if not, the cmake step put the bindings in an
+unexpected place."
 fi
