@@ -127,9 +127,18 @@ fun NinaConsoleSectionContent(
                     NinaLog.tap("SirenaSettings", "category", key)
                     onSettingsCategoryChange(key)
                 },
+                daemonUrl = daemonUrl,
+                caps = caps,
+                statusUi = readyState?.status,
             )
 
-        "health" -> SirenaHealthScreen()
+        "health" ->
+            SirenaHealthScreen(
+                vm = vm,
+                daemonUrl = daemonUrl,
+                caps = caps,
+                statusUi = readyState?.status,
+            )
         else ->
             SirenaHomeScreen(
                 caps = caps,

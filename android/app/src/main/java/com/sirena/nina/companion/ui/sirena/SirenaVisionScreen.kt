@@ -59,6 +59,10 @@ fun SirenaVisionScreen(
         }
     }
 
+    val openCvHint =
+        statusMsg.contains("opencv", ignoreCase = true) ||
+            statusMsg.contains("cv2", ignoreCase = true)
+
     LaunchedEffect(faceOn, objectOn, visionOn, pipelineOn) {
         if (!visionOn || !pipelineOn) return@LaunchedEffect
         vm.postVisionOptions(face = faceOn, objects = objectOn, objectConfidence = null)
@@ -112,6 +116,25 @@ fun SirenaVisionScreen(
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Preview", fontWeight = FontWeight.Bold)
                 ToggleRow("Camera stream", pipelineOn) { pipelineOn = it }
+                if (openCvHint && pipelineOn) {
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)),
+                    ) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("OpenCV not available on the Jetson", fontWeight = FontWeight.SemiBold)
+                            Text(
+                                "Install it into the same Python environment as nina-link (often ``.venv-link``), then restart the service:\n\n" +
+                                    "``./.venv-link/bin/pip install opencv-python-headless``\n\n" +
+                                    "``sudo systemctl restart nina-link``",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                    }
+                }
                 if (statusMsg.isNotBlank()) {
                     Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

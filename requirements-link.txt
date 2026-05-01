@@ -14,3 +14,6 @@ pyserial>=3.5
 # Optional (Jetson): vision bridge imports sirena_ui + OpenCV. Install in the same venv:
 #   pip install opencv-python-headless 'numpy>=1.19'
 # For YOLO object detection, also install sirena_ui / requirements-vision.txt as on the robot.
+#
+# Optional: companion POST /v1/actions/audio/generate (gTTS) on the Jetson:
+#   pip install gTTS

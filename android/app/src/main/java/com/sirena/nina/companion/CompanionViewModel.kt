@@ -465,6 +465,58 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             e.message
         }
 
+    suspend fun fetchDaemonHealth(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.health(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchActionAudioInfo(action: String): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.actionAudioInfo(url, action)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postActionAudioOffset(action: String, audioOffsetSec: Double): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionAudioOffset(url, bearer, action, audioOffsetSec)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    suspend fun postActionAudioClear(action: String): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionAudioClear(url, bearer, action)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    suspend fun postActionAudioGenerate(
+        action: String,
+        text: String,
+        lang: String,
+        tld: String,
+        audioOffsetSec: Double,
+    ): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.actionAudioGenerate(url, bearer, action, text, lang, tld, audioOffsetSec)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
     suspend fun fetchVisionStatus(): JSONObject? =
         try {
             val url = prefs.baseUrl.first()

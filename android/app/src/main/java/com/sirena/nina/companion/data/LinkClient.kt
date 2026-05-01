@@ -146,6 +146,56 @@ class LinkClient {
             post("$baseUrl/v1/actions/record/start", bearer, body.toString())
         }
 
+    /** Jetson manifest audio editor (`GET /v1/actions/audio/info`). */
+    suspend fun actionAudioInfo(baseUrl: String, action: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            val enc = java.net.URLEncoder.encode(action, Charsets.UTF_8.name())
+            get("$baseUrl/v1/actions/audio/info?action=$enc")
+        }
+
+    suspend fun actionAudioOffset(
+        baseUrl: String,
+        bearer: String?,
+        action: String,
+        audioOffsetSec: Double,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("action", action)
+                    .put("audio_offset", audioOffsetSec)
+            post("$baseUrl/v1/actions/audio/offset", bearer, body.toString())
+        }
+
+    suspend fun actionAudioClear(baseUrl: String, bearer: String?, action: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/actions/audio/clear",
+                bearer,
+                JSONObject().put("action", action).toString(),
+            )
+        }
+
+    suspend fun actionAudioGenerate(
+        baseUrl: String,
+        bearer: String?,
+        action: String,
+        text: String,
+        lang: String,
+        tld: String,
+        audioOffsetSec: Double,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("action", action)
+                    .put("text", text)
+                    .put("lang", lang)
+                    .put("tld", tld)
+                    .put("audio_offset", audioOffsetSec)
+            post("$baseUrl/v1/actions/audio/generate", bearer, body.toString())
+        }
+
     suspend fun visionStatus(baseUrl: String): JSONObject =
         withContext(Dispatchers.IO) { get("$baseUrl/v1/vision/status") }
 

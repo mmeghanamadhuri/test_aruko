@@ -15,11 +15,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
 from nina.link_daemon.config import LinkDaemonConfig
+from nina.link_daemon import manifest_audio
 from nina.link_daemon import media_static
 from nina.link_daemon import record_bridge
 from nina.link_daemon import robot_bridge
 from nina.link_daemon import session_claim
 from nina.link_daemon import vision_http
+from nina.services.audio_generator import AudioGeneratorError
 from nina.link_daemon.nm import NMError
 from nina.link_daemon.state import LinkCoordinator, UserMode
 
@@ -123,6 +125,23 @@ class VisionOptionsBody(BaseModel):
     face: Optional[bool] = None
     objects: Optional[bool] = None
     object_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+
+
+class ActionAudioOffsetBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+    audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
+
+
+class ActionNameBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+
+
+class ActionAudioGenerateBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+    text: str = Field(..., min_length=1, max_length=2000)
+    lang: str = Field(default="en", min_length=2, max_length=16)
+    tld: str = Field(default="com", min_length=2, max_length=16)
+    audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
 
 
 def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
@@ -366,6 +385,10 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "vision_bridge_enabled": cfg.enable_vision_bridge,
             "actions_static_enabled": cfg.enable_actions_static,
             "media_file_endpoint": "/v1/media/file",
+            "action_audio_info_endpoint": "/v1/actions/audio/info",
+            "action_audio_offset_endpoint": "/v1/actions/audio/offset",
+            "action_audio_clear_endpoint": "/v1/actions/audio/clear",
+            "action_audio_generate_endpoint": "/v1/actions/audio/generate",
             "manifest_path": str(cfg.actions_manifest_path),
             "session_script_configured": bool(cfg.session_script),
             "message": (
@@ -499,6 +522,101 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             media_type=media_static.guess_content_type(path),
             filename=path.name,
         )
+
+    @app.get("/v1/actions/audio/info")
+    def action_audio_info_http(
+        action: str = Query(..., min_length=1, max_length=160),
+    ) -> Dict[str, Any]:
+        actions_root = cfg.actions_manifest_path.parent
+        try:
+            return manifest_audio.get_action_audio_info(
+                cfg.actions_manifest_path, actions_root, action
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+
+    def _require_actions_static_for_audio_edit() -> None:
+        if not cfg.enable_actions_static:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Action audio editing disabled — set "
+                    "NINA_LINK_ENABLE_ACTIONS_STATIC=1 on the Jetson "
+                    "(manifest + audio files must be writable/servable)."
+                ),
+            )
+
+    @app.post("/v1/actions/audio/offset")
+    def action_audio_offset_http(
+        body: ActionAudioOffsetBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        try:
+            manifest_audio.set_action_audio_offset_only(
+                cfg.actions_manifest_path,
+                body.action,
+                body.audio_offset,
+            )
+            return {"ok": True, "action": body.action, "audio_offset": body.audio_offset}
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/audio/clear")
+    def action_audio_clear_http(
+        body: ActionNameBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        try:
+            manifest_audio.clear_action_audio_mapping(
+                cfg.actions_manifest_path, body.action
+            )
+            return {"ok": True, "action": body.action}
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/audio/generate")
+    def action_audio_generate_http(
+        body: ActionAudioGenerateBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        actions_root = cfg.actions_manifest_path.parent
+        try:
+            out = manifest_audio.generate_action_audio_clip(
+                cfg.actions_manifest_path,
+                actions_root,
+                body.action,
+                body.text,
+                lang=body.lang.strip(),
+                tld=body.tld.strip(),
+                offset=body.audio_offset,
+            )
+            return {
+                "ok": True,
+                "action": body.action,
+                "saved_path": str(out),
+                "audio_rel": f"audio/{body.action}.mp3",
+            }
+        except AudioGeneratorError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     @app.get("/v1/vision/status")
     def vision_status_http() -> Dict[str, Any]:
