@@ -51,39 +51,65 @@ This creates **`.venv-link`**, installs **`requirements-link.txt`**, verifies im
 
 If you see **`pip missing inside venv`**, an old `.venv-link` was built before **`python3-venv`** existed. The install script now runs **`python -m ensurepip`** inside that venv or recreates it. To reset manually: **`rm -rf .venv-link`** and run the script again.
 
-### “`.venv-link` has no active scripts” / `source: …/activate: No such file`
+### “`.venv-link` has no `activate`” / `source: …/activate: No such file`
 
-The env is **incomplete or corrupted** (copy without `bin/`, interrupted `venv` create, or wrong directory). **You do not need `source activate`** to use it — call **`pip`** and **`python`** by full path:
+The env may be **incomplete** (interrupted `venv` create, wrong copy). **You do not need `source activate`**: **systemd** already uses **`$REPO_ROOT/.venv-link/bin/python`** in **`ExecStart`**. Use **`./.venv-link/bin/pip`** and **`./.venv-link/bin/python`** by full path.
+
+**1. Inspect**
 
 ```bash
-cd ~/Nvidia-jetson-platform   # your repo root
-ls -la .venv-link/bin/python .venv-link/bin/pip .venv-link/bin/activate
-./.venv-link/bin/pip install -U pip
+cd ~/Nvidia-jetson-platform
+ls -la .venv-link/bin/
+```
+
+You want **`python`** and **`pip`**. An **`activate`** script is optional; missing **`activate`** with **`python`**/**`pip`** present is OK.
+
+**2. Install or upgrade packages**
+
+```bash
+cd ~/Nvidia-jetson-platform
+./.venv-link/bin/pip install -U pip setuptools wheel
 ./.venv-link/bin/pip install -r requirements-link.txt
 sudo systemctl restart nina-link
 ```
 
-If **`python`** or **`pip`** is missing under **`.venv-link/bin/`**, recreate the venv (needs **`sudo apt install python3-venv`** if `python3 -m venv` fails):
+**3. If `bin/python` or `bin/pip` is missing — recreate the venv**
 
 ```bash
 cd ~/Nvidia-jetson-platform
 rm -rf .venv-link
+sudo apt install -y python3-venv   # if `python3 -m venv` fails
 python3 -m venv .venv-link
 ./.venv-link/bin/pip install -r requirements-link.txt
+sudo systemctl restart nina-link
 ```
 
-Or run the full installer once: **`./scripts/install-nina-link-jetson.sh --all`** (creates a fresh `.venv-link` and registers systemd).
+Or run the full installer once: **`./scripts/install-nina-link-jetson.sh --all`** (fresh `.venv-link` + systemd).
+
+If you run **`cd /path/to/...`** literally from docs, it will fail — use **`cd ~/Nvidia-jetson-platform`** (or your real clone path).
 
 ---
 
 ## Jetson: manual install and run
 
+With activation (optional):
+
 ```bash
-cd /path/to/nina-app
+cd ~/Nvidia-jetson-platform
 python3 -m venv .venv-link && source .venv-link/bin/activate
 export PYTHONPATH=.
 pip install -r requirements-link.txt
 python -m nina.link_daemon.main
+```
+
+Same steps **without** `activate` (paths relative to repo root):
+
+```bash
+cd ~/Nvidia-jetson-platform
+python3 -m venv .venv-link
+./.venv-link/bin/pip install -r requirements-link.txt
+export PYTHONPATH=.
+./.venv-link/bin/python -m nina.link_daemon.main
 ```
 
 Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/config.py)):
@@ -155,7 +181,7 @@ If **`journalctl -u nina-link`** shows **`Changing to the requested working dire
 Re-register the unit from the real repo root so paths stay consistent:
 
 ```bash
-cd /path/to/Nvidia-jetson-platform
+cd ~/Nvidia-jetson-platform
 sudo ./scripts/install-nina-link-jetson.sh --systemd-only
 ```
 
@@ -187,7 +213,7 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 
 - **`{"detail":"Not Found"}` on `/v1/robot/...`**: Check spelling — the path is **`/v1/robot/capabilities`** (not `capabilites`).
 - **`503`** on **`POST /v1/actions/play`**: Action bridge off in the running process — set `NINA_LINK_ENABLE_ACTION_BRIDGE=1` in systemd and **`sudo systemctl restart nina-link`**.
-- **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`source .venv-link/bin/activate`** then **`pip install -r requirements-link.txt`** (includes `pyserial`) and restart **`nina-link`**.
+- **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`./.venv-link/bin/pip install -r requirements-link.txt`** (includes `pyserial`) or activate first, then **`pip install -r requirements-link.txt`** — then **`sudo systemctl restart nina-link`**.
 - **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
 ## REST API (summary)

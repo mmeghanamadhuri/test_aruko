@@ -56,6 +56,7 @@
       "file": "recordings/bye.json",
       "audio": "audio/bye.mp3",
       "audio_offset": 4.0
-    }
+    },
+    "demo_motion": "recordings/demo_motion.json"
   }
 }
