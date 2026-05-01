@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.LinkClient
+import com.sirena.nina.companion.data.jsonCleanString
 import com.sirena.nina.companion.data.Prefs
 import com.sirena.nina.companion.network.DaemonUrlResolver
 import com.sirena.nina.companion.network.LanDaemonScanner
@@ -458,17 +459,41 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         countdown: Double = 3.0,
         holdAfter: Boolean = false,
         register: Boolean = true,
-    ): String? =
-        try {
+    ): String? {
+        return try {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
-            client.recordStart(url, bearer, name.trim(), seconds, hz, countdown, holdAfter, register)
-            null
+            val resp =
+                client.recordStart(url, bearer, name.trim(), seconds, hz, countdown, holdAfter, register)
+            if (!resp.optBoolean("ok", true)) {
+                resp.jsonCleanString("error")
+                    ?: "Recording did not start (server rejected request)."
+            } else {
+                null
+            }
         } catch (e: LinkApiException) {
             normalizeRemoteError(e)
         } catch (e: Exception) {
             normalizeRemoteError(e)
         }
+    }
+
+    suspend fun stopRemoteRecord(): String? {
+        return try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            val resp = client.recordStop(url, bearer)
+            if (!resp.optBoolean("ok", true)) {
+                resp.jsonCleanString("error") ?: "Could not stop recording."
+            } else {
+                null
+            }
+        } catch (e: LinkApiException) {
+            normalizeRemoteError(e)
+        } catch (e: Exception) {
+            normalizeRemoteError(e)
+        }
+    }
 
     suspend fun deleteManifestAction(
         actionName: String,
@@ -559,17 +584,20 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
-    fun postVisionOptions(face: Boolean?, objects: Boolean?, objectConfidence: Double? = null) {
-        viewModelScope.launch {
-            try {
-                val url = prefs.baseUrl.first()
-                val bearer = prefs.bearerToken.first()
-                client.visionOptions(url, bearer, face, objects, objectConfidence)
-            } catch (e: Exception) {
-                NinaLog.warn("vision_options", e.message ?: "failed")
-            }
+    /** Apply vision toggles and return the daemon JSON (includes toggle_*_error on failure). */
+    suspend fun postVisionOptionsSync(
+        face: Boolean?,
+        objects: Boolean?,
+        objectConfidence: Double? = null,
+    ): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionOptions(url, bearer, face, objects, objectConfidence)
+        } catch (e: Exception) {
+            NinaLog.warn("vision_options", e.message ?: "failed")
+            null
         }
-    }
 
     suspend fun visionOpen(): String? =
         try {
@@ -657,12 +685,19 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         return "$base/v1/media/file?relative=$enc"
     }
 
-    private fun friendlyHttp(e: LinkApiException): String =
+    private fun friendlyHttp(e: LinkApiException): String {
+        val raw = e.message?.trim()
+        val cleaned =
+            if (raw.isNullOrBlank() || raw.equals("null", ignoreCase = true)) {
+                null
+            } else {
+                raw
+            }
         if (e.code == 401) {
-            "Unauthorized — set a fleet token or pair with PIN (Setup tab)."
-        } else {
-            e.message ?: "HTTP ${e.code}"
+            return "Unauthorized — set a fleet token or pair with PIN (Setup tab)."
         }
+        return cleaned ?: "HTTP ${e.code}"
+    }
 }
 
 /** JSON string fields: treat blank and literal `"null"` as absent (some intermediaries stringify null). */

@@ -389,6 +389,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "action_bridge_enabled": cfg.enable_action_bridge,
             "record_bridge_enabled": cfg.enable_record_bridge,
             "record_start_endpoint": "/v1/actions/record/start",
+            "record_stop_endpoint": "/v1/actions/record/stop",
             "record_status_endpoint": "/v1/actions/record/status",
             "recordings_list_endpoint": "/v1/actions/recordings",
             "vision_stream_endpoint": "/v1/vision/stream",
@@ -518,6 +519,22 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             hold_after=body.hold_after,
             register_manifest=body.register_manifest,
         )
+
+    @app.post("/v1/actions/record/stop")
+    def record_stop_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_record_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Record bridge disabled — set NINA_LINK_ENABLE_RECORD_BRIDGE=1 on the Jetson "
+                    "(stop Sirena UI / other bus users first)."
+                ),
+            )
+        return record_bridge.request_cancel_record()
 
     @app.get("/v1/media/file")
     def media_file_http(relative: str = Query(..., min_length=1, max_length=512)):

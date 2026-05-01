@@ -6,6 +6,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -144,6 +145,11 @@ class LinkClient {
                     .put("hold_after", holdAfter)
                     .put("register", register)
             post("$baseUrl/v1/actions/record/start", bearer, body.toString())
+        }
+
+    suspend fun recordStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/actions/record/stop", bearer, "{}")
         }
 
     /** Jetson manifest audio editor (`GET /v1/actions/audio/info`). */
@@ -320,20 +326,59 @@ class LinkClient {
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                val hint =
-                    try {
-                        val j = JSONObject(body)
-                        j.optString("detail").takeIf { it.isNotBlank() }
-                            ?: j.optString("message").takeIf { it.isNotBlank() }
-                            ?: j.toString()
-                    } catch (_: Exception) {
-                        body.ifBlank { resp.message }
-                    }
+                val hint = httpErrorDetail(body, resp.code, resp.message)
                 throw LinkApiException(resp.code, hint)
             }
             return if (body.isBlank()) JSONObject() else JSONObject(body)
         }
     }
+
+    /**
+     * FastAPI often returns `detail` as a string, a list of validation objects, or nested JSON.
+     * [JSONObject.optString] turns JSON null into the literal `"null"` — callers must use [jsonCleanString] instead.
+     */
+    private fun httpErrorDetail(body: String, httpCode: Int, httpMessage: String?): String {
+        val fallback =
+            httpMessage?.takeIf { it.isNotBlank() && !it.equals("null", ignoreCase = true) }
+                ?: "HTTP $httpCode"
+        if (body.isBlank()) return fallback
+        return try {
+            val j = JSONObject(body)
+            when {
+                j.has("detail") && !j.isNull("detail") -> {
+                    when (val d = j.get("detail")) {
+                        is String -> d.trim().ifBlank { fallback }
+                        is JSONArray -> {
+                            val parts = mutableListOf<String>()
+                            for (i in 0 until d.length()) {
+                                val item = d.optJSONObject(i)
+                                val msg = item?.optString("msg")?.trim().orEmpty()
+                                if (msg.isNotEmpty()) parts.add(msg)
+                            }
+                            parts.joinToString("; ").ifBlank { d.toString() }
+                        }
+
+                        else -> d.toString().trim().ifBlank { fallback }
+                    }
+                }
+
+                j.has("message") && !j.isNull("message") ->
+                    j.optString("message").trim().ifBlank { fallback }
+
+                else -> j.toString().trim().ifBlank { fallback }
+            }
+        } catch (_: Exception) {
+            body.trim().ifBlank { fallback }
+        }
+    }
+}
+
+/** JSON field safe for optional strings (never returns literal `"null"`). */
+fun JSONObject.jsonCleanString(key: String): String? {
+    if (!has(key) || isNull(key)) return null
+    val s = optString(key).trim()
+    if (s.isEmpty() || s.equals("null", ignoreCase = true)) return null
+    return s
 }
 
 class LinkApiException(val code: Int, message: String) : Exception(message)

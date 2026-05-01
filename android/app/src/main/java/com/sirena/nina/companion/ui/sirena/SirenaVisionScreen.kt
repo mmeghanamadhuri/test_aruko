@@ -57,6 +57,8 @@ fun SirenaVisionScreen(
     var faceOn by remember { mutableStateOf(false) }
     var objectOn by remember { mutableStateOf(false) }
     var statusMsg by remember { mutableStateOf("") }
+    /** Immediate feedback from POST /v1/vision/options (e.g. missing ultralytics). */
+    var toggleErr by remember { mutableStateOf("") }
     var enrollName by remember { mutableStateOf("") }
     var enrollBusy by remember { mutableStateOf(false) }
     var enrollProgress by remember { mutableStateOf("") }
@@ -81,8 +83,14 @@ fun SirenaVisionScreen(
             statusMsg.contains("cv2", ignoreCase = true)
 
     LaunchedEffect(faceOn, objectOn, visionOn, pipelineOn) {
-        if (!visionOn || !pipelineOn) return@LaunchedEffect
-        vm.postVisionOptions(face = faceOn, objects = objectOn, objectConfidence = null)
+        if (!visionOn || !pipelineOn) {
+            toggleErr = ""
+            return@LaunchedEffect
+        }
+        val resp = vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = null)
+        val faceE = resp.toggleErr("toggle_face_error")
+        val objE = resp.toggleErr("toggle_object_error")
+        toggleErr = listOfNotNull(faceE, objE).joinToString("\n")
     }
 
     LaunchedEffect(pipelineOn, visionOn) {
@@ -151,6 +159,13 @@ fun SirenaVisionScreen(
                             )
                         }
                     }
+                }
+                if (toggleErr.isNotBlank()) {
+                    Text(
+                        toggleErr,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                    )
                 }
                 if (statusMsg.isNotBlank()) {
                     Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -335,7 +350,10 @@ fun SirenaVisionScreen(
                             }
                             announceLine = j.optString("sentence", "")
                             delay(1200)
-                            val err = vm.fetchVisionAnnounceStatus()?.optString("error")
+                            val errJ = vm.fetchVisionAnnounceStatus()
+                            val err =
+                                errJ?.takeIf { !it.isNull("error") }?.optString("error")?.trim()
+                                    ?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
                             if (!err.isNullOrBlank()) {
                                 announceErr = err
                             }
@@ -354,6 +372,14 @@ fun SirenaVisionScreen(
             }
         }
     }
+}
+
+private fun JSONObject?.toggleErr(key: String): String? {
+    val j = this ?: return null
+    if (!j.has(key) || j.isNull(key)) return null
+    val s = j.optString(key).trim()
+    if (s.isEmpty() || s.equals("null", ignoreCase = true)) return null
+    return s
 }
 
 @SuppressLint("SetJavaScriptEnabled")

@@ -13,6 +13,8 @@ pyserial>=3.5
 
 # Optional (Jetson): vision + gTTS + YOLO + same stack as Sirena (without PyQt5):
 #   pip install -r sirena_ui/requirements-headless.txt
+# Object detection needs Ultralytics YOLO (same Python as nina-link):
+#   ./.venv-link/bin/python -m pip install ultralytics
 # Smaller vision-only shortcut:
 #   pip install opencv-python-headless 'numpy>=1.19'
 # For YOLO on Jetson you may need the correct PyTorch wheel before ultralytics — see that file's header.

@@ -386,7 +386,11 @@ class _YoloObjectDetector:
         except ImportError as exc:
             raise RuntimeError(
                 "Ultralytics is required for object detection. "
-                "Install with: pip install ultralytics"
+                "Use the same Python as nina-link, e.g.\n"
+                "  python3 -m pip install ultralytics\n"
+                "or install the full headless vision stack:\n"
+                "  pip install -r sirena_ui/requirements-headless.txt\n"
+                "(On Jetson install a JetPack-matching PyTorch wheel before ultralytics if needed.)"
             ) from exc
 
         self._YOLO = YOLO

@@ -335,7 +335,14 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
                 continue
             }
             val ph = j.optString("phase", "idle")
-            val err = j.optString("error").takeIf { it.isNotBlank() }
+            val err =
+                if (!j.isNull("error")) {
+                    j.optString("error").trim().takeIf {
+                        it.isNotEmpty() && !it.equals("null", ignoreCase = true)
+                    }
+                } else {
+                    null
+                }
             val extra =
                 buildString {
                     if (j.has("samples_done") && !j.isNull("samples_done")) {
@@ -350,7 +357,13 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
                 }
             statusLine =
                 when {
-                    err != null -> "Error: $err"
+                    err != null ->
+                        if (err.contains("cancelled", ignoreCase = true)) {
+                            "Stopped: $err"
+                        } else {
+                            "Error: $err"
+                        }
+
                     ph == "idle" && j.optString("last_saved").isNotBlank() ->
                         "Saved: ${j.optString("last_saved")}"
 
@@ -449,37 +462,61 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
             }
             SirenaSwitch(checked = holdAfter, onCheckedChange = { holdAfter = it })
         }
-        Button(
-            onClick = {
-                scope.launch {
-                    val sec = secondsStr.trim().toDoubleOrNull()
-                    val hz = hzStr.trim().toDoubleOrNull()
-                    val cd = countdownStr.trim().toDoubleOrNull()
-                    if (sec == null || hz == null || cd == null) {
-                        statusLine = "Enter valid numbers for duration, Hz, and countdown."
-                        return@launch
-                    }
-                    statusLine = "Starting…"
-                    val err =
-                        vm.startRemoteRecord(
-                            name = name.trim(),
-                            seconds = sec,
-                            hz = hz,
-                            countdown = cd,
-                            holdAfter = holdAfter,
-                            register = registerInManifest,
-                        )
-                    if (err != null) {
-                        statusLine = err
-                    } else {
-                        poll = true
-                    }
-                }
-            },
-            modifier = Modifier.padding(top = 12.dp),
-            enabled = name.trim().length >= 2,
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(top = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Start recording")
+            Button(
+                onClick = {
+                    scope.launch {
+                        val sec = secondsStr.trim().toDoubleOrNull()
+                        val hz = hzStr.trim().toDoubleOrNull()
+                        val cd = countdownStr.trim().toDoubleOrNull()
+                        if (sec == null || hz == null || cd == null) {
+                            statusLine = "Enter valid numbers for duration, Hz, and countdown."
+                            return@launch
+                        }
+                        statusLine = "Starting…"
+                        val err =
+                            vm.startRemoteRecord(
+                                name = name.trim(),
+                                seconds = sec,
+                                hz = hz,
+                                countdown = cd,
+                                holdAfter = holdAfter,
+                                register = registerInManifest,
+                            )
+                        if (err != null) {
+                            statusLine = err
+                        } else {
+                            poll = true
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = name.trim().length >= 2 && !poll,
+            ) {
+                Text("Start recording")
+            }
+            OutlinedButton(
+                onClick = {
+                    scope.launch {
+                        val err = vm.stopRemoteRecord()
+                        if (err != null) {
+                            statusLine = err
+                        } else {
+                            statusLine = "Stop requested…"
+                        }
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                enabled = poll,
+            ) {
+                Text("Stop recording")
+            }
         }
         if (statusLine.isNotBlank()) {
             Text(
