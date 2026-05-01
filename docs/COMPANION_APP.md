@@ -18,6 +18,8 @@ On stock Ubuntu/Jetson images you may need **`python3-venv`** once: either `sudo
 
 This creates **`.venv-link`**, installs **`requirements-link.txt`**, verifies imports, checks **`nmcli`/NetworkManager**, and with **`--smoke`** briefly runs the daemon and curls **`/health`**.
 
+If you see **`pip missing inside venv`**, an old `.venv-link` was built before **`python3-venv`** existed. The install script now runs **`python -m ensurepip`** inside that venv or recreates it. To reset manually: **`rm -rf .venv-link`** and run the script again.
+
 ---
 
 ## Jetson: manual install and run

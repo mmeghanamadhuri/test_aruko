@@ -53,9 +53,6 @@ if [[ -z "${VENV_PATH}" ]]; then
     VENV_PATH="${REPO_ROOT}/.venv-link"
 fi
 
-PY="${VENV_PATH}/bin/python"
-PIP="${VENV_PATH}/bin/pip"
-
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()  { printf '  [\033[32mOK\033[0m] %s\n' "$*"; }
 bad() { printf '  [\033[31m!!\033[0m] %s\n' "$*"; }
@@ -129,7 +126,7 @@ if [[ "${INSTALL_SYSTEM_DEPS}" -eq 1 ]]; then
     ok "python3-venv, pip, curl (apt)"
 fi
 
-# Remove broken half-created venv from a previous failed run
+# Remove broken half-created venv from a previous failed run (no interpreter)
 if [[ -d "${VENV_PATH}" ]] && [[ ! -x "${VENV_PATH}/bin/python" ]]; then
     warn "Removing incomplete venv: ${VENV_PATH}"
     rm -rf "${VENV_PATH}"
@@ -169,8 +166,29 @@ else
     ok "Using existing venv: ${VENV_PATH}"
 fi
 
-if [[ ! -x "${PIP}" ]]; then
-    bad "pip missing inside venv"
+PY="${VENV_PATH}/bin/python"
+_venv_has_pip() {
+    [[ -x "${VENV_PATH}/bin/pip" ]] || [[ -x "${VENV_PATH}/bin/pip3" ]]
+}
+
+# Older failed runs left a venv with python but no pip (ensurepip wasn't on the system yet).
+if [[ -x "${PY}" ]] && ! _venv_has_pip; then
+    say "  Bootstrapping pip inside venv (python -m ensurepip)"
+    if ! "${PY}" -m ensurepip --upgrade; then
+        warn "ensurepip failed — recreating venv from scratch"
+        rm -rf "${VENV_PATH}"
+        say "  Creating venv: ${VENV_PATH}"
+        python3 -m venv "${VENV_PATH}" || { bad "venv recreate failed"; exit 1; }
+        PY="${VENV_PATH}/bin/python"
+    fi
+fi
+
+if [[ -x "${VENV_PATH}/bin/pip" ]]; then
+    PIP="${VENV_PATH}/bin/pip"
+elif [[ -x "${VENV_PATH}/bin/pip3" ]]; then
+    PIP="${VENV_PATH}/bin/pip3"
+else
+    bad "pip missing inside venv after ensurepip — try: rm -rf ${VENV_PATH} && re-run this script"
     exit 1
 fi
 
