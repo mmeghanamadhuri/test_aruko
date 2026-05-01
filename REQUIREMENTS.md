@@ -425,8 +425,15 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_DEPTH_DISABLE` | unset | `1` skips opening the D435 (autonomy runs lidar-only). Useful for debugging without the depth camera plugged in. |
 | `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
 | `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
+| `NINA_DEPTH_TOP_SKIP_PCT` | 25 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip ceiling lights / sky. |
+| `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.5). |
 | `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
 | `NINA_LIDAR_DISABLE` | unset | `1` skips lidar; SLAM and autonomy both degrade gracefully. |
+| `NINA_AUTO_CRUISE_PCT` | 15 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
+| `NINA_AUTO_TURN_PCT` | 16 | Turn-in-place speed % during obstacle avoidance. |
+| `NINA_AUTO_FWD_CLEAR_MM` | 700 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. |
+| `NINA_AUTO_SIDE_CLEAR_MM` | 350 | Per-side clearance for forward to be allowed. |
+| `NINA_AUTO_ESTOP_MM` | 300 | Anything closer than this in front triggers an immediate reverse. |
 
 #### 5.3.5 First autonomy run
 
@@ -446,6 +453,32 @@ All optional; defaults work for the recommended hardware. Set in
 6. Hit the on-screen **E-STOP** (or the `Esc` key) any time. The
    pilot stops the wheels and engages the brake within one tick
    (`AutonomySettings.tick_hz`, default 5 Hz → ≤ 200 ms).
+
+**Troubleshooting: "the bot just spins, never moves forward"**
+
+Almost always one of the forward-cone sensors is reading a phantom
+obstacle. The autonomy log spells out exactly which one:
+
+```
+journalctl --user -u nina-ui-kiosk -f | grep autonomy
+# … autonomy turn=turn_left reason=forward_blocked forward=480mm
+#    clear=700mm left=2100mm right=2200mm
+#    by_source={'lidar': 2100, 'depth': 480}
+```
+
+In that example, lidar reports 2.1 m of clearance straight ahead but
+depth reports 480 mm — the floor leaking through the bottom of the
+D435 frame. The fix is the floor-mask defaults
+(`NINA_DEPTH_BOT_SKIP_PCT=35`); if your D435 is mounted lower or
+tilted further down, raise it (e.g. `=45`). If your D435 sits at face
+height with no tilt, you can lower it (`=10`) to let the bottom rows
+back in.
+
+If the breakdown shows `lidar=120` (or similar low value) the lidar
+itself is reading something close in its forward sector — most
+commonly the lidar is mounted with 0° pointing **at the bot's body**
+instead of away from it. Rotate the RPLIDAR until the cable comes
+out the side opposite the bot's "front".
 
 #### 5.3.6 Live perception view (LiDAR + RGB + Depth, side-by-side)
 

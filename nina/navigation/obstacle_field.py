@@ -82,10 +82,18 @@ class ObstacleField:
     cliff_alarm: bool = False
 
     sources: Dict[str, str] = None  # type: ignore[assignment]
+    # Per-source contribution to the forward sector, kept around so
+    # the autonomy log line can spell out "forward blocked because
+    # depth=480 mm even though lidar=2100 mm" - the most common
+    # autonomy bug shape on a fresh bot bring-up. Filled by fuse();
+    # other sectors omitted (forward is the one that gates motion).
+    forward_by_source: Dict[str, int] = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.sources is None:
             self.sources = {}
+        if self.forward_by_source is None:
+            self.forward_by_source = {}
 
     # ------------------------------------------------------------------
     # Read API
@@ -114,6 +122,7 @@ class ObstacleField:
             "cliff_distance_mm": self.cliff_distance_mm,
             "cliff_alarm": self.cliff_alarm,
             "sources": dict(self.sources),
+            "forward_by_source": dict(self.forward_by_source),
         }
 
 
@@ -163,11 +172,15 @@ def fuse(
     right_candidates: List[Optional[int]] = []
     rear_candidates: List[Optional[int]] = []
     sources: Dict[str, str] = {}
+    # Per-source forward-sector minima, attached to the field so the
+    # autonomy log can break down WHO drove the forward decision.
+    forward_by_source: Dict[str, int] = {}
 
     # ---- lidar ----
     if lidar is not None and lidar.distances_mm:
         sources["lidar"] = f"{lidar.num_points()} returns"
         n = len(lidar.distances_mm)
+        lidar_forward_min: Optional[int] = None
         for idx, dist in enumerate(lidar.distances_mm):
             if dist <= 0:
                 continue
@@ -175,20 +188,27 @@ def fuse(
             sector = _sector_for_angle_deg(angle)
             if sector == SECTOR_FORWARD:
                 forward_candidates.append(int(dist))
+                if lidar_forward_min is None or dist < lidar_forward_min:
+                    lidar_forward_min = int(dist)
             elif sector == SECTOR_LEFT:
                 left_candidates.append(int(dist))
             elif sector == SECTOR_RIGHT:
                 right_candidates.append(int(dist))
             elif sector == SECTOR_REAR:
                 rear_candidates.append(int(dist))
+        if lidar_forward_min is not None:
+            forward_by_source["lidar"] = lidar_forward_min
 
     # ---- ultrasonics ----
     ultra_used = 0
+    ultra_forward_min: Optional[int] = None
     for reading in ultrasonics:
         if reading.distance_mm is None:
             continue
         if reading.position in _ULTRA_FORWARD_HINTS:
             forward_candidates.append(reading.distance_mm)
+            if ultra_forward_min is None or reading.distance_mm < ultra_forward_min:
+                ultra_forward_min = int(reading.distance_mm)
             ultra_used += 1
             continue
         sector = _ULTRA_SECTOR.get(reading.position)
@@ -203,11 +223,14 @@ def fuse(
         ultra_used += 1
     if ultra_used > 0:
         sources["ultrasonic"] = f"{ultra_used} sensors"
+    if ultra_forward_min is not None:
+        forward_by_source["ultrasonic"] = ultra_forward_min
 
     # ---- depth ----
     if depth is not None:
         if depth.forward_min_mm is not None:
             forward_candidates.append(depth.forward_min_mm)
+            forward_by_source["depth"] = int(depth.forward_min_mm)
         if depth.left_min_mm is not None:
             left_candidates.append(depth.left_min_mm)
         if depth.right_min_mm is not None:
@@ -235,6 +258,7 @@ def fuse(
         cliff_distance_mm=cliff_distance,
         cliff_alarm=cliff_alarm,
         sources=sources,
+        forward_by_source=forward_by_source,
     )
     if cliff_alarm:
         # Cliff alarm collapses the forward sector to zero: the pilot

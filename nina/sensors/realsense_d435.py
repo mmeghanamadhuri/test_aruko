@@ -45,6 +45,23 @@ DEFAULT_FPS = int(os.environ.get("NINA_DEPTH_FPS", "15"))
 DEFAULT_MAX_RANGE_MM = int(os.environ.get("NINA_DEPTH_MAX_MM", "5000"))
 DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_DEPTH_MIN_MM", "200"))
 
+# Vertical band of the depth image used for the obstacle-cone summary.
+# Defaults skip the top 25% (sky / ceiling lights, which the lidar
+# can't see and which the autonomy doesn't care about) AND the bottom
+# 35% (the floor right in front of the bot, which a forward-tilted
+# D435 reads at ~480 mm and which would otherwise be fused as a
+# permanent forward obstacle - the bot would spin in place forever
+# while reading floor as 'wall ahead'). The middle band keeps
+# standing obstacles (people, walls, table edges) visible while
+# letting the bot actually drive forward in an open room.
+#
+# Operators with a different mount geometry (camera lower / tilted
+# more or less) can override these. A camera mounted at face height
+# tilted 0 deg should set NINA_DEPTH_BOT_SKIP_PCT=10 (let the bottom
+# rows back in - they no longer see the floor right in front).
+DEFAULT_TOP_SKIP_PCT = int(os.environ.get("NINA_DEPTH_TOP_SKIP_PCT", "25"))
+DEFAULT_BOT_SKIP_PCT = int(os.environ.get("NINA_DEPTH_BOT_SKIP_PCT", "35"))
+
 
 def _import_pyrealsense2():
     """Return the pyrealsense2 module that actually has the C bindings.
@@ -272,14 +289,22 @@ class RealSenseD435:
 
     def _publish(self, np, arr) -> None:
         h, w = arr.shape
-        # Forward cone: horizontally centred 1/3 width, vertically the
-        # bottom half (cuts out ceiling lights / sky pixels).
+        # Forward / left / right cones: horizontally split the image
+        # into thirds, vertically use the MIDDLE band (skip both the
+        # sky/ceiling at the top AND the floor at the bottom). The
+        # floor mask is the critical piece: a D435 mounted ~30 cm up
+        # tilted ~10 deg down has the floor right in front of the bot
+        # at the bottom of every frame, ~480 mm away. Without
+        # skipping those rows, every frame reports ~480 mm forward
+        # and the autonomy stack reads that as 'forward blocked' and
+        # spins on the spot forever.
         cx0 = w // 3
         cx1 = 2 * w // 3
-        cy0 = h // 3
-        forward = arr[cy0:, cx0:cx1]
-        left = arr[cy0:, : cx0]
-        right = arr[cy0:, cx1:]
+        cy0 = max(0, min(h - 1, int(h * DEFAULT_TOP_SKIP_PCT / 100)))
+        cy1 = max(cy0 + 1, min(h, int(h * (100 - DEFAULT_BOT_SKIP_PCT) / 100)))
+        forward = arr[cy0:cy1, cx0:cx1]
+        left = arr[cy0:cy1, : cx0]
+        right = arr[cy0:cy1, cx1:]
 
         forward_min = self._region_min(np, forward)
         forward_avg = self._region_avg(np, forward)

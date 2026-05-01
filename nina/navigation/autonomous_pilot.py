@@ -268,9 +268,23 @@ class AutonomousPilot:
         choice = "turn_left" if left >= right else "turn_right"
         self._commit_action = choice
         self._commit_until = now + (self._settings.turn_duration_ms / 1000.0)
+        # Per-source breakdown so logs spell out "depth=480 mm even
+        # though lidar=2100 mm" - the most common mis-mount pattern
+        # is the D435 reading the floor as a phantom forward wall.
+        breakdown = ", ".join(
+            f"{src}={mm}mm" for src, mm in sorted(obstacle.forward_by_source.items())
+        ) or "no forward sensor data"
+        forward_str = f"{forward}mm" if forward is not None else "<no data>"
         self._set_action(
             choice,
-            f"forward blocked (l={left}, r={right} mm)",
+            f"forward {forward_str} < {fwd_clear}mm clear "
+            f"(l={left}, r={right}); per-source: {breakdown}",
+        )
+        log.info(
+            "autonomy turn=%s reason=forward_blocked forward=%s clear=%smm "
+            "left=%smm right=%smm by_source=%s",
+            choice, forward_str, fwd_clear, left, right,
+            dict(obstacle.forward_by_source),
         )
         self._apply_action(choice)
 

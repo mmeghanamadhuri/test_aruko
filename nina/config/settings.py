@@ -119,7 +119,11 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     autonomy = AutonomySettings(
         tick_hz=float(os.environ.get("NINA_AUTO_TICK_HZ", "5")),
-        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "18")),
+        # 15% matches the GUI manual-mode floor (MIN_SPEED_PCT) so an
+        # operator dropping out of autonomy doesn't see the wheels
+        # change pace mid-handoff. Bump via NINA_AUTO_CRUISE_PCT for
+        # tests that want a faster wander.
+        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "15")),
         turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "16")),
         forward_clear_mm=int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "700")),
         side_clear_mm=int(os.environ.get("NINA_AUTO_SIDE_CLEAR_MM", "350")),
