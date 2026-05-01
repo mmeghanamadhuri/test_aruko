@@ -103,6 +103,12 @@ class LinkClient {
             post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
         }
 
+    /** BLDC hardware readiness (lazy NavigationManager probe; matches desktop Drive pill). */
+    suspend fun robotDriveStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/robot/drive/status")
+        }
+
     /** Manifest-backed action list from the Jetson (`nina/actions/manifest.json`). */
     suspend fun listActions(baseUrl: String): JSONObject =
         withContext(Dispatchers.IO) {

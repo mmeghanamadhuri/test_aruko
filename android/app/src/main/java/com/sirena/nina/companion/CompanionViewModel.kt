@@ -399,12 +399,24 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Momentary drive pulse — requires Jetson `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`. */
-    suspend fun robotDriveMomentary(direction: String, durationMs: Int = 280) {
-        NinaLog.tap("Drive", "momentary", "$direction ${durationMs}ms")
+    suspend fun robotDriveMomentary(
+        direction: String,
+        durationMs: Int = 280,
+        speedPercent: Int? = null,
+    ) {
+        NinaLog.tap("Drive", "momentary", "$direction ${durationMs}ms speed=$speedPercent")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
-        client.robotDriveMomentary(url, bearer, direction, durationMs, null)
+        client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
     }
+
+    suspend fun fetchRobotDriveStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.robotDriveStatus(url)
+        } catch (_: Exception) {
+            null
+        }
 
     suspend fun robotEmergencyStop() {
         NinaLog.tap("Drive", "emergency_stop", "")
@@ -619,13 +631,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             e.message
         }
 
-    suspend fun visionEnroll(name: String, targetSamples: Int = 8): JSONObject? =
+    /** Start face enrollment; second value is a human-readable network/auth error when present. */
+    suspend fun visionEnroll(name: String, targetSamples: Int = 8): Pair<JSONObject?, String?> =
         try {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
-            client.visionEnroll(url, bearer, name, targetSamples)
-        } catch (_: Exception) {
-            null
+            Pair(client.visionEnroll(url, bearer, name, targetSamples), null)
+        } catch (e: LinkApiException) {
+            Pair(null, friendlyHttp(e))
+        } catch (e: Exception) {
+            Pair(null, normalizeRemoteError(e))
         }
 
     suspend fun fetchVisionEnrollStatus(): JSONObject? =

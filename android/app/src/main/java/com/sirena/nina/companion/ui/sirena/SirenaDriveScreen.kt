@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.util.NinaLog
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -65,9 +66,15 @@ fun SirenaDriveScreen(
     val bridgeOn = caps?.optBoolean("robot_bridge_enabled") == true
     val visionOn = caps?.optBoolean("vision_bridge_enabled") == true
     val defaultMs = caps?.optInt("default_duration_ms")?.takeIf { it > 0 } ?: 280
-    var speedPct by remember { mutableFloatStateOf(40f) }
+    val speedMin = caps?.optInt("drive_speed_min_percent")?.takeIf { it in 1..99 } ?: 15
+    val speedMax = caps?.optInt("drive_speed_max_percent")?.takeIf { it > speedMin } ?: 25
+    var speedPct by remember(speedMin, speedMax) {
+        mutableFloatStateOf(speedMin.toFloat())
+    }
     var autonomyOn by remember { mutableStateOf(false) }
     var cameraPreviewOn by remember { mutableStateOf(false) }
+    var bldcConnected by remember { mutableStateOf<Boolean?>(null) }
+    var bldcDetail by remember { mutableStateOf<String?>(null) }
 
     val streamRoot = daemonUrl?.trimEnd('/') ?: ""
 
@@ -82,6 +89,22 @@ fun SirenaDriveScreen(
     LaunchedEffect(cameraPreviewOn, visionOn) {
         if (cameraPreviewOn || !visionOn) return@LaunchedEffect
         vm.visionStop()
+    }
+
+    LaunchedEffect(bridgeOn) {
+        if (!bridgeOn) {
+            bldcConnected = null
+            bldcDetail = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            val j = vm.fetchRobotDriveStatus()
+            if (j != null) {
+                bldcConnected = j.optBoolean("connected")
+                bldcDetail = j.optString("message").takeIf { it.isNotBlank() }
+            }
+            delay(2500)
+        }
     }
 
     Column(
@@ -100,7 +123,20 @@ fun SirenaDriveScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
-                        if (bridgeOn) "BLDC (bridge)" else "BLDC not connected",
+                        when {
+                            !bridgeOn -> "Drive bridge off"
+                            bldcConnected == true -> "BLDC L+R connected"
+                            bldcConnected == false -> {
+                                val d = bldcDetail
+                                if (!d.isNullOrBlank()) {
+                                    "BLDC not connected · ${d.take(48)}"
+                                } else {
+                                    "BLDC not connected"
+                                }
+                            }
+
+                            else -> "BLDC …"
+                        },
                         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -181,12 +217,14 @@ fun SirenaDriveScreen(
                         .fillMaxHeight(),
                 bridgeOn = bridgeOn,
                 defaultMs = defaultMs,
+                speedMin = speedMin,
+                speedMax = speedMax,
                 speedPct = speedPct,
                 onSpeedChange = { speedPct = it },
                 onDrive = { dir ->
                     scope.launch {
                         try {
-                            vm.robotDriveMomentary(dir, defaultMs)
+                            vm.robotDriveMomentary(dir, defaultMs, speedPct.toInt())
                             actionErr = null
                         } catch (e: Exception) {
                             actionErr = e.message
@@ -310,16 +348,27 @@ private fun ControlCard(
     modifier: Modifier = Modifier,
     bridgeOn: Boolean,
     defaultMs: Int,
+    speedMin: Int,
+    speedMax: Int,
     speedPct: Float,
     onSpeedChange: (Float) -> Unit,
     onDrive: (String) -> Unit,
     onEstop: () -> Unit,
 ) {
+    val smin = speedMin.toFloat()
+    val smax = speedMax.toFloat()
+    val steps = (speedMax - speedMin).coerceAtLeast(0)
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Manual control", fontWeight = FontWeight.Bold)
             Text("Speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Slider(value = speedPct, onValueChange = onSpeedChange, valueRange = 0f..100f, enabled = bridgeOn)
+            Slider(
+                value = speedPct.coerceIn(smin, smax),
+                onValueChange = { onSpeedChange(it.coerceIn(smin, smax)) },
+                valueRange = smin..smax,
+                steps = steps.coerceAtLeast(0),
+                enabled = bridgeOn,
+            )
             Text("${speedPct.toInt()}%", style = MaterialTheme.typography.labelSmall)
 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {

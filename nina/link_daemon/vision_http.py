@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, Iterator, List, Optional
 from sirena_ui.workers.vision_types import KIND_OBJECT
 
 from nina.link_daemon.announcement_sentence import build_sentence
+from nina.link_daemon.face_greeting_tts import queue_hello_greeting
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
 
@@ -246,6 +247,11 @@ def start_enroll_face(name: str, target_samples: int = 8) -> Dict[str, Any]:
                     "attempts": int(r.attempts),
                     "message": r.message,
                 }
+                if bool(r.ok):
+                    try:
+                        queue_hello_greeting(name)
+                    except Exception:
+                        log.exception("post-enroll greeting")
         except Exception as exc:
             log.exception("enroll_face")
             last = {

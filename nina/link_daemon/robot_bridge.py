@@ -76,6 +76,27 @@ def momentary_drive(
     return {"ok": True, "queued": True, "direction": direction, "duration_ms": duration_ms}
 
 
+def navigation_hw_status() -> Dict[str, Any]:
+    """Probe lazy NavigationManager init (same path as first drive command).
+
+    Returns ``connected`` so the companion app can mirror Sirena UI's BLDC pill.
+    """
+    try:
+        _navigation()
+        return {
+            "ok": True,
+            "connected": True,
+            "message": "BLDC L+R connected",
+        }
+    except Exception as exc:
+        log.debug("navigation_hw_status: %s", exc)
+        return {
+            "ok": True,
+            "connected": False,
+            "message": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def emergency_stop() -> Dict[str, Any]:
     def run() -> None:
         try:

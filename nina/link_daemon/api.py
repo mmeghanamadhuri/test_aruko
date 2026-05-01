@@ -384,6 +384,10 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "drive_endpoint": "/v1/robot/drive",
             "default_duration_ms": cfg.robot_drive_default_duration_ms,
             "default_speed_percent": cfg.robot_drive_speed_percent,
+            # Match sirena_ui.workers.drive_controller MIN_SPEED_PCT / MAX_SPEED_PCT.
+            "drive_speed_min_percent": 15,
+            "drive_speed_max_percent": 25,
+            "drive_status_endpoint": "/v1/robot/drive/status",
             "actions_endpoint": "/v1/actions",
             "action_play_endpoint": "/v1/actions/play",
             "action_bridge_enabled": cfg.enable_action_bridge,
@@ -459,6 +463,19 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 detail="Robot bridge disabled",
             )
         return robot_bridge.emergency_stop()
+
+    @app.get("/v1/robot/drive/status")
+    def robot_drive_status_http() -> Dict[str, Any]:
+        if not cfg.enable_robot_bridge:
+            return {
+                "ok": True,
+                "bridge_enabled": False,
+                "connected": False,
+                "message": "Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1.",
+            }
+        st = robot_bridge.navigation_hw_status()
+        st["bridge_enabled"] = True
+        return st
 
     @app.get("/v1/actions")
     def list_actions_http() -> Dict[str, Any]:

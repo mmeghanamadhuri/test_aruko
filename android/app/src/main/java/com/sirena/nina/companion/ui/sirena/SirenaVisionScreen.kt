@@ -262,9 +262,13 @@ fun SirenaVisionScreen(
                                     enrollResult = "Enable Face detection first."
                                     return@launch
                                 }
-                                val start = vm.visionEnroll(name, 8)
+                                val (start, enrollNetErr) = vm.visionEnroll(name, 8)
+                                if (enrollNetErr != null) {
+                                    enrollResult = enrollNetErr
+                                    return@launch
+                                }
                                 if (start == null) {
-                                    enrollResult = "Request failed (network or auth)."
+                                    enrollResult = "Could not reach the Jetson."
                                     return@launch
                                 }
                                 if (!start.optBoolean("ok")) {
