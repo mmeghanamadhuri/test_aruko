@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterator, Optional
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
@@ -72,12 +72,16 @@ class PlayActionBody(BaseModel):
 
 
 class RecordStartBody(BaseModel):
+    """JSON may still use ``\"register\"`` for the manifest flag (alias)."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
     name: str = Field(..., min_length=1, max_length=64)
     seconds: float = Field(default=5.0, ge=0.5, le=120.0)
     hz: float = Field(default=20.0, ge=0.5, le=60.0)
     countdown: float = Field(default=3.0, ge=0.0, le=60.0)
     hold_after: bool = Field(default=False)
-    register: bool = Field(default=True)
+    register_manifest: bool = Field(default=True, alias="register")
 
 
 class VisionOptionsBody(BaseModel):
@@ -437,7 +441,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             hz=body.hz,
             countdown=body.countdown,
             hold_after=body.hold_after,
-            register_manifest=body.register,
+            register_manifest=body.register_manifest,
         )
 
     @app.get("/v1/media/file")

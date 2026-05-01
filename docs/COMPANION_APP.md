@@ -160,6 +160,12 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 - **Tablet on AP, Jetson on home**: Status requests fail — switch the tablet Wi‑Fi first.
 - **401 Unauthorized**: Set `NINA_LINK_TOKEN` on the Jetson and paste the same token under Setup, or **Pair with PIN** (PIN is visible only on localhost status in Sirena Settings → Network on the Jetson).
 
+### Troubleshooting companion HTTP errors
+
+- **`{"detail":"Not Found"}` on `/v1/robot/...`**: Check spelling — the path is **`/v1/robot/capabilities`** (not `capabilites`).
+- **`503`** on **`POST /v1/actions/play`**: Action bridge off in the running process — set `NINA_LINK_ENABLE_ACTION_BRIDGE=1` in systemd and **`sudo systemctl restart nina-link`**.
+- **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`source .venv-link/bin/activate`** then **`pip install -r requirements-link.txt`** (includes `pyserial`) and restart **`nina-link`**.
+
 ## REST API (summary)
 
 - `GET /health` — liveness.
