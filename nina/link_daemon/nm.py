@@ -98,25 +98,28 @@ class NMBackend:
                     break
         if not wifi_dev:
             return {"device": "", "state": "unknown", "mode": "unknown"}
-        # Connection detail
+        # Only GENERAL.* fields belong to `nmcli device show`; 802-11-wireless.mode
+        # is a connection property and breaks older nmcli with "invalid field".
         detail = self.run_lines(
-            ["-f", "GENERAL.STATE,GENERAL.CONNECTION,802-11-wireless.mode", "device", "show", wifi_dev],
+            ["-f", "GENERAL.STATE,GENERAL.CONNECTION", "device", "show", wifi_dev],
             timeout=15,
         )
         state = "unknown"
-        mode = "unknown"
         conn_name = ""
         for ln in detail:
             if ln.startswith("GENERAL.STATE:"):
                 state = ln.split(":", 1)[1].strip()
             elif ln.startswith("GENERAL.CONNECTION:"):
                 conn_name = ln.split(":", 1)[1].strip()
-            elif ln.startswith("802-11-wireless.mode:"):
-                mode = ln.split(":", 1)[1].strip() or "infrastructure"
-        if mode == "ap":
+        mode_from_conn = ""
+        if conn_name and conn_name != "--":
+            mode_from_conn = self._connection_wifi_mode(conn_name)
+        if mode_from_conn == "ap":
             m = "ap"
-        else:
+        elif mode_from_conn:
             m = "sta"
+        else:
+            m = "unknown"
         return {
             "device": wifi_dev,
             "state": state,
