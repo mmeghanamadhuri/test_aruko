@@ -22,13 +22,14 @@ from sirena_ui.styles import asset_path
 # don't need an icon-font. They render fine on the Jetson's default
 # Noto/DejaVu fonts.
 NAV_ITEMS: List[Tuple[str, str, str]] = [
-    ("home", "Home", "\u2302"),       # house
-    ("drive", "Drive", "\u2B95"),      # right arrow (substitute for car)
-    ("vision", "Vision", "\u25CE"),    # bullseye
-    ("map", "Map", "\u25A6"),          # square with grid
-    ("actions", "Actions", "\u2630"),  # trigram (lines)
-    ("settings", "Settings", "\u2699"),# gear
-    ("health", "Health", "\u2665"),    # heart
+    ("home", "Home", "\u2302"),                # house
+    ("drive", "Drive", "\u2B95"),              # right arrow (substitute for car)
+    ("vision", "Vision", "\u25CE"),            # bullseye
+    ("perception", "Perception", "\u2299"),    # circled dot - sensor fusion view
+    ("map", "Map", "\u25A6"),                  # square with grid
+    ("actions", "Actions", "\u2630"),          # trigram (lines)
+    ("settings", "Settings", "\u2699"),        # gear
+    ("health", "Health", "\u2665"),            # heart
 ]
 
 

@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -91,6 +91,17 @@ class AutonomyController(QObject):
         self._health = SensorHealth()
         self._opened: List[Callable[[], None]] = []
 
+        # Reference count for the depth sensor so the Perception screen
+        # can keep it open for visualization while autonomy is OFF, and
+        # so toggling autonomy off doesn't yank the depth feed out from
+        # under a Perception screen the operator is still looking at.
+        # The realsense pipeline doesn't tolerate two callers each
+        # doing pipeline.start() on the same device, so the lifecycle
+        # has to live in exactly one place - here.
+        self._depth_refcount = 0
+        self._depth_open_ok = False
+        self._depth_open_msg = "not opened"
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -108,6 +119,107 @@ class AutonomyController(QObject):
                 "sim": self._is_simulation_summary(),
             }
         return payload
+
+    # ------------------------------------------------------------------
+    # Depth lifecycle (refcounted) + visualization passthrough
+    # ------------------------------------------------------------------
+
+    def acquire_depth(self) -> Tuple[bool, str]:
+        """Open the D435 if it isn't already, increment the refcount.
+
+        Returns ``(opened_ok, message)`` so the caller can surface the
+        error in its own UI without having to ``read()`` and infer.
+        Idempotent + thread-safe: a second call from the autonomy
+        enable path while the Perception screen already opened the
+        camera is a refcount bump, NOT a redundant
+        ``pipeline.start()`` (which librealsense rejects).
+        """
+        with self._lock:
+            self._depth_refcount += 1
+            if self._depth_refcount > 1:
+                return self._depth_open_ok, self._depth_open_msg
+            try:
+                self._depth.open()
+                self._depth_open_ok = True
+                self._depth_open_msg = "depth ready"
+            except Exception as exc:
+                log.warning("depth open failed: %s", exc)
+                self._depth_open_ok = False
+                self._depth_open_msg = f"depth: {exc}"
+                # Don't keep a dangling refcount on a failed open or
+                # the next release_depth would underflow our "close
+                # only on the last release" check.
+                self._depth_refcount = 0
+            return self._depth_open_ok, self._depth_open_msg
+
+    def release_depth(self) -> None:
+        """Drop one reference to the depth sensor, close on the last.
+
+        Safe to call when refcount is already zero (no-op) so a
+        Perception screen on_leave handler doesn't have to track its
+        own state.
+        """
+        with self._lock:
+            if self._depth_refcount <= 0:
+                return
+            self._depth_refcount -= 1
+            if self._depth_refcount > 0:
+                return
+            # Last reference - actually close. Disable colorization
+            # first so the worker thread doesn't try to apply cv2 to a
+            # frame that's about to be invalidated by close().
+            try:
+                self._depth.set_color_publish(False)
+            except Exception:
+                pass
+            try:
+                self._depth.close()
+            except Exception as exc:
+                log.warning("depth close failed: %s", exc)
+            self._depth_open_ok = False
+            self._depth_open_msg = "depth closed"
+
+    def set_depth_visualization_enabled(self, enabled: bool) -> None:
+        """Tell the depth driver to (stop) publishing colorized frames.
+
+        The Perception screen flips this on while it's the visible
+        screen and off when the operator navigates away. Off by
+        default so the autonomy hot path never pays the colorize cost
+        unless someone is actually watching. Safe to call even when
+        the depth driver is closed - the underlying setter just
+        toggles a flag the worker thread reads next time it gets a
+        frame.
+        """
+        try:
+            self._depth.set_color_publish(bool(enabled))
+        except Exception as exc:
+            log.debug(
+                "set_depth_visualization_enabled(%s) failed: %s",
+                enabled, exc,
+            )
+
+    def latest_depth_visualization(self):
+        """Return ``(width, height, bgr_bytes, DepthFrame|None)`` for
+        the most recent colorized depth frame, or ``None`` if depth
+        visualization isn't producing yet.
+
+        The DepthFrame is bundled so the Perception screen can render
+        the same forward / left / right minima the autonomy stack is
+        actually consuming, not a separate read that could disagree
+        with the colorized image by a frame or two.
+        """
+        try:
+            color = self._depth.latest_color_image()
+        except Exception:
+            return None
+        if color is None:
+            return None
+        w, h, buf = color
+        try:
+            frame = self._depth.read()
+        except Exception:
+            frame = None
+        return (w, h, buf, frame)
 
     def set_enabled(self, on: bool) -> None:
         with self._lock:
@@ -146,7 +258,10 @@ class AutonomyController(QObject):
             self._ultras.open, "ultrasonic"
         )
         ir_ok, ir_msg = self._safe_open(self._ir.open, "ir")
-        depth_ok, depth_msg = self._safe_open(self._depth.open, "depth")
+        # Depth goes through the refcount so a Perception screen that
+        # already opened the camera for visualization doesn't get
+        # double-opened (librealsense rejects that).
+        depth_ok, depth_msg = self.acquire_depth()
 
         slam_status = self._slam.status()
         with self._lock:
@@ -217,20 +332,31 @@ class AutonomyController(QObject):
         for closer, label in (
             (self._ultras.close, "ultrasonic"),
             (self._ir.close, "ir"),
-            (self._depth.close, "depth"),
         ):
             try:
                 closer()
             except Exception as exc:
                 log.warning("close %s: %s", label, exc)
+        # Depth closes through the refcount so a still-open Perception
+        # screen keeps its visualization alive after autonomy disables.
+        self.release_depth()
 
         # Refresh health snapshot now that everything is closed.
+        # Depth state mirrors the refcount - if a Perception screen
+        # still holds a reference, the camera is in fact still open
+        # and reporting "stopped" would be a lie that confuses the
+        # Map screen pills.
         with self._lock:
+            depth_state: Tuple[bool, str]
+            if self._depth_refcount > 0 and self._depth_open_ok:
+                depth_state = (True, "depth (visualization only)")
+            else:
+                depth_state = (False, "stopped")
             self._health = SensorHealth(
                 lidar=(False, "stopped"),
                 ultrasonic=[],
                 ir=(False, "stopped"),
-                depth=(False, "stopped"),
+                depth=depth_state,
             )
 
         self.sensor_health_changed.emit(self._health.as_dict())

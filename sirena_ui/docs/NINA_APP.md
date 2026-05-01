@@ -22,8 +22,10 @@ PyQt5 desktop cockpit (`sirena_ui/`) for the Nina robot, designed for the Jetson
 
 ```
 +-- Home        Quick-action dashboard with Nina photo, status strip
-+-- Drive       Manual BLDC control: virtual D-pad, speed slider, brake
++-- Drive       Manual BLDC control: virtual D-pad, speed slider, brake,
+|                LIVE front-camera feed in the Front-camera card
 +-- Vision      USB camera feed + face / object recognition controls
++-- Perception  Three-pane sensor fusion view: LiDAR + RGB + Depth
 +-- Map         SLAM occupancy grid, sensor health, autonomous nav
 +-- Actions     Existing record / play / audio - now in one screen
 |     +-- Playback   list registered actions, smooth replay (+ optional audio)
@@ -71,8 +73,15 @@ Cross-cutting design rules:
 
 ![Drive screen](screens/screen-drive.png)
 
-- **Front camera** preview pane (live USB feed when connected, helpful
-  empty state when not).
+- **Front camera** preview pane shows the LIVE USB feed (drives the
+  same `VisionWorker` the Vision and Perception screens use, via
+  the `acquire()` / `release()` refcount so navigating between
+  screens never tears the feed down). Falls back to a helpful
+  "USB camera not connected" placeholder when no `/dev/videoN` is
+  present. The feed comes up as soon as the operator visits the
+  Drive screen for the first time and stays live until app
+  shutdown — manual driving is first-person regardless of which
+  other screen they navigate through.
 - **Manual D-pad** with a big **STOP** in the centre and a **Brake** /
   **Reverse** state row underneath. Hold-to-drive, release-to-stop.
   Forward, Back, Left and Right are all held-while-pressed (release the
@@ -425,6 +434,73 @@ now owns.
   overlapping playbacks.
 - Top pill diagnoses missing hardware: `Camera /dev/video0 not
   found`, `OpenCV not installed`, `Ultralytics not installed`, etc.
+
+---
+
+## Perception — live LiDAR + RGB + Depth
+
+A read-only three-pane viewer that shows everything the autonomy
+stack actually senses, side-by-side, on a single screen. Useful both
+during autonomous driving (to verify "why did the bot turn right?"
+against ground truth) and for sensor bring-up (any pane that stays in
+its placeholder is a sensor that didn't come up).
+
+```
++--------------------+--------------------+--------------------+
+| LiDAR              | RGB camera         | Depth (D435)       |
+| BreezySLAM grid    | Live USB feed      | JET-coloured depth |
+| + pose triangle    | (same as Drive +   | + F/L/R numeric    |
+|                    |  Vision screens)   |   distance overlay |
++--------------------+--------------------+--------------------+
+| [ Autonomous mode toggle ]  status text                      |
++--------------------------------------------------------------+
+```
+
+Wiring details that matter for ops:
+
+- **Lidar** — uses `service.slam` (the same `SlamWorker` the Map
+  screen reads). Starting the screen calls `slam.start()`, which is
+  idempotent so it doesn't fight whatever the Map screen is doing.
+- **RGB** — uses `service.vision` via the new
+  `VisionWorker.acquire()` / `release()` refcount, so opening
+  Perception while Drive / Vision are also showing the feed
+  doesn't open the camera twice (and leaving Perception doesn't
+  yank it out from under those screens).
+- **Depth** — uses `AutonomyController.acquire_depth()` /
+  `release_depth()` with the same refcount pattern, so the
+  Perception screen can keep the D435 open for visualization
+  even when autonomy is **OFF**, AND a later autonomy-enable
+  doesn't try to re-open the busy device.
+- **Depth visualization** — only enabled while the Perception
+  screen is the visible screen; toggled off in `on_leave` so the
+  per-frame `cv2.applyColorMap` cost (~5–10 ms / frame on Jetson
+  Nano) only runs when an operator is actually watching.
+- **Numeric overlay** under the Depth pane shows the SAME
+  `forward_min_mm` / `left_min_mm` / `right_min_mm` values the
+  pilot consumes from the latest `DepthFrame` — not a separate
+  read that could disagree by a frame. Distances ≥ 1 m render
+  in metres for readability ("F: 1.42 m   L: 0.62 m   R: 0.31 m").
+- **Autonomous mode toggle** at the bottom is the same
+  `AutonomyController.set_enabled()` the Map and Drive screens
+  call; flipping it from any of the three screens reflects in
+  the others via `enabled_changed`.
+
+Header pills surface per-sensor state at a glance:
+`Lidar OK / sim / -`, `Cam OK / -`, `Depth OK / sim / -`,
+`Autonomous: ON / OFF`. A sensor that's missing on the bot stays
+in a placeholder ("Lidar not connected", "USB camera not
+connected", "Depth camera not connected") instead of crashing the
+screen.
+
+> **Why a separate screen and not the Drive screen?** The Drive
+> screen is the manual-driving cockpit at 1024 × 600 — it's already
+> packed (D-pad + speed slider + polarity flips + brake / reverse /
+> E-STOP) and squeezing three sensor previews into it would either
+> shrink each preview below useful or push the manual controls
+> off the panel. The Front-camera card on the Drive screen still
+> shows the live RGB feed (always on) so manual driving remains
+> first-person; the LiDAR + Depth panes live on Perception, which
+> is one nav-click away.
 
 ---
 

@@ -88,6 +88,7 @@ class MainWindow(QMainWindow):
             "home": "Nina \u00b7 Home",
             "drive": "Nina \u00b7 Drive",
             "vision": "Nina \u00b7 Vision",
+            "perception": "Nina \u00b7 Perception",
             "map": "Nina \u00b7 Map (SLAM)",
             "actions": "Nina \u00b7 Actions",
             "settings": "Nina \u00b7 Settings",
@@ -311,6 +312,9 @@ class MainWindow(QMainWindow):
         if key == "vision":
             from sirena_ui.screens.vision_screen import VisionScreen
             return VisionScreen(self._service)
+        if key == "perception":
+            from sirena_ui.screens.perception_screen import PerceptionScreen
+            return PerceptionScreen(self._service)
         if key == "map":
             from sirena_ui.screens.map_screen import MapScreen
             return MapScreen(self._service)

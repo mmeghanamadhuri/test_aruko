@@ -99,6 +99,19 @@ class VisionWorker(QObject):
         # bounded so a runaway producer can't balloon memory.
         self._cmd_queue: queue.Queue = queue.Queue(maxsize=32)
 
+        # Reference count for screens that want the camera to stay open
+        # across navigation (Drive screen Front-camera card + Vision
+        # screen + Perception screen). Without this, navigating
+        # Vision -> Drive would call Vision.on_leave -> stop() and the
+        # Drive screen's live preview would go black even though Drive
+        # had already requested the feed. acquire()/release() do the
+        # right refcount + start/stop bookkeeping; legacy callers that
+        # used start()/stop() directly still work, they just bypass
+        # the refcount (intentional - they're for tests / one-shot
+        # tools that own the worker exclusively).
+        self._refcount = 0
+        self._refcount_lock = threading.Lock()
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -138,7 +151,43 @@ class VisionWorker(QObject):
         self._emit_status(self._pipeline.status())
 
     def shutdown(self) -> None:
+        # Force everything down regardless of refcount - app shutdown
+        # path; nobody is going to call release() to balance.
+        with self._refcount_lock:
+            self._refcount = 0
         self.stop()
+
+    def acquire(self) -> None:
+        """Take a reference on the camera + worker thread, starting it
+        if this was the first reference.
+
+        Use this from screens that want the camera live across
+        navigation (Drive screen, Vision screen, Perception screen).
+        Pair every acquire() with exactly one release(). Calling
+        start() directly bypasses the refcount and will cause the next
+        release() from another holder to stop the worker out from
+        under you.
+        """
+        with self._refcount_lock:
+            self._refcount += 1
+            should_start = self._refcount == 1
+        if should_start:
+            self.start()
+
+    def release(self) -> None:
+        """Drop a reference; stop the worker on the last release.
+
+        No-op (and does NOT underflow) when called more times than
+        acquire() so a screen that gets shutdown twice doesn't
+        accidentally stop the camera for everyone else.
+        """
+        with self._refcount_lock:
+            if self._refcount <= 0:
+                return
+            self._refcount -= 1
+            should_stop = self._refcount == 0
+        if should_stop:
+            self.stop()
 
     # ------------------------------------------------------------------
     # Pass-through controls (all dispatched onto the worker thread)

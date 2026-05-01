@@ -25,11 +25,13 @@ from __future__ import annotations
 from typing import Optional
 
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QSizePolicy,
     QSlider,
     QVBoxLayout,
     QWidget,
@@ -73,6 +75,25 @@ class DriveScreen(QWidget):
         self.setFocusPolicy(Qt.StrongFocus)
         self._kb_active_key: Optional[int] = None
 
+        # Live RGB feed wiring. The "Front camera" card on the left of
+        # the Drive screen used to be a static placeholder; we now
+        # subscribe to VisionWorker.frame_ready and stream pixmaps in.
+        # The camera is acquired ONCE on first on_enter (via the
+        # VisionWorker's refcount API) so navigating Drive -> Vision
+        # -> Drive doesn't tear down the feed when the Vision screen's
+        # on_leave releases its own reference.
+        self._vision_acquired = False
+        self._cam_feed_label: Optional[QLabel] = None
+        self._cam_placeholder: Optional[QWidget] = None
+        try:
+            self._service.vision.frame_ready.connect(self._on_camera_frame)
+            self._service.vision.status_changed.connect(self._on_camera_status)
+        except Exception:
+            # In headless / vision-disabled builds the worker may
+            # still construct but never emit; not fatal for the Drive
+            # screen, which can still drive without a camera feed.
+            pass
+
         outer = QVBoxLayout(self)
         # Trim from 20 -> 10 on each side. At 1024 x 600 we cannot
         # afford 40 wasted px in either direction.
@@ -114,32 +135,63 @@ class DriveScreen(QWidget):
         self._cam_pill = Pill("Preview \u2014 camera not connected", Pill.KIND_NEUTRAL)
         header.addWidget(self._cam_pill)
 
-        # The camera viewport is a soft grey panel until the USB camera
-        # service is wired up. Once it is, this label gets replaced with
-        # a QLabel-fed QPixmap stream.
+        # The camera viewport now hosts the LIVE VisionWorker feed.
+        # Layout pattern mirrors VisionScreen._build_camera_card so
+        # the visual shape matches across screens: a placeholder
+        # QWidget centered in the viewport (shown while no frame has
+        # arrived) plus a hidden QLabel that gets pixmaps once
+        # `frame_ready` fires.
         #
-        # Min height was 360 px - too tall for the 600-tall panel after
-        # accounting for chrome (44 + 26), screen margins (20), HUD row
-        # (~70), top pill row (~30), and card padding (~30). 200 leaves
-        # the HUD and top row visible with ~520 of content height.
+        # IMPORTANT: do NOT call setAlignment() on the viewport's
+        # layout. With an alignment set, QBoxLayout hands children
+        # their sizeHint instead of stretching them, and a QLabel's
+        # sizeHint follows the pixmap. The pixmap is scaled to the
+        # label size in _on_camera_frame, so an alignment-centered
+        # label collapses to a "dot" on first paint.
+        #
+        # Min height: 200 px - we need to fit the HUD row underneath
+        # in the 600-tall panel.
         viewport = QFrame()
         viewport.setObjectName("cardSubtle")
         viewport.setMinimumHeight(200)
+        viewport.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         v = QVBoxLayout(viewport)
         v.setContentsMargins(0, 0, 0, 0)
-        v.setAlignment(Qt.AlignCenter)
-        glyph = QLabel("\u25C9")
+        v.setSpacing(0)
+
+        placeholder = QWidget(viewport)
+        placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        ph_layout = QVBoxLayout(placeholder)
+        ph_layout.setContentsMargins(0, 0, 0, 0)
+        ph_layout.setSpacing(8)
+        ph_layout.addStretch(1)
+        glyph = QLabel("\u25C9", placeholder)
         glyph.setStyleSheet(
             "color: #c4c4c8; font-size: 64px; background-color: transparent;"
         )
         glyph.setAlignment(Qt.AlignCenter)
-        v.addWidget(glyph)
-        msg = QLabel("USB camera not connected")
+        ph_layout.addWidget(glyph)
+        msg = QLabel("USB camera not connected", placeholder)
         msg.setStyleSheet(
             "color: #8e8e93; font-size: 12px; background-color: transparent;"
         )
         msg.setAlignment(Qt.AlignCenter)
-        v.addWidget(msg)
+        ph_layout.addWidget(msg)
+        ph_layout.addStretch(1)
+        v.addWidget(placeholder, stretch=1)
+        self._cam_placeholder = placeholder
+
+        feed = QLabel(viewport)
+        feed.setAlignment(Qt.AlignCenter)
+        feed.setStyleSheet("background-color: transparent;")
+        feed.setMinimumSize(320, 180)
+        # Ignored size policy so the (potentially huge) pixmap can't
+        # feed back into the layout and balloon or collapse the card.
+        feed.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        feed.hide()
+        v.addWidget(feed, stretch=1)
+        self._cam_feed_label = feed
+
         card.add(viewport, stretch=1)
 
         # HUD row beneath the viewport with the live drive state.
@@ -425,9 +477,66 @@ class DriveScreen(QWidget):
         # Reflect the current autonomy state in case the user toggled
         # it from the Map screen.
         self._on_autonomy_enabled(self._autonomy.is_enabled())
+        # Bring the live RGB feed up. We acquire ONCE for the lifetime
+        # of the screen - the operator picked "always live" so the
+        # cleanest contract is: as soon as Drive has been opened, the
+        # camera is on; it goes off only on app shutdown
+        # (NinaService.shutdown -> VisionWorker.shutdown). The
+        # refcount means a Vision-tab on_leave doesn't tear down our
+        # feed.
+        if not self._vision_acquired:
+            try:
+                self._service.vision.acquire()
+                self._vision_acquired = True
+            except Exception:
+                pass
         # Grab focus so WASD/Space/Esc reach our key handlers without
         # the user having to click into the screen body first.
         self.setFocus()
+
+    def _on_camera_frame(self, image: QImage) -> None:
+        """Render an incoming RGB frame into the Front-camera card."""
+        feed = self._cam_feed_label
+        if feed is None:
+            return
+        if self._cam_placeholder is not None and self._cam_placeholder.isVisible():
+            self._cam_placeholder.hide()
+            feed.show()
+        target = feed.size()
+        if target.width() <= 0 or target.height() <= 0:
+            feed.setPixmap(QPixmap.fromImage(image))
+            return
+        pix = QPixmap.fromImage(image).scaled(
+            target,
+            Qt.KeepAspectRatio,
+            Qt.SmoothTransformation,
+        )
+        feed.setPixmap(pix)
+
+    def _on_camera_status(self, status: dict) -> None:
+        """Update the camera pill in the Front-camera card header.
+
+        Mirrors VisionScreen's pill-state policy so the operator sees
+        the same "USB camera connected / not connected / Detector
+        unavailable" labels regardless of which screen they're on.
+        """
+        camera_open = bool(status.get("camera_open", False))
+        message = str(status.get("message", "") or "")
+        if camera_open:
+            self._cam_pill.setText("Live")
+            self._cam_pill.set_kind(Pill.KIND_OK)
+            self._cam_pill.setToolTip("")
+        else:
+            label = message or "USB camera not connected"
+            self._cam_pill.setText(label)
+            self._cam_pill.set_kind(Pill.KIND_NEUTRAL)
+            self._cam_pill.setToolTip("")
+            # Drop back to the placeholder if the camera went away.
+            if self._cam_feed_label is not None:
+                self._cam_feed_label.clear()
+                self._cam_feed_label.hide()
+            if self._cam_placeholder is not None:
+                self._cam_placeholder.show()
 
     def keyPressEvent(self, event) -> None:
         # Filter X11 auto-repeat: a held key would otherwise look like

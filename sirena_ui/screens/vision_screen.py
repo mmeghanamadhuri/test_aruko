@@ -138,6 +138,10 @@ class VisionScreen(QWidget):
         # button speaks whatever is on screen *right now*.
         self._latest_object_labels: List[str] = []
         self._play_objects_btn: Optional[QPushButton] = None
+        # Whether on_enter is currently holding a refcount on the
+        # vision worker; tracked so on_leave only ever calls one
+        # release() per acquire() even if Qt fires on_leave twice.
+        self._holds_camera = False
 
         outer = QVBoxLayout(self)
         # 10 / 8 trim from 20 / 14 to fit 1024 x 600.
@@ -165,9 +169,12 @@ class VisionScreen(QWidget):
 
     def on_enter(self) -> None:
         worker = self._service.vision
-        # Stay idempotent - VisionWorker.start() is a no-op if already
-        # running, which keeps re-navigation snappy.
-        worker.start()
+        # Refcount-aware start: if the Drive screen / Perception
+        # screen are already keeping the camera live, this just bumps
+        # the refcount; the worker keeps running. If we're the first
+        # holder, the camera comes up.
+        worker.acquire()
+        self._holds_camera = True
         # Reset the greeter's cooldown table so re-opening the Vision
         # tab always greets people (otherwise leaving + returning a
         # few seconds later would feel silent).
@@ -177,18 +184,24 @@ class VisionScreen(QWidget):
         self._apply_status(self._status_to_dict(worker.status()))
 
     def on_leave(self) -> None:
-        # Release the camera when the user navigates away. Reset the
-        # toggles AND the worker flags together so re-entering doesn't
-        # secretly keep detection running while the toggles read OFF.
+        # Drop our reference on the camera when the user navigates
+        # away. Other screens (Drive, Perception) may still hold a
+        # reference, in which case the worker keeps running so their
+        # live previews don't go black. The detector toggles get
+        # forced OFF either way - they're a Vision-screen UI
+        # affordance, and leaving them on after the screen is hidden
+        # would silently cost CPU even when no operator is watching
+        # the detections.
         worker = self._service.vision
         if self._face_toggle is not None and self._face_toggle._btn.isChecked():  # noqa: SLF001
             self._face_toggle._btn.setChecked(False)  # noqa: SLF001 - emits toggled -> worker.set_face_enabled(False)
         if self._object_toggle is not None and self._object_toggle._btn.isChecked():  # noqa: SLF001
             self._object_toggle._btn.setChecked(False)  # noqa: SLF001
-        try:
-            worker.stop()
-        except Exception:
-            pass
+        if getattr(self, "_holds_camera", False):
+            try:
+                worker.release()
+            finally:
+                self._holds_camera = False
 
     # ---------- camera ----------
 

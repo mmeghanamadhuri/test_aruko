@@ -130,6 +130,17 @@ class RealSenseD435:
         self._latest: Optional[DepthFrame] = None
         self._connected = False
         self._message = ""
+        # Colorized BGR888 image of the most recent depth frame, kept
+        # opt-in via `set_color_publish(True)` so the per-frame numpy /
+        # cv2 colorize cost is only paid when a UI is actually
+        # subscribed (Perception screen). Stored as
+        # (width, height, bgr_bytes) so the consumer can hand the raw
+        # buffer straight to QImage(Format_BGR888) without copying.
+        self._color_publish_enabled = False
+        self._latest_color: Optional[Tuple[int, int, bytes]] = None
+        # Set to True the first time we successfully colorize, used to
+        # explain "colorize disabled" vs "cv2 missing" in the message.
+        self._cv2_warned = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -195,6 +206,41 @@ class RealSenseD435:
         return self._connected, self._message
 
     # ------------------------------------------------------------------
+    # Visualization opt-in
+    # ------------------------------------------------------------------
+
+    def set_color_publish(self, enabled: bool) -> None:
+        """Toggle on-the-fly JET colorization of the depth stream.
+
+        Off by default - only the Perception screen flips this on while
+        it's the visible screen so the autonomy hot path doesn't pay
+        the ~5-10 ms / frame cv2.applyColorMap cost when nobody is
+        watching. Disabling also clears the cached frame so a stale
+        thumbnail can't stay on screen if the consumer forgot to call
+        latest_color_image() one last time before navigating away.
+        """
+        enabled = bool(enabled)
+        with self._lock:
+            self._color_publish_enabled = enabled
+            if not enabled:
+                self._latest_color = None
+
+    def latest_color_image(self) -> Optional[Tuple[int, int, bytes]]:
+        """Return (width, height, BGR888-bytes) for the most recent
+        colorized depth frame, or None if colorization is off / no
+        frame has been published yet / cv2 is unavailable.
+
+        Caller turns this into a QImage with
+        `QImage(buf, w, h, w*3, QImage.Format_BGR888)`. The bytes
+        object is reference-counted by Python so QImage's "the buffer
+        must outlive the QImage" requirement is satisfied as long as
+        the caller holds a reference to the tuple while the QImage is
+        in use.
+        """
+        with self._lock:
+            return self._latest_color
+
+    # ------------------------------------------------------------------
     # Worker
     # ------------------------------------------------------------------
 
@@ -249,8 +295,84 @@ class RealSenseD435:
             width=w,
             height=h,
         )
+
+        color: Optional[Tuple[int, int, bytes]] = None
+        # Snapshot the toggle under the lock so a Perception-screen
+        # set_color_publish(False) racing the worker thread can't make
+        # us colorize and then immediately throw the result away.
+        with self._lock:
+            want_color = self._color_publish_enabled
+        if want_color:
+            color = self._colorize(np, arr)
+
         with self._lock:
             self._latest = frame
+            if color is not None:
+                self._latest_color = color
+            elif not self._color_publish_enabled:
+                # Toggle was flipped off mid-frame; respect that.
+                self._latest_color = None
+
+    def _colorize(self, np, arr) -> Optional[Tuple[int, int, bytes]]:
+        """Build a JET-coloured BGR888 image of the depth array.
+
+        - Pixels outside [DEFAULT_MIN_RANGE_MM, DEFAULT_MAX_RANGE_MM]
+          (and the literal 0 = "no return" sentinel) are forced to
+          black, so the operator can visually tell "no data" apart
+          from "very close" (which is the JET red end).
+        - Everything in-range is normalised to 0..255 across the
+          configured envelope (NOT per-frame min/max) so the colour of
+          a wall at 1.5 m doesn't shift between frames.
+
+        Returns None if cv2 is unavailable - in that case the worker
+        keeps publishing DepthFrame summaries to the autonomy stack
+        without paying any visualization cost. We log the missing-cv2
+        condition exactly once so launch.log doesn't drown.
+        """
+        try:
+            import cv2  # type: ignore
+        except Exception as exc:
+            if not self._cv2_warned:
+                log.info(
+                    "Depth colorization disabled: cv2 import failed (%s). "
+                    "Install opencv-python-headless if you want the "
+                    "Perception screen depth panel.", exc,
+                )
+                self._cv2_warned = True
+            return None
+
+        try:
+            mm = arr.astype(np.float32) * float(self._scale_mm)
+            in_range = (mm >= float(DEFAULT_MIN_RANGE_MM)) & (
+                mm <= float(DEFAULT_MAX_RANGE_MM)
+            )
+            span = float(DEFAULT_MAX_RANGE_MM - DEFAULT_MIN_RANGE_MM)
+            if span <= 0:
+                return None
+            # Clip + normalise. We do this on the FULL image (not just
+            # the in_range mask) so the resulting uint8 is well-defined
+            # everywhere; the mask is only used to black out the
+            # out-of-range / no-return pixels in a final pass.
+            clipped = np.clip(
+                mm - float(DEFAULT_MIN_RANGE_MM), 0.0, span
+            )
+            normalised = (clipped * (255.0 / span)).astype(np.uint8)
+            color_bgr = cv2.applyColorMap(normalised, cv2.COLORMAP_JET)
+            # Force out-of-range / no-return to black.
+            color_bgr[~in_range] = (0, 0, 0)
+            # Ensure C-contiguous so QImage's stride math (w*3) is
+            # valid. cv2 outputs are usually contiguous but be defensive
+            # against future numpy slicing additions in this function.
+            if not color_bgr.flags["C_CONTIGUOUS"]:
+                color_bgr = np.ascontiguousarray(color_bgr)
+            h, w, _ = color_bgr.shape
+            # tobytes() copies into a Python buffer the consumer can
+            # hand to QImage without worrying about the underlying
+            # numpy array being reallocated on the next frame.
+            return (int(w), int(h), color_bgr.tobytes())
+        except Exception as exc:
+            log.debug("Depth colorize failed: %s", exc)
+            return None
 
     def _region_min(self, np, region) -> Optional[int]:
         valid = region[(region > 0)]

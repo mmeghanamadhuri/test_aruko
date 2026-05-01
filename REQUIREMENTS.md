@@ -447,7 +447,37 @@ All optional; defaults work for the recommended hardware. Set in
    pilot stops the wheels and engages the brake within one tick
    (`AutonomySettings.tick_hz`, default 5 Hz → ≤ 200 ms).
 
-#### 5.3.6 Health-screen cross-check
+#### 5.3.6 Live perception view (LiDAR + RGB + Depth, side-by-side)
+
+The Nina app ships a dedicated **Perception** screen (sidebar:
+`⊙ Perception`, between Vision and Map) that shows what every
+forward-looking sensor is publishing **right now** in three panes:
+
+* **LiDAR pane** — the same BreezySLAM occupancy grid the Map screen
+  draws, with Nina's pose triangle in red. Updates as the SLAM worker
+  ingests scans.
+* **RGB pane** — the live USB camera feed (same `VisionWorker` the
+  Vision and Drive screens use). The Drive screen also shows this
+  feed in its Front-camera card so manual driving stays first-person.
+* **Depth pane** — RealSense D435 depth, JET-coloured (red = close,
+  blue = far, BLACK = no return / out of range). Below the image is a
+  numeric overlay showing the SAME `forward_min / left_min / right_min`
+  values the autonomy stack consumes (`F: 1.42 m   L: 0.62 m   R: 0.31 m`).
+
+The screen is read-only except for an **Autonomous mode** toggle at
+the bottom (mirrored on Map and Drive — flipping it from any of the
+three reflects in the others). Use Perception during autonomy to
+verify *why* the bot turned the way it did against ground-truth
+sensor data.
+
+The depth camera is opened via a refcount on `AutonomyController`
+(`acquire_depth()` / `release_depth()`), so the Perception screen
+keeps the D435 open for visualization even when autonomy is OFF —
+and a later autonomy-enable doesn't try to re-open the busy device.
+Visualization (cv2 colorize, ~5–10 ms / frame on Jetson Nano) is
+toggled on only while the Perception screen is the visible screen.
+
+#### 5.3.7 Health-screen cross-check
 
 Open **Health** while autonomy is running. The new perception rows
 should all show **OK** (or at minimum a useful detail string):
