@@ -211,25 +211,48 @@ fi
 # are missing the bindings are broken in a way that matters for Nina.
 
 log "Smoke-testing the import"
+#
+# pyrealsense2 ships in two package layouts depending on the
+# librealsense / cmake version. Both are valid and both work for our
+# driver (`nina/sensors/realsense_d435.py` calls _import_pyrealsense2()
+# which tries each in turn) but the smoke test needs to recognise
+# both so it doesn't false-FAIL when the bindings landed in the
+# submodule layout.
+#
+#   Layout A (flat / re-exported): `import pyrealsense2 as rs` gives
+#       direct access to rs.pipeline, rs.context, rs.stream, ...
+#   Layout B (submodule-only):     `import pyrealsense2 as rs` gives
+#       a near-empty package; the C symbols live at
+#       `pyrealsense2.pyrealsense2`.
+#
 SMOKE_PY="$(cat <<'PY'
-import sys
-try:
-    import pyrealsense2 as rs
-except Exception as exc:
-    print(f"FAIL: import pyrealsense2 raised: {exc}", file=sys.stderr)
-    sys.exit(1)
-missing = [name for name in ("pipeline", "config", "stream", "format")
-           if not hasattr(rs, name)]
-if missing:
-    print(f"FAIL: pyrealsense2 imported but missing symbols: {missing}",
+import importlib, sys
+
+REQUIRED = ("pipeline", "config", "stream", "format")
+
+def _probe(modname):
+    try:
+        m = importlib.import_module(modname)
+    except Exception as exc:
+        return None, f"import {modname}: {exc}"
+    missing = [n for n in REQUIRED if not hasattr(m, n)]
+    if missing:
+        return None, f"{modname} imported, missing symbols: {missing}"
+    return m, modname
+
+mod, where = _probe("pyrealsense2")
+if mod is None:
+    inner, inner_where = _probe("pyrealsense2.pyrealsense2")
+    if inner is not None:
+        mod, where = inner, inner_where + " (submodule layout)"
+
+if mod is None:
+    print(f"FAIL: pyrealsense2 not usable. Last error: {where}",
           file=sys.stderr)
-    sys.exit(2)
-# Optional version probe - not all builds expose it; print "unknown"
-# instead of crashing.
-ver = getattr(rs, "__version__", None) or getattr(
-    getattr(rs, "pyrealsense2", None), "__version__", None
-) or "unknown"
-print(f"pyrealsense2 OK (version: {ver})")
+    sys.exit(1)
+
+ver = getattr(mod, "__version__", None) or "unknown"
+print(f"pyrealsense2 OK at {where} (version: {ver})")
 PY
 )"
 
@@ -240,6 +263,8 @@ if "${PYTHON_EXEC}" -c "${SMOKE_PY}"; then
 else
     die "pyrealsense2 import or symbol check failed - see the message
 above. Confirm /usr/local/lib/${PY_VER_TAG}/dist-packages contains a
-pyrealsense2/ folder; if not, the cmake step put the bindings in an
-unexpected place."
+pyrealsense2/ folder with EITHER an __init__.py that re-exports the
+C symbols OR a pyrealsense2.cpython-*.so submodule. If only the .so
+is there, our driver handles it via the submodule fallback - the
+smoke test above just couldn't see it."
 fi

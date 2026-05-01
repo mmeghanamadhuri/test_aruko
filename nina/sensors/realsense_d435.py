@@ -46,13 +46,65 @@ DEFAULT_MAX_RANGE_MM = int(os.environ.get("NINA_DEPTH_MAX_MM", "5000"))
 DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_DEPTH_MIN_MM", "200"))
 
 
+def _import_pyrealsense2():
+    """Return the pyrealsense2 module that actually has the C bindings.
+
+    librealsense ships its Python package in two layouts depending on
+    how it was built / packaged:
+
+    1. **Flat / re-exported**:
+        site-packages/pyrealsense2.cpython-XX.so
+            -OR-
+        site-packages/pyrealsense2/__init__.py  (does
+            `from .pyrealsense2 import *`)
+        In this layout, `import pyrealsense2 as rs` gives you
+        `rs.pipeline`, `rs.context`, `rs.stream`, ... directly.
+
+    2. **Submodule-only (cmake BUILD_PYTHON_BINDINGS default on
+       newer librealsense, e.g. v2.55+)**:
+        site-packages/pyrealsense2/__init__.py        (empty / minimal)
+        site-packages/pyrealsense2/pyrealsense2.cpython-XX.so
+        In this layout, `import pyrealsense2 as rs` gives you a near-
+        empty package; the actual C symbols live at
+        `pyrealsense2.pyrealsense2`. Code that does `rs.pipeline()`
+        crashes with AttributeError.
+
+    Our Jetson installer (scripts/install-realsense-jetson.sh) hits
+    layout (2). Rather than patch every install in the field, we
+    detect both at import time and return whichever one exposes the
+    expected `pipeline` symbol. The two callers below
+    (`is_available()` and `RealSenseD435.open()`) use this helper so
+    the rest of the file stays one-import-line clean.
+    """
+    import importlib
+
+    candidates = ("pyrealsense2.pyrealsense2", "pyrealsense2")
+    last_exc: Optional[Exception] = None
+    for name in candidates:
+        try:
+            mod = importlib.import_module(name)
+        except Exception as exc:
+            last_exc = exc
+            continue
+        if hasattr(mod, "pipeline") and hasattr(mod, "config"):
+            return mod
+    if last_exc is not None:
+        raise last_exc
+    raise ImportError(
+        "pyrealsense2 imported but neither the top-level package nor "
+        "the .pyrealsense2 submodule exposes the C bindings - check "
+        "the install (the package's __init__.py probably needs "
+        "`from .pyrealsense2 import *`)."
+    )
+
+
 def is_available() -> Tuple[bool, str]:
     if os.environ.get("NINA_DEPTH_DISABLE", "").strip().lower() in (
         "1", "true", "yes", "on",
     ):
         return False, "disabled via NINA_DEPTH_DISABLE"
     try:
-        import pyrealsense2  # noqa: F401  type: ignore
+        _import_pyrealsense2()
     except Exception as exc:  # pragma: no cover
         return False, f"pyrealsense2 not installed ({exc})"
     return True, ""
@@ -85,7 +137,7 @@ class RealSenseD435:
 
     def open(self) -> None:
         try:
-            import pyrealsense2 as rs  # type: ignore
+            rs = _import_pyrealsense2()
         except Exception as exc:
             self._message = f"pyrealsense2 not installed ({exc})"
             raise RuntimeError(self._message) from exc
