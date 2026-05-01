@@ -308,7 +308,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun friendlyHttp(e: LinkApiException): String =
         if (e.code == 401) {
-            "Unauthorized — set a fleet token or pair with PIN (Settings tab)."
+            "Unauthorized — set a fleet token or pair with PIN (Setup tab)."
         } else {
             e.message ?: "HTTP ${e.code}"
         }

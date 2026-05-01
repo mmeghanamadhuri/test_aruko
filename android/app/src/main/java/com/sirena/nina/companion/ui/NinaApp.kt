@@ -3,7 +3,9 @@ package com.sirena.nina.companion.ui
 import android.content.Intent
 import android.provider.Settings
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,7 +14,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.DirectionsCar
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Wifi
@@ -62,9 +63,12 @@ import kotlinx.coroutines.launch
 fun NinaApp(vm: CompanionViewModel) {
     val state by vm.state.collectAsStateWithLifecycle()
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    var showNinaConsole by rememberSaveable { mutableStateOf(false) }
     val snack = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
-    Scaffold(
+    Box(Modifier.fillMaxSize()) {
+        Scaffold(
         snackbarHost = { SnackbarHost(snack) },
         topBar = {
             TopAppBar(
@@ -97,12 +101,6 @@ fun NinaApp(vm: CompanionViewModel) {
                 NavigationBarItem(
                     selected = tab == 2,
                     onClick = { tab = 2 },
-                    icon = { Icon(Icons.Default.DirectionsCar, null) },
-                    label = { Text("Drive") },
-                )
-                NavigationBarItem(
-                    selected = tab == 3,
-                    onClick = { tab = 3 },
                     icon = { Icon(Icons.Default.Settings, null) },
                     label = { Text("Setup") },
                 )
@@ -115,11 +113,31 @@ fun NinaApp(vm: CompanionViewModel) {
                 .fillMaxSize(),
         ) {
             when (tab) {
-                0 -> HomeTab(state, vm, snack)
-                1 -> NetworksTab(state, vm)
-                2 -> DriveTab(state, vm)
-                3 -> SetupTab(vm, snack)
+                0 -> HomeTab(
+                    state = state,
+                    vm = vm,
+                    snack = snack,
+                    onOpenNinaConsole = { showNinaConsole = true },
+                    onOpenCarbotPlaceholder = {
+                        scope.launch {
+                            snack.showSnackbar("Carbot / BLDC bridge — coming soon.")
+                        }
+                    },
+                    onOpenSystemSetup = { tab = 2 },
+                )
+                1 -> NetworksTab(state = state, vm = vm, snack = snack)
+                2 -> SetupTab(vm = vm, snack = snack)
             }
+        }
+        }
+
+        if (showNinaConsole) {
+            NinaConsoleScreen(
+                vm = vm,
+                state = state,
+                onBack = { showNinaConsole = false },
+                modifier = Modifier.fillMaxSize(),
+            )
         }
     }
 
@@ -135,12 +153,13 @@ private fun HomeTab(
     state: CompanionUiState,
     vm: CompanionViewModel,
     snack: SnackbarHostState,
+    onOpenNinaConsole: () -> Unit,
+    onOpenCarbotPlaceholder: () -> Unit,
+    onOpenSystemSetup: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
-    var ssid by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    val ctx = LocalContext.current
     val gatewayHint by vm.gatewayHint.collectAsStateWithLifecycle(null)
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     LazyColumn(
         Modifier
@@ -150,46 +169,79 @@ private fun HomeTab(
     ) {
         item {
             Text(
-                "Connection & provisioning",
-                style = MaterialTheme.typography.titleMedium,
+                "Dashboard",
+                style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "On the Jetson access-point (AP), connect this tablet to the Nina AP. The app " +
-                    "picks the Wi‑Fi gateway as the Jetson URL automatically when possible.",
+                "Choose a control surface. Nina opens the same feature areas as Sirena UI on the robot.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+        }
+        item {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                DashboardCard(
+                    title = "Carbot",
+                    subtitle = "Mobility / BLDC bridge (Pi)",
+                    placeholderLabel = "Carbot",
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenCarbotPlaceholder,
+                )
+                DashboardCard(
+                    title = "Nina",
+                    subtitle = "Arms, vision, drive, actions",
+                    placeholderLabel = "Nina",
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenNinaConsole,
+                )
+                DashboardCard(
+                    title = "System",
+                    subtitle = "Wi‑Fi, link, provisioning",
+                    placeholderLabel = "System",
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenSystemSetup,
+                )
+            }
+        }
+        item {
             gatewayHint?.let { hint ->
                 Text(
                     hint,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(top = 8.dp),
                 )
             }
         }
         item {
-            OutlinedButton(
-                onClick = {
-                    ctx.startActivity(Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                    scope.launch {
-                        snack.showSnackbar(
-                            "Join the same SSID as the Jetson, then return here and tap Refresh.",
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        ctx.startActivity(
+                            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                         )
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Open Android Wi‑Fi settings")
-            }
-        }
-        item {
-            Button(
-                onClick = { vm.refreshStatus() },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Refresh status")
+                        scope.launch {
+                            snack.showSnackbar(
+                                "Join the Jetson Wi‑Fi, then return and tap Refresh.",
+                            )
+                        }
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Wi‑Fi settings")
+                }
+                Button(
+                    onClick = { vm.refreshStatus() },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Refresh status")
+                }
             }
         }
         when (state) {
@@ -219,8 +271,7 @@ private fun HomeTab(
                             ),
                         ) {
                             Text(
-                                "Connected to Nina Link on the robot access point. Provisioning " +
-                                    "and status below are live.",
+                                "Connected to Nina Link on the robot access point.",
                                 Modifier.padding(16.dp),
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
@@ -228,52 +279,62 @@ private fun HomeTab(
                     }
                 }
                 if (st != null) {
-                    item { StatusCard(st) }
-                }
-                item {
-                    Text("Home network (saved on Jetson)", fontWeight = FontWeight.Medium)
-                    OutlinedTextField(
-                        ssid,
-                        onValueChange = { ssid = it },
-                        label = { Text("SSID") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        password,
-                        onValueChange = { password = it },
-                        label = { Text("Password") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Button(
-                        onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = false) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Save credentials on Jetson only")
-                    }
-                    OutlinedButton(
-                        onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = true) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Save on Jetson & connect Jetson to this SSID")
-                    }
-                    OutlinedButton(
-                        onClick = { vm.connectJetsonHome(null) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Connect Jetson using first saved profile")
-                    }
-                    OutlinedButton(
-                        onClick = { vm.startApOnJetson() },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Force Jetson back to AP mode")
+                    item {
+                        Text(
+                            "Daemon: ${ready.url}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        StatusCard(st)
                     }
                 }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DashboardCard(
+    title: String,
+    subtitle: String,
+    placeholderLabel: String,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.height(200.dp),
+    ) {
+        Column(
+            Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(72.dp),
+            ) {
+                Box(
+                    Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(
+                        placeholderLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
@@ -301,7 +362,12 @@ private fun StatusCard(st: StatusUi) {
 }
 
 @Composable
-private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
+private fun NetworksTab(
+    state: CompanionUiState,
+    vm: CompanionViewModel,
+    snack: SnackbarHostState,
+) {
+    val scope = rememberCoroutineScope()
     Column(
         Modifier
             .fillMaxSize()
@@ -313,12 +379,19 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.height(8.dp))
+        Text(
+            "Connect Jetson asks the robot to join that profile (STA). Then join the same Wi‑Fi on " +
+                "this tablet and tap Refresh on Home.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
         when (state) {
             is CompanionUiState.Ready -> {
                 val list = state.status?.savedNetworks.orEmpty()
                 if (list.isEmpty()) {
                     Text(
-                        "No profiles yet. Save home Wi‑Fi from the Home tab.",
+                        "No profiles yet. Add home Wi‑Fi under Setup.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 } else {
@@ -337,8 +410,31 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
-                                    TextButton(onClick = { vm.deleteProfile(net.id) }) {
-                                        Text("Remove from Jetson")
+                                    Spacer(Modifier.height(8.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.fillMaxWidth(),
+                                    ) {
+                                        Button(
+                                            onClick = {
+                                                vm.connectJetsonHome(net.ssid)
+                                                scope.launch {
+                                                    snack.showSnackbar(
+                                                        "Jetson is connecting to “${net.ssid}”. " +
+                                                            "When online, join that Wi‑Fi on this tablet, open the app, tap Refresh.",
+                                                    )
+                                                }
+                                            },
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text("Connect Jetson")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { vm.deleteProfile(net.id) },
+                                            modifier = Modifier.weight(1f),
+                                        ) {
+                                            Text("Remove")
+                                        }
                                     }
                                 }
                             }
@@ -346,51 +442,7 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
                     }
                 }
             }
-            else -> Text("Load status from Home tab first.")
-        }
-    }
-}
-
-@Composable
-private fun DriveTab(state: CompanionUiState, vm: CompanionViewModel) {
-    var capsJson by remember { mutableStateOf<String?>(null) }
-    var capsErr by remember { mutableStateOf<String?>(null) }
-    val daemonUrl = (state as? CompanionUiState.Ready)?.url
-    LaunchedEffect(daemonUrl) {
-        if (daemonUrl.isNullOrBlank()) {
-            capsJson = null
-            capsErr = null
-            return@LaunchedEffect
-        }
-        try {
-            capsJson = vm.loadRobotCapabilities().toString(2)
-            capsErr = null
-        } catch (e: Exception) {
-            capsErr = e.message
-            capsJson = null
-        }
-    }
-    Column(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text("Drive & robot", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-        Text(
-            "Full drive motion matches the Sirena UI on the Jetson once NinaService is wired to " +
-                "this link API. Below is what the daemon reports today.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Text("GET /v1/robot/capabilities", fontWeight = FontWeight.Medium)
-                when {
-                    capsErr != null -> Text(capsErr!!, color = MaterialTheme.colorScheme.error)
-                    capsJson != null -> Text(capsJson!!, fontSize = 12.sp)
-                    else -> CircularProgressIndicator(Modifier.padding(8.dp))
-                }
-            }
+            else -> Text("Connect to the robot first (Refresh on Home).")
         }
     }
 }
@@ -399,12 +451,15 @@ private fun DriveTab(state: CompanionUiState, vm: CompanionViewModel) {
 @Composable
 private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
     val scope = rememberCoroutineScope()
+    val state by vm.state.collectAsStateWithLifecycle()
     val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(Prefs.DEFAULT_BASE_URL)
     var urlDraft by remember { mutableStateOf<String?>(null) }
     val url = urlDraft ?: savedUrl
     var bearer by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var showToken by remember { mutableStateOf<String?>(null) }
+    var ssid by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
 
     if (showToken != null) {
         AlertDialog(
@@ -424,6 +479,63 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
+            Text("Provisioning", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Save home Wi‑Fi on the Jetson and switch modes — same as Sirena Settings → Network flows.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (state is CompanionUiState.Ready) {
+            val st = (state as CompanionUiState.Ready).status
+            if (st != null) {
+                item { StatusCard(st) }
+            }
+        }
+        item {
+            Text("Home network (saved on Jetson)", fontWeight = FontWeight.Medium)
+            OutlinedTextField(
+                ssid,
+                onValueChange = { ssid = it },
+                label = { Text("SSID") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(Modifier.height(8.dp))
+            OutlinedTextField(
+                password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = false) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save credentials on Jetson only")
+            }
+            OutlinedButton(
+                onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = true) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Save on Jetson & connect Jetson to this SSID")
+            }
+            OutlinedButton(
+                onClick = { vm.connectJetsonHome(null) },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Connect Jetson using first saved profile")
+            }
+            OutlinedButton(
+                onClick = { vm.startApOnJetson() },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Force Jetson back to AP mode")
+            }
+        }
+        item {
             Text("Daemon URL", fontWeight = FontWeight.Medium)
             OutlinedTextField(
                 url,
@@ -433,9 +545,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 singleLine = true,
             )
             Text(
-                "Must be the Router/Gateway IP from Wi‑Fi details — never this tablet's own IP " +
-                    "(e.g. not 10.42.0.153). On Nina AP the gateway is usually 10.42.0.1 or " +
-                    "192.168.4.1. Leave blank logic: the app auto-picks the gateway when you refresh.",
+                "Use the Wi‑Fi gateway (e.g. http://10.42.0.1:8787 on Nina AP). Never this tablet's IP.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -451,7 +561,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         }
         item {
             Text(
-                "Optional: fleet token (NINA_LINK_TOKEN on Jetson) or pairing PIN from the robot screen.",
+                "Optional: fleet token or pairing PIN.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -473,7 +583,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
             OutlinedTextField(
                 pin,
                 onValueChange = { pin = it },
-                label = { Text("Pairing PIN (shown on Jetson Settings → Network)") },
+                label = { Text("Pairing PIN (Jetson Settings → Network)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -491,11 +601,6 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         }
         item {
             Text("Mode override", fontWeight = FontWeight.Medium)
-            Text(
-                "Sends the same user_mode as Sirena Settings on the Jetson.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { vm.setMode("boot_default") }, Modifier.fillMaxWidth()) {
                     Text("boot_default")
