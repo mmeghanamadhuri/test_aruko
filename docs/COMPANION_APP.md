@@ -8,13 +8,19 @@ From the repo root on the Jetson (after `git clone` / copy):
 
 ```bash
 # Executable bit is set in git; if you still see "Permission denied":
-chmod +x scripts/install-nina-link-jetson.sh
+chmod +x scripts/install-nina-link-jetson.sh scripts/uninstall-nina-link-jetson.sh
 
-# If venv fails with "ensurepip is not available", install OS packages first:
-./scripts/install-nina-link-jetson.sh --install-system-deps --smoke
-# Optional: register systemd (needs sudo)
-sudo ./scripts/install-nina-link-jetson.sh --with-systemd
+# Full Jetson setup: apt deps, venv, smoke test, systemd — daemon + hotspot policy on every boot
+./scripts/install-nina-link-jetson.sh --all
+
+# If sudo password was not entered during --all, finish systemd registration:
+sudo ./scripts/install-nina-link-jetson.sh --systemd-only
+
+# Remove service and optional venv/state:
+./scripts/uninstall-nina-link-jetson.sh --purge
 ```
+
+Smaller installs (no systemd / no apt): `./scripts/install-nina-link-jetson.sh --smoke` or add `--with-systemd` / `--install-system-deps` as needed. **`--no-systemd`** skips the unit when combined with **`--all`** (e.g. dev laptop).
 
 On stock Ubuntu/Jetson images you may need **`python3-venv`** once: either `sudo apt install python3-venv` or use **`--install-system-deps`** (runs `apt` for `python3.X-venv`, `python3-venv`, `pip`, `curl`).
 

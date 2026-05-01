@@ -3,13 +3,16 @@
 # Nina Link — one-shot Jetson install + diagnosis for the companion-app daemon
 #
 # Usage (on the Jetson, from repo root):
-#   chmod +x scripts/install-nina-link-jetson.sh    # only if ./script says Permission denied
-#   ./scripts/install-nina-link-jetson.sh --smoke
-# Do NOT run: chmod +x scripts/foo.sh --smoke  (--smoke belongs on the script, not chmod)
+#   ./scripts/install-nina-link-jetson.sh --all
+#   ./scripts/uninstall-nina-link-jetson.sh --purge   # remove service + venv + state
+# Do NOT pass script flags to chmod (e.g. chmod +x foo.sh --smoke is wrong).
 #
 # Options:
+#   --all                   Full Jetson setup: apt deps + venv + smoke test + systemd (AP restarts on boot)
 #   --install-system-deps   sudo apt install python3-venv, pip, curl (Ubuntu/Debian Jetson)
 #   --with-systemd          Install and enable systemd unit (needs sudo; paths from repo)
+#   --systemd-only          Only install/enable nina-link.service (venv must exist); use after sudo password
+#   --no-systemd            Skip systemd even if implied by --all (for dev laptops)
 #   --smoke                 After install, briefly run daemon and curl /health (needs curl)
 #   --venv PATH             Virtualenv directory (default: <repo>/.venv-link)
 #
@@ -20,15 +23,30 @@
 
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+REQ_FILE="${REPO_ROOT}/requirements-link.txt"
+UNIT_DST="/etc/systemd/system/nina-link.service"
+
 WITH_SYSTEMD=0
 SMOKE=0
 INSTALL_SYSTEM_DEPS=0
+SYSTEMD_ONLY=0
+NO_SYSTEMD=0
 VENV_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --all)
+            INSTALL_SYSTEM_DEPS=1
+            SMOKE=1
+            WITH_SYSTEMD=1
+            shift
+            ;;
         --install-system-deps) INSTALL_SYSTEM_DEPS=1; shift ;;
         --with-systemd) WITH_SYSTEMD=1; shift ;;
+        --systemd-only) SYSTEMD_ONLY=1; shift ;;
+        --no-systemd) NO_SYSTEMD=1; shift ;;
         --smoke)        SMOKE=1; shift ;;
         --venv)
             VENV_PATH="${2:?}"
@@ -45,10 +63,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-REQ_FILE="${REPO_ROOT}/requirements-link.txt"
-UNIT_DST="/etc/systemd/system/nina-link.service"
+if [[ "${NO_SYSTEMD}" -eq 1 ]]; then
+    WITH_SYSTEMD=0
+fi
 
 if [[ -z "${VENV_PATH}" ]]; then
     VENV_PATH="${REPO_ROOT}/.venv-link"
@@ -58,6 +75,64 @@ say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()  { printf '  [\033[32mOK\033[0m] %s\n' "$*"; }
 bad() { printf '  [\033[31m!!\033[0m] %s\n' "$*"; }
 warn(){ printf '  [\033[33m!!\033[0m] %s\n' "$*"; }
+
+# Writes /etc/systemd/system/nina-link.service — AP on boot via NINA_LINK_BOOT_AP in unit + daemon.
+_install_nina_link_systemd() {
+    local SUDO=(sudo)
+    if [[ "$(id -u)" -eq 0 ]]; then
+        SUDO=()
+    fi
+    if [[ "${#SUDO[@]}" -gt 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+        bad "sudo not installed — cannot register systemd unit"
+        return 1
+    fi
+    # Interactive sudo password if needed
+    if [[ "${#SUDO[@]}" -gt 0 ]] && ! sudo -v; then
+        warn "sudo authentication failed"
+        return 1
+    fi
+    "${SUDO[@]}" tee "${UNIT_DST}" >/dev/null <<EOF
+[Unit]
+Description=Nina Link Daemon (Wi-Fi provisioning API for companion app)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=${REPO_ROOT}
+Environment=PYTHONPATH=${REPO_ROOT}
+Environment=NINA_LINK_BOOT_AP=1
+Environment=NINA_LINK_HOST=0.0.0.0
+Environment=NINA_LINK_PORT=8787
+ExecStart=${PY} -m nina.link_daemon.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+    "${SUDO[@]}" systemctl daemon-reload
+    "${SUDO[@]}" systemctl enable nina-link.service
+    "${SUDO[@]}" systemctl restart nina-link.service
+    if systemctl is-active --quiet nina-link.service 2>/dev/null; then
+        ok "nina-link.service active — AP/restart policy enabled on boot"
+        return 0
+    fi
+    warn "Unit installed but not active — journalctl -u nina-link -e"
+    return 1
+}
+
+# systemd-only: register service and exit (run: sudo ./install-nina-link-jetson.sh --systemd-only)
+if [[ "${SYSTEMD_ONLY}" -eq 1 ]]; then
+    PY="${VENV_PATH}/bin/python"
+    say "nina-link systemd-only"
+    if [[ ! -x "${PY}" ]]; then
+        bad "No Python at ${PY} — run full install first (without --systemd-only)."
+        exit 1
+    fi
+    _install_nina_link_systemd || exit 1
+    exit 0
+fi
 
 EXIT=0
 
@@ -254,43 +329,13 @@ fi
 say "6. systemd unit (optional)"
 
 if [[ "${WITH_SYSTEMD}" -eq 1 ]]; then
-    if [[ "$(id -u)" -ne 0 ]] && ! sudo -n true 2>/dev/null; then
-        warn "Need sudo to install systemd unit — run: sudo $0 --with-systemd"
-    else
-        SUDO=(sudo)
-        if [[ "$(id -u)" -eq 0 ]]; then SUDO=(); fi
-        "${SUDO[@]}" tee "${UNIT_DST}" >/dev/null <<EOF
-[Unit]
-Description=Nina Link Daemon (Wi-Fi provisioning API for companion app)
-After=network-online.target NetworkManager.service
-Wants=network-online.target
-
-[Service]
-Type=simple
-WorkingDirectory=${REPO_ROOT}
-Environment=PYTHONPATH=${REPO_ROOT}
-Environment=NINA_LINK_BOOT_AP=1
-Environment=NINA_LINK_HOST=0.0.0.0
-Environment=NINA_LINK_PORT=8787
-ExecStart=${PY} -m nina.link_daemon.main
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-        "${SUDO[@]}" systemctl daemon-reload
-        "${SUDO[@]}" systemctl enable nina-link.service
-        "${SUDO[@]}" systemctl restart nina-link.service
-        if systemctl is-active --quiet nina-link.service 2>/dev/null; then
-            ok "nina-link.service is active"
-        else
-            warn "Unit installed but not active — check: journalctl -u nina-link -e"
-            EXIT=1
-        fi
+    if ! _install_nina_link_systemd; then
+        EXIT=1
+        warn "Install service separately (will prompt for sudo password):"
+        echo "    sudo $(printf '%q' "${REPO_ROOT}/scripts/install-nina-link-jetson.sh") --systemd-only"
     fi
 else
-    echo "  Skipped (pass --with-systemd to install / enable systemd)"
+    echo "  Skipped (use --with-systemd or --all for AP + daemon on every boot)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -298,13 +343,14 @@ say "Done."
 
 cat <<EOF
 
-  Run the daemon manually (foreground):
+  Companion app on hotspot (typical): http://192.168.4.1:8787
+
+  Manual foreground run (no systemd):
     export PYTHONPATH=${REPO_ROOT}
-    export NINA_LINK_MOCK=1    # only on a laptop without nmcli; omit on Jetson
     ${PY} -m nina.link_daemon.main
 
-  Companion app default URL on hotspot is usually:
-    http://192.168.4.1:8787
+  Remove link daemon from this machine:
+    ./scripts/uninstall-nina-link-jetson.sh --purge
 
   Full notes: docs/COMPANION_APP.md
 
