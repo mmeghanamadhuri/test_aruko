@@ -51,6 +51,29 @@ This creates **`.venv-link`**, installs **`requirements-link.txt`**, verifies im
 
 If you see **`pip missing inside venv`**, an old `.venv-link` was built before **`python3-venv`** existed. The install script now runs **`python -m ensurepip`** inside that venv or recreates it. To reset manually: **`rm -rf .venv-link`** and run the script again.
 
+### “`.venv-link` has no active scripts” / `source: …/activate: No such file`
+
+The env is **incomplete or corrupted** (copy without `bin/`, interrupted `venv` create, or wrong directory). **You do not need `source activate`** to use it — call **`pip`** and **`python`** by full path:
+
+```bash
+cd ~/Nvidia-jetson-platform   # your repo root
+ls -la .venv-link/bin/python .venv-link/bin/pip .venv-link/bin/activate
+./.venv-link/bin/pip install -U pip
+./.venv-link/bin/pip install -r requirements-link.txt
+sudo systemctl restart nina-link
+```
+
+If **`python`** or **`pip`** is missing under **`.venv-link/bin/`**, recreate the venv (needs **`sudo apt install python3-venv`** if `python3 -m venv` fails):
+
+```bash
+cd ~/Nvidia-jetson-platform
+rm -rf .venv-link
+python3 -m venv .venv-link
+./.venv-link/bin/pip install -r requirements-link.txt
+```
+
+Or run the full installer once: **`./scripts/install-nina-link-jetson.sh --all`** (creates a fresh `.venv-link` and registers systemd).
+
 ---
 
 ## Jetson: manual install and run
