@@ -103,12 +103,32 @@ class _FakePopen:
 
 @pytest.fixture
 def fake_subprocess(monkeypatch: pytest.MonkeyPatch) -> type:
-    """Replace subprocess.Popen inside the OSK module and return the
-    fake class so tests can inspect / manipulate spawned 'processes'."""
+    """Replace BOTH subprocess.Popen and subprocess.run inside the OSK
+    module so tests can inspect / manipulate spawned 'processes'.
+
+    Both have to be intercepted because subprocess.run is implemented
+    as Popen(...).communicate() under the hood - if we only stub
+    Popen, every subprocess.run call (e.g. our gsettings configurator)
+    falls through into _FakePopen and inflates the instances list,
+    making spawn-count assertions impossible. The run interceptor is
+    a silent no-op that returns rc=0 by default; tests that need to
+    inspect run calls read `fake_subprocess.run_calls`.
+    """
     from sirena_ui.workers import osk as osk_module
 
     _FakePopen.reset()
+    _FakePopen.run_calls = []  # type: ignore[attr-defined]
+
+    class _RunResult:
+        returncode = 0
+        stderr = ""
+
+    def _fake_run(argv, **_kw):
+        _FakePopen.run_calls.append(tuple(argv))  # type: ignore[attr-defined]
+        return _RunResult()
+
     monkeypatch.setattr(osk_module.subprocess, "Popen", _FakePopen)
+    monkeypatch.setattr(osk_module.subprocess, "run", _fake_run)
     return _FakePopen
 
 
@@ -516,6 +536,103 @@ def test_spawn_health_check_with_live_process_does_nothing(
     osk._check_spawn_health()
     assert osk.enabled is True
     assert osk.is_running is True
+
+
+# ---------------------------------------------------------------------
+# onboard window-mode auto-config (force-to-top + docking)
+# ---------------------------------------------------------------------
+
+
+def test_first_spawn_runs_gsettings_force_to_top_and_docking(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """First onboard launch must apply the force-to-top + docking
+    gsettings BEFORE the Popen so onboard reads the new values at
+    startup. This is what stops the keyboard from being buried under
+    the kiosk window."""
+    make_osk(mode="always")
+
+    set_calls = [
+        call for call in fake_subprocess.run_calls
+        if len(call) >= 5 and call[0] == "gsettings" and call[1] == "set"
+    ]
+    keys_seen = {(call[2], call[3], call[4]) for call in set_calls}
+    assert ("org.onboard.window", "force-to-top", "true") in keys_seen
+    assert ("org.onboard.window", "docking-enabled", "true") in keys_seen
+
+    # And onboard itself was launched after them.
+    assert len(fake_subprocess.instances) == 1
+
+
+def test_gsettings_only_runs_once_per_manager(
+    isolate_env, with_osk_binary, fake_subprocess, make_osk
+) -> None:
+    """Idempotence: re-spawning onboard (after dismissal) must NOT
+    re-issue the gsettings calls. dconf writes are persistent so
+    repeating them is wasteful, and the one-shot guard is what keeps
+    a misbehaving gsettings from being hammered on every focus
+    event."""
+    osk = make_osk(mode="auto")
+
+    edit = QLineEdit()
+    _send_focus_in(edit)
+    initial_run_count = len(fake_subprocess.run_calls)
+    assert initial_run_count >= 2  # force-to-top + docking-enabled
+
+    fake_subprocess.instances[0].die()  # operator dismissed the OSK
+    edit2 = QLineEdit()
+    _send_focus_in(edit2)
+    assert len(fake_subprocess.instances) == 2  # second onboard launch
+    # ...but no additional gsettings calls.
+    assert len(fake_subprocess.run_calls) == initial_run_count
+
+    edit.deleteLater()
+    edit2.deleteLater()
+
+
+def test_gsettings_skipped_for_non_onboard_binary(
+    isolate_env, fake_subprocess,
+    monkeypatch: pytest.MonkeyPatch, make_osk,
+) -> None:
+    """Custom OSK binaries (NINA_UI_OSK_BIN=matchbox-keyboard, etc.)
+    must NOT get the onboard-specific gsettings tweaks - we don't
+    know their config schema and writing onboard's keys would be
+    pointless noise. The binary must still launch normally."""
+    from sirena_ui.workers import osk as osk_module
+
+    monkeypatch.setattr(
+        osk_module.shutil, "which",
+        lambda name: f"/usr/bin/{name}",  # both osk binary AND gsettings exist
+    )
+
+    make_osk(mode="always", binary="matchbox-keyboard")
+
+    assert len(fake_subprocess.instances) == 1
+    assert fake_subprocess.instances[0].argv[0] == "matchbox-keyboard"
+    # No gsettings shenanigans for the non-onboard binary.
+    assert not any(
+        call and call[0] == "gsettings" for call in fake_subprocess.run_calls
+    )
+
+
+def test_gsettings_failure_does_not_block_spawn(
+    isolate_env, with_osk_binary, fake_subprocess,
+    monkeypatch: pytest.MonkeyPatch, make_osk,
+) -> None:
+    """A broken gsettings (missing schema, no dbus, etc.) must NEVER
+    prevent the OSK itself from launching. The keyboard might end up
+    below the kiosk in stacking order, but that's strictly better
+    than no keyboard at all."""
+    from sirena_ui.workers import osk as osk_module
+
+    def _exploding_run(*_a, **_kw):
+        raise FileNotFoundError("gsettings: not found")
+
+    monkeypatch.setattr(osk_module.subprocess, "run", _exploding_run)
+
+    osk = make_osk(mode="always")
+    assert osk.is_running
+    assert len(fake_subprocess.instances) == 1
 
 
 def test_first_focus_logs_diagnostic_line(

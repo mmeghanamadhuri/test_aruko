@@ -176,6 +176,11 @@ class OnScreenKeyboardManager(QObject):
         # taps - without it, "no keyboard appeared" could equally mean
         # the filter never saw a focus event OR onboard died on launch.
         self._first_focus_logged: bool = False
+        # One-shot flag for the onboard window-mode gsettings tweak
+        # (see _configure_onboard_window_mode). Only meaningful when
+        # the binary is "onboard" - we deliberately do nothing for
+        # custom OSK binaries because we don't know their config keys.
+        self._onboard_configured: bool = False
 
         if not self._enabled:
             return
@@ -315,6 +320,83 @@ class OnScreenKeyboardManager(QObject):
             return True
         return False
 
+    def _configure_onboard_window_mode(self) -> None:
+        """One-shot gsettings tweak so onboard renders above the kiosk.
+
+        Without this, onboard launches fine but stacks BELOW the
+        kiosk window even when the kiosk is in maximized (non-X11-
+        fullscreen) mode - because by default onboard is a normal
+        toplevel that the WM places in z-order along with everything
+        else. We need two flags:
+
+        - org.onboard.window.force-to-top = true
+            Sets _NET_WM_STATE_ABOVE on the onboard window so the WM
+            keeps it above peer windows.
+        - org.onboard.window.docking-enabled = true
+            Switches onboard from a free-floating window to a screen-
+            edge dock that reserves a strut. Maximized windows (and
+            our kiosk window in maximized mode) respect that strut
+            and shrink to leave the keyboard visible. Operator sees
+            both their text field AND the keyboard at the same time,
+            instead of the keyboard covering whatever they're typing
+            into.
+
+        Best-effort: if gsettings is missing (no GNOME stack) or the
+        schema isn't installed (different OSK binary, partial install),
+        we log once and carry on. onboard might still appear via the
+        maximized-mode change above, just without docking.
+
+        Only runs for the literal binary "onboard" - custom OSK
+        binaries pointed at via NINA_UI_OSK_BIN don't get touched
+        because we don't know their config schema.
+        """
+        if self._onboard_configured:
+            return
+        self._onboard_configured = True  # set first so a failed run
+        # doesn't loop on every spawn
+
+        binary_basename = os.path.basename(self._binary)
+        if binary_basename != "onboard":
+            return
+        if shutil.which("gsettings") is None:
+            log.info(
+                "OSK: gsettings not on PATH - skipping onboard window-mode "
+                "config. The keyboard may render below the kiosk window; "
+                "install glib2.0-bin (provides gsettings) to enable the "
+                "force-to-top + docking auto-config."
+            )
+            return
+
+        tweaks = (
+            ("org.onboard.window", "force-to-top", "true"),
+            ("org.onboard.window", "docking-enabled", "true"),
+        )
+        for schema, key, value in tweaks:
+            try:
+                # Short timeout so a hung dconf service can't stall the
+                # whole UI startup. capture_output keeps gsettings'
+                # error chatter out of launch.log unless the call
+                # actually fails - then we surface stderr explicitly.
+                result = subprocess.run(
+                    ["gsettings", "set", schema, key, value],
+                    capture_output=True,
+                    text=True,
+                    timeout=2.0,
+                )
+                if result.returncode != 0:
+                    log.info(
+                        "OSK: gsettings set %s %s %s -> rc=%s stderr=%r "
+                        "(non-fatal; onboard may still come up but stacking "
+                        "behaviour will be whatever the user has configured)",
+                        schema, key, value, result.returncode,
+                        (result.stderr or "").strip(),
+                    )
+            except Exception as exc:  # noqa: BLE001
+                log.info(
+                    "OSK: gsettings set %s %s failed (%s) - skipping",
+                    schema, key, exc,
+                )
+
     def _spawn(self) -> None:
         """Start the OSK subprocess. Failures disable the manager.
 
@@ -328,6 +410,13 @@ class OnScreenKeyboardManager(QObject):
         startup chatter aren't useful and would muddy the launcher
         log.
         """
+        # Apply onboard's force-to-top + docking config exactly once
+        # before its first launch. Done inline (not in __init__) so
+        # we don't pay the gsettings cost on dev hosts where the OSK
+        # is configured but never triggered, and so the tweak runs
+        # only when we actually intend to spawn onboard.
+        self._configure_onboard_window_mode()
+
         argv = [self._binary, *self._extra_args]
         try:
             self._process = subprocess.Popen(

@@ -327,6 +327,8 @@ the Pi.
 | `NINA_UI_OSK`                  | `auto`             | Touchscreen on-screen keyboard. `auto` = pop up on focus when the OSK binary is on PATH; `always` = launch at startup; `off` = disable entirely. |
 | `NINA_UI_OSK_BIN`              | `onboard`          | OSK binary to launch (`florence`, `matchbox-keyboard`, etc. all work). |
 | `NINA_UI_OSK_ARGS`             | (empty)            | Shell-style extra args, e.g. `--theme=Nightshade --not-show-in-launcher`. |
+| `NINA_UI_FULLSCREEN`           | unset              | `1` puts the GUI in frameless **maximized** kiosk mode at the panel's native resolution. The keyboard can stack above the kiosk in this mode. |
+| `NINA_UI_FULLSCREEN_STRICT`    | unset              | `1` switches kiosk mode from maximized to true X11 fullscreen-exclusive (`_NET_WM_STATE_FULLSCREEN`). Only set this if you have **no** OSK and want the WM to absolutely guarantee no other window stacks above the kiosk — the on-screen keyboard will be invisible behind it in this mode. |
 
 #### Touchscreen on-screen keyboard
 
@@ -353,6 +355,14 @@ Behaviour you can rely on:
   through onboard's own preferences pane (right-click its window →
   **Preferences**). `NINA_UI_OSK_ARGS` lets you preset a theme via
   `--theme=Nightshade` or similar at launch.
+- The first onboard launch each session writes
+  `org.onboard.window force-to-top=true` and `docking-enabled=true`
+  via `gsettings` so the keyboard stacks above the kiosk and reserves
+  a strut at the bottom (the kiosk maximized window then shrinks
+  above the keyboard rather than covering it). Set
+  `NINA_UI_FULLSCREEN_STRICT=1` to opt out of the maximized mode and
+  go back to true X11 fullscreen — the keyboard will be hidden
+  behind the kiosk in that case.
 - On dev hosts (Mac, headless CI) the binary isn't found, so the
   manager silently disables itself with a one-time warning in the
   log — the GUI still comes up cleanly.

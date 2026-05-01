@@ -114,33 +114,55 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:
         """Honour kiosk mode after the window's first show.
 
-        Calling `showFullScreen` in `__init__` doesn't always take on
-        Wayland / some X11 setups - calling it here, once Qt has done
-        its initial layout, reliably gives us a frameless full-panel
-        window even on the Jetson.
+        We deliberately use `showMaximized()` rather than
+        `showFullScreen()` here. Visually they're identical on the
+        Jetson panel (both produce a frameless window covering the
+        whole screen), but `showFullScreen()` claims X11
+        `_NET_WM_STATE_FULLSCREEN` which most window managers stack
+        ABOVE every other window class - including dock-type windows
+        like the on-screen keyboard. With that flag set, `onboard`
+        launches and renders correctly but is permanently hidden
+        behind the kiosk; minimising the kiosk makes it visible
+        again, which is exactly the symptom we'd see in launch.log.
+        `showMaximized()` keeps Frameless+full-panel coverage but
+        respects struts (so `onboard --dock` reserves bottom-of-
+        screen space and the kiosk shrinks above it) and lets ABOVE-
+        state windows actually stack above us. If a deployment ever
+        needs the strict fullscreen-exclusive behaviour back, set
+        NINA_UI_FULLSCREEN_STRICT=1.
         """
         super().showEvent(event)
-        if self._kiosk and not self.isFullScreen():
-            self.showFullScreen()
-            # Log the actual surface Qt grabbed so launch.log shows
-            # whether xrandr-forced 1024x600 actually took. If you ever
-            # see a size other than 1024x600 here on the bot, the panel
-            # is being driven at a virtual EDID resolution and the
-            # layouts will overflow - re-check launch-sirena.sh's
-            # `_force_panel_resolution_1024x600`.
-            try:
-                screen = self.windowHandle().screen() if self.windowHandle() else None
-                if screen is not None:
-                    geom = screen.geometry()
-                    print(
-                        f"[kiosk] screen={screen.name()!r} "
-                        f"geometry={geom.width()}x{geom.height()} "
-                        f"window={self.width()}x{self.height()} "
-                        f"devicePixelRatio={screen.devicePixelRatio()}",
-                        flush=True,
-                    )
-            except Exception:
-                pass
+        if not self._kiosk:
+            return
+
+        strict = _env_truthy("NINA_UI_FULLSCREEN_STRICT")
+        if strict:
+            if not self.isFullScreen():
+                self.showFullScreen()
+        else:
+            if not self.isMaximized():
+                self.showMaximized()
+
+        # Log the actual surface Qt grabbed so launch.log shows
+        # whether xrandr-forced 1024x600 actually took. If you ever
+        # see a size other than 1024x600 here on the bot, the panel
+        # is being driven at a virtual EDID resolution and the
+        # layouts will overflow - re-check launch-sirena.sh's
+        # `_force_panel_resolution_1024x600`.
+        try:
+            screen = self.windowHandle().screen() if self.windowHandle() else None
+            if screen is not None:
+                geom = screen.geometry()
+                print(
+                    f"[kiosk] mode={'fullscreen' if strict else 'maximized'} "
+                    f"screen={screen.name()!r} "
+                    f"geometry={geom.width()}x{geom.height()} "
+                    f"window={self.width()}x{self.height()} "
+                    f"devicePixelRatio={screen.devicePixelRatio()}",
+                    flush=True,
+                )
+        except Exception:
+            pass
 
     def keyPressEvent(self, event) -> None:
         """Kiosk-mode escape hatch: F11 toggles fullscreen, F10 quits.
@@ -151,10 +173,16 @@ class MainWindow(QMainWindow):
         """
         if self._kiosk:
             if event.key() == Qt.Key_F11:
-                if self.isFullScreen():
+                # Toggle whatever expanded mode the kiosk uses. We
+                # check both states so the same handler works whether
+                # NINA_UI_FULLSCREEN_STRICT switched us into true X11
+                # fullscreen or we're in the default maximized mode.
+                if self.isFullScreen() or self.isMaximized():
                     self.showNormal()
-                else:
+                elif _env_truthy("NINA_UI_FULLSCREEN_STRICT"):
                     self.showFullScreen()
+                else:
+                    self.showMaximized()
                 event.accept()
                 return
             if event.key() == Qt.Key_F10:
