@@ -65,7 +65,7 @@ class LinkDaemonConfig:
     #: Turn off NM autoconnect on saved Wi-Fi at startup and for new profiles (STA only via app).
     disable_wifi_autoconnect: bool = True
     #: Max seconds to wait for Wi-Fi to leave NM "unavailable" (supplicant) before hotspot.
-    wifi_ready_timeout_sec: int = 120
+    wifi_ready_timeout_sec: int = 240
     wifi_ready_poll_sec: float = 2.0
     #: Retries for `nmcli device wifi hotspot` after disconnect (transient NM races).
     hotspot_attempts: int = 5
@@ -94,7 +94,7 @@ def load_config() -> LinkDaemonConfig:
         ),
         wifi_ready_timeout_sec=max(
             5,
-            _env_int("NINA_LINK_WIFI_READY_TIMEOUT", 120),
+            _env_int("NINA_LINK_WIFI_READY_TIMEOUT", 240),
         ),
         wifi_ready_poll_sec=max(
             0.5,

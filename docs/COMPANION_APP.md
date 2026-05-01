@@ -76,14 +76,14 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 ## Tablet: APK flow
 
 1. Join the Jetson **access point** (SSID/password match daemon / Jetson screen).
-2. Open **Nina Companion**; default API base URL is `http://192.168.4.1:8787` (typical NM hotspot gateway — adjust on Setup if different).
+2. Open **Nina Companion**. It **auto-tries** the Wi‑Fi **gateway** (Jetson) plus saved/fallback URLs — you usually do **not** need to type an IP. If you use **Setup** manually, use the **Router/Gateway** address from Wi‑Fi details — **never** the tablet’s own IP (e.g. not `10.42.0.153`). Common gateways: **`http://10.42.0.1:8787`** when the tablet has a **`10.42.x.x`** address, or **`http://192.168.4.1:8787`** when the tablet has **`192.168.4.x`**.
 3. **Save home Wi‑Fi** credentials on the Jetson (sends them to NetworkManager via the daemon).
 4. **Connect Jetson to home Wi‑Fi** (STA), then use **Open Android Wi‑Fi settings** to join the **same** SSID on the tablet. Android does not allow silent Wi‑Fi switching; this step is intentional.
 5. Change the app **Setup** URL to the Jetson’s new LAN address (or mDNS later) and **Save & test connection**.
 
 ### Tablet cannot reach `http://192.168.4.1:8787` on the Nina AP
 
-1. **Use the gateway shown on the tablet** — Android **Wi‑Fi → Nina‑Setup → details**: **Router / Gateway** may differ from `192.168.4.1` on some NM builds. In **Setup**, set the daemon URL to `http://<that-gateway-ip>:8787` and **Save & test connection**.
+1. **Use the gateway shown on the tablet** — Android **Wi‑Fi → Nina‑Setup → details**: **Router / Gateway** is the Jetson on that subnet. On many Jetson/NM setups the hotspot uses **`10.42.0.1`** (your tablet will have an IP like **`10.42.0.153`**); **`192.168.4.1`** only works when the tablet’s IP is **`192.168.4.x`**. Set **`http://<gateway>:8787`** in **Setup** and **Save & test connection**.
 2. **URL must include `http://`** — The app normalizes common mistakes; avoid a leading **`/`** before the IP (that breaks OkHttp and shows errors like `failed to connect to /192.168…`).
 3. **On the Jetson** (SSH or console): `curl -s http://127.0.0.1:8787/health` should return JSON. If yes but the tablet still fails, check **`sudo ufw status`** and allow **`8787/tcp`**, or turn **Private DNS** off on the tablet for testing.
 

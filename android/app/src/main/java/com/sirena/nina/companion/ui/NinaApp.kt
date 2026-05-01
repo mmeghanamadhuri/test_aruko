@@ -54,6 +54,7 @@ import androidx.compose.ui.unit.sp
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.StatusUi
+import com.sirena.nina.companion.data.Prefs
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -116,7 +117,7 @@ fun NinaApp(vm: CompanionViewModel) {
             when (tab) {
                 0 -> HomeTab(state, vm, snack)
                 1 -> NetworksTab(state, vm)
-                2 -> DriveTab()
+                2 -> DriveTab(vm)
                 3 -> SetupTab(vm, snack)
             }
         }
@@ -139,6 +140,7 @@ private fun HomeTab(
     var ssid by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     val ctx = LocalContext.current
+    val gatewayHint by vm.gatewayHint.collectAsStateWithLifecycle(null)
 
     LazyColumn(
         Modifier
@@ -153,12 +155,19 @@ private fun HomeTab(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "On the Jetson access-point (AP), open this app while connected to the Nina AP. " +
-                    "Save home Wi‑Fi on the Jetson, tap “Connect Jetson to home Wi‑Fi”, then use " +
-                    "the button below to switch this tablet to the same network.",
+                "On the Jetson access-point (AP), connect this tablet to the Nina AP. The app " +
+                    "picks the Wi‑Fi gateway as the Jetson URL automatically when possible.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            gatewayHint?.let { hint ->
+                Text(
+                    hint,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
         }
         item {
             OutlinedButton(
@@ -199,7 +208,25 @@ private fun HomeTab(
                 }
             }
             is CompanionUiState.Ready -> {
-                val st = (state as CompanionUiState.Ready).status
+                val ready = state as CompanionUiState.Ready
+                val st = ready.status
+                if (st != null && st.wifiRole == "ap") {
+                    item {
+                        Card(
+                            Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            ),
+                        ) {
+                            Text(
+                                "Connected to Nina Link on the robot access point. Provisioning " +
+                                    "and status below are live.",
+                                Modifier.padding(16.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
+                    }
+                }
                 if (st != null) {
                     item { StatusCard(st) }
                 }
@@ -325,23 +352,36 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
 }
 
 @Composable
-private fun DriveTab() {
+private fun DriveTab(vm: CompanionViewModel) {
+    var capsJson by remember { mutableStateOf<String?>(null) }
+    var capsErr by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(Unit) {
+        try {
+            capsJson = vm.loadRobotCapabilities().toString(2)
+        } catch (e: Exception) {
+            capsErr = e.message
+        }
+    }
     Column(
         Modifier
             .fillMaxSize()
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Drive", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Drive & robot", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
         Text(
-            "Drive refinement is in progress on the robot. This tab will mirror the Sirena UI " +
-                "drive controls over the link API in a future update.",
+            "Full drive motion matches the Sirena UI on the Jetson once NinaService is wired to " +
+                "this link API. Below is what the daemon reports today.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
-                Text("Capabilities", fontWeight = FontWeight.Medium)
-                Text("drive: preview")
+                Text("GET /v1/robot/capabilities", fontWeight = FontWeight.Medium)
+                when {
+                    capsErr != null -> Text(capsErr!!, color = MaterialTheme.colorScheme.error)
+                    capsJson != null -> Text(capsJson!!, fontSize = 12.sp)
+                    else -> CircularProgressIndicator(Modifier.padding(8.dp))
+                }
             }
         }
     }
@@ -351,7 +391,9 @@ private fun DriveTab() {
 @Composable
 private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
     val scope = rememberCoroutineScope()
-    var url by remember { mutableStateOf("http://192.168.4.1:8787") }
+    val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(Prefs.DEFAULT_BASE_URL)
+    var urlDraft by remember { mutableStateOf<String?>(null) }
+    val url = urlDraft ?: savedUrl
     var bearer by remember { mutableStateOf("") }
     var pin by remember { mutableStateOf("") }
     var showToken by remember { mutableStateOf<String?>(null) }
@@ -377,10 +419,17 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
             Text("Daemon URL", fontWeight = FontWeight.Medium)
             OutlinedTextField(
                 url,
-                onValueChange = { url = it },
-                label = { Text("http://host:8787") },
+                onValueChange = { urlDraft = it },
+                label = { Text("http://gateway:8787") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
+            )
+            Text(
+                "Must be the Router/Gateway IP from Wi‑Fi details — never this tablet's own IP " +
+                    "(e.g. not 10.42.0.153). On Nina AP the gateway is usually 10.42.0.1 or " +
+                    "192.168.4.1. Leave blank logic: the app auto-picks the gateway when you refresh.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Button(
                 onClick = {

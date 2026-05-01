@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import threading
+import time
 
 import uvicorn
 
@@ -12,7 +14,7 @@ from nina.link_daemon.api import create_app
 from nina.link_daemon.config import load_config
 from nina.link_daemon.nm import NMBackend, mock_backend
 from nina.link_daemon.nm import NMError
-from nina.link_daemon.state import LinkCoordinator
+from nina.link_daemon.state import LinkCoordinator, UserMode
 
 log = logging.getLogger("nina.link_daemon.main")
 
@@ -62,6 +64,38 @@ def _maybe_boot_ap(coordinator: LinkCoordinator) -> None:
             log.error("Boot AP failed: %s — %s", e, detail)
         else:
             log.error("Boot AP failed: %s", e)
+        _spawn_boot_ap_retry(coordinator)
+
+
+def _spawn_boot_ap_retry(coordinator: LinkCoordinator) -> None:
+    """If supplicant is slow past our single-shot wait, retry hotspot in the background."""
+
+    def run() -> None:
+        cfg = coordinator.cfg
+        interval = 20.0
+        max_attempts = 45  # spaced retries; each attempt uses a short NM wait (not full boot timeout).
+        coordinator.nm.wifi_ready_timeout = min(
+            45.0,
+            float(cfg.wifi_ready_timeout_sec),
+        )
+        for attempt in range(1, max_attempts + 1):
+            time.sleep(interval)
+            try:
+                coordinator.nm.start_hotspot(cfg.ap_ssid, cfg.ap_password)
+                coordinator.ps.ap_started = True
+                coordinator.store.save(coordinator.ps)
+                coordinator.set_user_mode(UserMode.FORCE_AP)
+                log.info(
+                    "Boot AP background retry #%s succeeded SSID=%s",
+                    attempt,
+                    cfg.ap_ssid,
+                )
+                return
+            except NMError as e:
+                log.warning("Boot AP background retry #%s: %s", attempt, e)
+        log.error("Boot AP background retries exhausted (%s attempts)", max_attempts)
+
+    threading.Thread(target=run, name="nina-boot-ap-retry", daemon=True).start()
 
 
 def main() -> None:

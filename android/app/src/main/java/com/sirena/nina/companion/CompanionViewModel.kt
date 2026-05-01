@@ -1,11 +1,14 @@
 package com.sirena.nina.companion
 
 import android.app.Application
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.LinkClient
 import com.sirena.nina.companion.data.Prefs
+import com.sirena.nina.companion.network.DaemonUrlResolver
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,6 +48,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private val prefs = Prefs(app)
     private val client = LinkClient()
 
+    private val appCtx get() = getApplication<Application>()
+
+    /** Persisted daemon URL (normalized). */
+    val savedDaemonUrl: Flow<String> = prefs.baseUrl
+
+    private val _gatewayHint = MutableStateFlow<String?>(null)
+    val gatewayHint: StateFlow<String?> = _gatewayHint.asStateFlow()
+
     private val _state = MutableStateFlow<CompanionUiState>(CompanionUiState.Loading)
     val state: StateFlow<CompanionUiState> = _state.asStateFlow()
 
@@ -55,10 +66,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshStatus() {
         viewModelScope.launch {
             try {
-                val url = prefs.baseUrl.first()
-                val bearer = prefs.bearerToken.first()
-                val st = client.status(url, bearer)
-                val statusUi = parseStatus(st)
+                val (url, statusUi) = resolveAndFetchStatus()
+                val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
+                _gatewayHint.value = gw?.let { "Wi‑Fi gateway (Jetson): http://$it:8787" }
                 _state.value = CompanionUiState.Ready(url, statusUi, null)
             } catch (e: LinkApiException) {
                 _state.update {
@@ -66,9 +76,65 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 _state.value = CompanionUiState.Error(
-                    e.message ?: "Could not reach Nina Link daemon. Check URL and Wi‑Fi.",
+                    e.message ?: "Could not reach Nina Link daemon. Check Wi‑Fi.",
                 )
             }
+        }
+    }
+
+    /**
+     * Try several URLs: hotspot gateway first when it looks like an NM AP, then saved prefs,
+     * then common Jetson defaults — avoids using the tablet's own IP by mistake.
+     */
+    private suspend fun resolveAndFetchStatus(): Pair<String, StatusUi> {
+        val bearer = prefs.bearerToken.first()
+        val candidates = buildCandidateUrls()
+        var lastError: Exception? = null
+        for (url in candidates) {
+            try {
+                assertUrlNotTabletOwnIp(url)
+                client.health(url)
+                val st = client.status(url, bearer)
+                prefs.setBaseUrl(url)
+                return url to parseStatus(st)
+            } catch (e: IllegalArgumentException) {
+                lastError = e
+                continue
+            } catch (e: Exception) {
+                lastError = e
+                continue
+            }
+        }
+        throw lastError ?: IllegalStateException("Could not reach Nina Link.")
+    }
+
+    private suspend fun buildCandidateUrls(): List<String> {
+        val ordered = LinkedHashSet<String>()
+        val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
+        val gwUrl = gw?.let { Prefs.normalizeBaseUrl("http://$gw:8787") }
+        val saved = prefs.baseUrl.first()
+
+        if (gwUrl != null && DaemonUrlResolver.isLikelyJetsonApGateway(gw)) {
+            ordered.add(gwUrl)
+        }
+        ordered.add(saved)
+        if (gwUrl != null && !DaemonUrlResolver.isLikelyJetsonApGateway(gw)) {
+            ordered.add(gwUrl)
+        }
+        ordered.add(Prefs.normalizeBaseUrl("http://10.42.0.1:8787"))
+        ordered.add(Prefs.normalizeBaseUrl("http://192.168.4.1:8787"))
+        return ordered.toList()
+    }
+
+    private fun assertUrlNotTabletOwnIp(url: String) {
+        val host = Uri.parse(url).host ?: return
+        val my = DaemonUrlResolver.deviceIpv4(appCtx) ?: return
+        if (host.equals(my, ignoreCase = true)) {
+            throw IllegalArgumentException(
+                "That address ($host) is this tablet, not the Jetson. " +
+                    "Use the Router/Gateway IP from Wi‑Fi details (often ends in .1), " +
+                    "e.g. http://10.42.0.1:8787",
+            )
         }
     }
 
@@ -77,6 +143,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val raw = urlOverride?.trim() ?: prefs.baseUrl.first()
                 val url = Prefs.normalizeBaseUrl(raw)
+                assertUrlNotTabletOwnIp(url)
                 client.health(url)
                 prefs.setBaseUrl(url)
                 refreshStatus()
@@ -88,8 +155,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun saveBaseUrl(url: String) {
         viewModelScope.launch {
-            prefs.setBaseUrl(url.trimEnd('/'))
-            refreshStatus()
+            try {
+                assertUrlNotTabletOwnIp(Prefs.normalizeBaseUrl(url))
+                prefs.setBaseUrl(url)
+                refreshStatus()
+            } catch (e: IllegalArgumentException) {
+                _state.value = CompanionUiState.Error(e.message ?: "Invalid URL")
+            } catch (e: Exception) {
+                _state.value = CompanionUiState.Error(e.message ?: "Save failed")
+            }
         }
     }
 
@@ -183,6 +257,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 _state.value = CompanionUiState.Error(e.message ?: "Pairing failed")
             }
         }
+    }
+
+    suspend fun loadRobotCapabilities(): JSONObject {
+        val url = prefs.baseUrl.first()
+        return client.capabilities(url)
     }
 
     private fun parseStatus(j: JSONObject): StatusUi {

@@ -81,6 +81,10 @@ class LinkClient {
         )
     }
 
+    suspend fun capabilities(baseUrl: String): JSONObject = withContext(Dispatchers.IO) {
+        get("$baseUrl/v1/robot/capabilities")
+    }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)

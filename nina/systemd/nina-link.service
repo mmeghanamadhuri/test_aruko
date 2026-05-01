@@ -10,7 +10,7 @@ WorkingDirectory=/
 Environment=PYTHONPATH=/opt/nvidia-jetson-platform
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
-Environment=NINA_LINK_WIFI_READY_TIMEOUT=120
+Environment=NINA_LINK_WIFI_READY_TIMEOUT=240
 Environment=NINA_LINK_WIFI_READY_POLL=2
 Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 Environment=NINA_LINK_HOST=0.0.0.0
