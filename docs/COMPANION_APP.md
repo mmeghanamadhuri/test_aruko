@@ -7,7 +7,9 @@ This document describes the **Android companion app** under [`android/`](../andr
 From the repo root on the Jetson (after `git clone` / copy):
 
 ```bash
+# Executable bit is set in git; if you still see "Permission denied":
 chmod +x scripts/install-nina-link-jetson.sh
+
 # If venv fails with "ensurepip is not available", install OS packages first:
 ./scripts/install-nina-link-jetson.sh --install-system-deps --smoke
 # Optional: register systemd (needs sudo)

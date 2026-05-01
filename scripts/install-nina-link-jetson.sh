@@ -2,9 +2,10 @@
 # -----------------------------------------------------------------------------
 # Nina Link — one-shot Jetson install + diagnosis for the companion-app daemon
 #
-# Usage (from your laptop: copy the repo to the Jetson, then on the Jetson):
-#   chmod +x scripts/install-nina-link-jetson.sh
-#   ./scripts/install-nina-link-jetson.sh
+# Usage (on the Jetson, from repo root):
+#   chmod +x scripts/install-nina-link-jetson.sh    # only if ./script says Permission denied
+#   ./scripts/install-nina-link-jetson.sh --smoke
+# Do NOT run: chmod +x scripts/foo.sh --smoke  (--smoke belongs on the script, not chmod)
 #
 # Options:
 #   --install-system-deps   sudo apt install python3-venv, pip, curl (Ubuntu/Debian Jetson)

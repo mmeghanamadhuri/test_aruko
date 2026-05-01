@@ -1,0 +1,2 @@
+# Shell scripts must use LF so #!/usr/bin/env bash works on Linux (Jetson).
+*.sh text eol=lf
