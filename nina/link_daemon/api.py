@@ -128,6 +128,11 @@ class VisionOptionsBody(BaseModel):
     object_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
+class VisionEnrollBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=160)
+    target_samples: int = Field(default=8, ge=1, le=32)
+
+
 class ActionAudioOffsetBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
     audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
@@ -719,6 +724,59 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             return {"detections": dets}
         except Exception as e:
             raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)) from e
+
+    @app.post("/v1/vision/enroll")
+    def vision_enroll_http(
+        body: VisionEnrollBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off"
+            )
+        try:
+            return vision_http.start_enroll_face(
+                body.name, target_samples=body.target_samples
+            )
+        except Exception as e:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)
+            ) from e
+
+    @app.get("/v1/vision/enroll/status")
+    def vision_enroll_status_http() -> Dict[str, Any]:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off"
+            )
+        return vision_http.enroll_status_snapshot()
+
+    @app.post("/v1/vision/announce")
+    def vision_announce_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off"
+            )
+        try:
+            return vision_http.start_announce_objects()
+        except Exception as e:
+            raise HTTPException(
+                status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)
+            ) from e
+
+    @app.get("/v1/vision/announce/status")
+    def vision_announce_status_http() -> Dict[str, Any]:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off"
+            )
+        return vision_http.announce_error_snapshot()
 
     def _mjpeg_iter() -> Iterator[bytes]:
         boundary = b"frame"

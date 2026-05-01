@@ -2,10 +2,18 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional
+
+from sirena_ui.workers.vision_types import KIND_OBJECT
+
+from nina.link_daemon.announcement_sentence import build_sentence
+from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
+from nina.services.audio_player import AudioPlayer
 
 log = logging.getLogger("nina.link_daemon.vision_http")
 
@@ -16,6 +24,24 @@ _pl_lock = threading.Lock()
 _face_enabled = False
 _object_enabled = False
 _opts_lock = threading.Lock()
+
+# Face enrollment (async thread + polling status for companion app).
+_enroll_lock = threading.Lock()
+_enroll_in_progress = False
+_enroll_status: Dict[str, Any] = {
+    "in_progress": False,
+    "samples": 0,
+    "target": 8,
+    "last": None,
+}
+
+# Object announcement (gTTS + local play), same UX as Sirena UI "Play objects".
+_announce_lock = threading.Lock()
+_announce_last_at = 0.0
+_announce_last_sentence: Optional[str] = None
+_announce_last_error: Optional[str] = None
+_ANNOUNCE_COOLDOWN_SEC = 1.5
+_ANNOUNCE_CACHE = Path(__file__).resolve().parent.parent / "data" / "announcements"
 
 
 def _try_import_pipeline():
@@ -169,3 +195,139 @@ def last_detections_json() -> List[Dict[str, Any]]:
             }
         )
     return out
+
+
+def _enroll_progress_cb(collected: int, target: int) -> None:
+    with _enroll_lock:
+        _enroll_status["samples"] = int(collected)
+        _enroll_status["target"] = int(target)
+
+
+def start_enroll_face(name: str, target_samples: int = 8) -> Dict[str, Any]:
+    """Queue face enrollment (``target_samples`` frames, default 8) on a background thread."""
+    global _enroll_in_progress
+    name = (name or "").strip()
+    if not name:
+        return {"ok": False, "error": "Name cannot be empty."}
+    ts = max(1, min(32, int(target_samples)))
+
+    with _enroll_lock:
+        if _enroll_in_progress:
+            return {"ok": False, "error": "Enrollment already in progress."}
+        _enroll_in_progress = True
+        _enroll_status["in_progress"] = True
+        _enroll_status["samples"] = 0
+        _enroll_status["target"] = ts
+        _enroll_status["last"] = None
+
+    def run() -> None:
+        global _enroll_in_progress
+        last: Dict[str, Any]
+        try:
+            set_vision_options(face=True)
+            p = get_pipeline()
+            st = p.open()
+            if not st.camera_open:
+                last = {
+                    "ok": False,
+                    "samples": 0,
+                    "attempts": 0,
+                    "message": st.message or "Camera not open.",
+                }
+            else:
+                r = p.enroll_face(
+                    name,
+                    target_samples=ts,
+                    progress_cb=_enroll_progress_cb,
+                )
+                last = {
+                    "ok": bool(r.ok),
+                    "samples": int(r.samples),
+                    "attempts": int(r.attempts),
+                    "message": r.message,
+                }
+        except Exception as exc:
+            log.exception("enroll_face")
+            last = {
+                "ok": False,
+                "samples": 0,
+                "attempts": 0,
+                "message": str(exc),
+            }
+        with _enroll_lock:
+            _enroll_status["last"] = last
+            _enroll_status["in_progress"] = False
+            _enroll_status["samples"] = 0
+            _enroll_in_progress = False
+
+    threading.Thread(target=run, daemon=True, name="vision-enroll").start()
+    return {"ok": True, "queued": True, "target_samples": ts}
+
+
+def enroll_status_snapshot() -> Dict[str, Any]:
+    with _enroll_lock:
+        return {
+            "in_progress": bool(_enroll_in_progress),
+            "samples": int(_enroll_status.get("samples", 0)),
+            "target": int(_enroll_status.get("target", 8)),
+            "last": _enroll_status.get("last"),
+        }
+
+
+def start_announce_objects() -> Dict[str, Any]:
+    """Build a sentence from current object labels, gTTS to MP3, play on the Jetson (async)."""
+    global _announce_last_at, _announce_last_sentence, _announce_last_error
+    try:
+        dets = last_detections_json()
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+    labels = [str(d["label"]) for d in dets if d.get("kind") == KIND_OBJECT]
+    sentence = build_sentence(labels)
+
+    now = time.time()
+    with _announce_lock:
+        if (
+            _announce_last_sentence == sentence
+            and now - _announce_last_at < _ANNOUNCE_COOLDOWN_SEC
+        ):
+            return {
+                "ok": True,
+                "queued": False,
+                "skipped": True,
+                "sentence": sentence,
+            }
+        _announce_last_sentence = sentence
+        _announce_last_at = now
+        _announce_last_error = None
+
+    _ANNOUNCE_CACHE.mkdir(parents=True, exist_ok=True)
+    key = hashlib.sha1(sentence.encode("utf-8")).hexdigest()[:16]
+    out_path = _ANNOUNCE_CACHE / f"ann_{key}.mp3"
+
+    def run() -> None:
+        global _announce_last_error
+        try:
+            if not out_path.exists():
+                AudioGenerator.generate(sentence, out_path)
+            player = AudioPlayer()
+            if not player.is_supported:
+                msg = "No audio player on robot (e.g. install mpg123)."
+                _announce_last_error = msg
+                log.warning(msg)
+                return
+            player.play(out_path)
+        except AudioGeneratorError as exc:
+            _announce_last_error = str(exc)
+            log.warning("vision announce TTS: %s", exc)
+        except Exception as exc:
+            _announce_last_error = str(exc)
+            log.exception("vision announce")
+
+    threading.Thread(target=run, daemon=True, name="vision-announce").start()
+    return {"ok": True, "queued": True, "sentence": sentence}
+
+
+def announce_error_snapshot() -> Dict[str, Any]:
+    with _announce_lock:
+        err = _announce_last_error
+    return {"error": err}

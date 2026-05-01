@@ -241,6 +241,40 @@ class LinkClient {
             post("$baseUrl/v1/vision/stop", bearer, "{}")
         }
 
+    /** Queue face enrollment on the Jetson (same 8-sample flow as Sirena UI). */
+    suspend fun visionEnroll(
+        baseUrl: String,
+        bearer: String?,
+        name: String,
+        targetSamples: Int = 8,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/vision/enroll",
+                bearer,
+                JSONObject()
+                    .put("name", name)
+                    .put("target_samples", targetSamples)
+                    .toString(),
+            )
+        }
+
+    suspend fun visionEnrollStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/enroll/status")
+        }
+
+    /** gTTS + play on robot for current object labels (matches desktop “Play objects”). */
+    suspend fun visionAnnounce(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/vision/announce", bearer, "{}")
+        }
+
+    suspend fun visionAnnounceStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/announce/status")
+        }
+
     suspend fun sessionClaim(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
             post("$baseUrl/v1/session/claim", bearer, "{}")

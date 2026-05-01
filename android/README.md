@@ -28,4 +28,8 @@ gradle wrapper --gradle-version 8.7
 - `app/src/main/java/com/sirena/nina/companion/` — UI, `CompanionViewModel`, `LinkClient`
 - `app/src/main/java/.../data/Prefs.kt` — DataStore for URL and bearer token
 
+## Shareable APK (sideload)
+
+After **Build → Build APK(s)** (release): outputs go to `app/build/outputs/apk/release/app-release.apk`. Release builds use the **debug signing config** so you can install on any device without a Play Console key (internal use only). Scripts: [`scripts/build-companion-apk.ps1`](../scripts/build-companion-apk.ps1) / [`scripts/build-companion-apk.sh`](../scripts/build-companion-apk.sh) if `gradlew` exists.
+
 See also [`docs/COMPANION_APP.md`](../docs/COMPANION_APP.md).

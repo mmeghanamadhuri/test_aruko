@@ -591,6 +591,40 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             e.message
         }
 
+    suspend fun visionEnroll(name: String, targetSamples: Int = 8): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionEnroll(url, bearer, name, targetSamples)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchVisionEnrollStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.visionEnrollStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun visionAnnounceObjects(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionAnnounce(url, bearer)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchVisionAnnounceStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.visionAnnounceStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
     fun sessionClaim(onResult: (String?) -> Unit) {
         viewModelScope.launch {
             try {

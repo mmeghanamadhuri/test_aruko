@@ -228,6 +228,30 @@ The companion **MainActivity** is locked to **landscape** (`sensorLandscape` in 
 - **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`./.venv-link/bin/pip install -r requirements-link.txt`** (includes `pyserial`) or activate first, then **`pip install -r requirements-link.txt`** — then **`sudo systemctl restart nina-link`**.
 - **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
+## Jetson: one-shot companion install (robot side)
+
+From the **repo root on the Jetson** (single script — runs the full nina-link installer, then adds the **HTTP bridge** drop-in, restarts the service, optionally opens **UFW 8787**, and prints URL hints):
+
+```bash
+chmod +x scripts/install-sirena-companion-jetson.sh
+./scripts/install-sirena-companion-jetson.sh
+```
+
+Equivalent manual steps: `./scripts/install-nina-link-jetson.sh --all` then `./scripts/update-nina-link-jetson.sh --install-dropin --restart --verify` (same pieces as the recommended Jetson install section at the top of this doc).
+
+## Android: build a shareable APK
+
+1. Open the **`android/`** folder in **Android Studio** (JDK 17). Let Gradle create the wrapper on first sync if needed.
+2. **Build → Build Bundle(s) / APK(s) → Build APK(s)** (choose **release** if prompted; release is configured to use the **debug keystore** for sideloading — fine for internal sharing, not for Play Store).
+3. Android Studio shows the path to **`app-release.apk`** (typically `android/app/build/outputs/apk/release/app-release.apk`).
+
+If the Gradle **`gradlew`** scripts exist in **`android/`**, from repo root:
+
+- **Windows:** `powershell -File scripts/build-companion-apk.ps1`
+- **Linux/macOS:** `chmod +x scripts/build-companion-apk.sh && ./scripts/build-companion-apk.sh`
+
+Share the **`.apk`** file; on each device allow **Install unknown apps** for the browser / Files app used to open it.
+
 ## REST API (summary)
 
 - `GET /health` — liveness.

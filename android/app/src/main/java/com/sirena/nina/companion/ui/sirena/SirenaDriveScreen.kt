@@ -30,7 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import com.sirena.nina.companion.ui.theme.SirenaSwitch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -114,7 +114,7 @@ fun SirenaDriveScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Camera preview", style = MaterialTheme.typography.bodyMedium)
-            Switch(
+            SirenaSwitch(
                 checked = cameraPreviewOn,
                 onCheckedChange = { cameraPreviewOn = it },
                 enabled = visionOn && streamRoot.isNotBlank(),
@@ -141,7 +141,7 @@ fun SirenaDriveScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = autonomyOn, onCheckedChange = { autonomyOn = it }, enabled = bridgeOn)
+            SirenaSwitch(checked = autonomyOn, onCheckedChange = { autonomyOn = it }, enabled = bridgeOn)
         }
 
         if (!bridgeOn) {

@@ -17,6 +17,8 @@ android {
 
     buildTypes {
         release {
+            // Installable shareable APK without managing a release keystore (internal / sideload only).
+            signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),

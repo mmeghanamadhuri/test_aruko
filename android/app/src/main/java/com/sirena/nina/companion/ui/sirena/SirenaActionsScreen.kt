@@ -26,7 +26,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
+import com.sirena.nina.companion.ui.theme.SirenaSwitch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -432,7 +432,7 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = registerInManifest, onCheckedChange = { registerInManifest = it })
+            SirenaSwitch(checked = registerInManifest, onCheckedChange = { registerInManifest = it })
         }
         Row(
             Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -447,7 +447,7 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Switch(checked = holdAfter, onCheckedChange = { holdAfter = it })
+            SirenaSwitch(checked = holdAfter, onCheckedChange = { holdAfter = it })
         }
         Button(
             onClick = {
