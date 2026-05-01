@@ -323,22 +323,28 @@ class OnScreenKeyboardManager(QObject):
     def _configure_onboard_window_mode(self) -> None:
         """One-shot gsettings tweak so onboard renders above the kiosk.
 
-        Sets `org.onboard.window force-to-top=true` so onboard claims
-        `_NET_WM_STATE_ABOVE` and the WM keeps it above the kiosk
-        window. We deliberately leave `docking-enabled` alone here:
-        an earlier iteration set it to true (so onboard reserved a
-        bottom-of-screen strut), but that turned out to switch
-        onboard from "floating window dismissed by its X button"
-        into "persistent dock that auto-hides on focus-out" - and
-        Qt apps don't reliably emit the AT-SPI focus events onboard's
-        auto-show needs, so the keyboard came up the first time and
-        was then permanently invisible (process alive, just hidden).
-        Plain force-to-top + floating window means each spawn pops
-        a fresh visible keyboard, dismissal cleanly exits the
-        process, and the next FocusIn re-spawns it.
+        Two writes:
 
-        Best-effort: if gsettings is missing (no GNOME stack) or the
-        schema isn't installed (different OSK binary, partial
+        - `org.onboard.window force-to-top = true`
+            Onboard claims `_NET_WM_STATE_ABOVE` so the WM keeps it
+            above the kiosk window.
+
+        - `org.onboard.window docking-enabled = false`
+            Force-clear the dock flag. We don't want it set, but a
+            previous version of this file (commit 408f1e0) DID set
+            it true, and dconf is persistent - upgrading past that
+            commit doesn't undo the bad value, the keyboard ends up
+            in dock+auto-hide mode and stays invisible. Writing
+            false here lets a `git pull` actually fix the issue.
+            Dock+auto-hide breaks because Qt apps don't reliably
+            emit the AT-SPI focus events onboard's auto-show needs,
+            so the dock stays alive but hidden after the first use.
+            Plain floating-window mode means each spawn pops a
+            fresh visible keyboard, dismissal cleanly exits the
+            process, and the next FocusIn re-spawns it.
+
+        Best-effort: if gsettings is missing (no GNOME stack) or
+        the schema isn't installed (different OSK binary, partial
         install), we log once and carry on. onboard will still come
         up - the kiosk's manual-sized non-fullscreen window already
         lets ABOVE-state windows stack above it.
@@ -358,14 +364,18 @@ class OnScreenKeyboardManager(QObject):
         if shutil.which("gsettings") is None:
             log.info(
                 "OSK: gsettings not on PATH - skipping onboard window-mode "
-                "config. The keyboard may render below the kiosk window; "
-                "install glib2.0-bin (provides gsettings) to enable the "
-                "force-to-top auto-config."
+                "config. The keyboard may render below the kiosk window or "
+                "stay invisible if a prior session left docking-enabled=true "
+                "in dconf. Install glib2.0-bin (provides gsettings) to enable "
+                "the force-to-top + dock-clear auto-config."
             )
             return
 
         tweaks = (
             ("org.onboard.window", "force-to-top", "true"),
+            # docking-enabled MUST be false - see docstring for why.
+            # This is a remediation write, not a feature toggle.
+            ("org.onboard.window", "docking-enabled", "false"),
         )
         for schema, key, value in tweaks:
             try:

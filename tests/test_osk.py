@@ -543,14 +543,19 @@ def test_spawn_health_check_with_live_process_does_nothing(
 # ---------------------------------------------------------------------
 
 
-def test_first_spawn_runs_gsettings_force_to_top(
+def test_first_spawn_runs_gsettings_force_to_top_and_clears_docking(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
-    """First onboard launch must apply the force-to-top gsettings
-    BEFORE the Popen so onboard reads the new value at startup.
-    This is what stops the keyboard from being buried under the
-    kiosk window. We deliberately do NOT touch `docking-enabled`
-    (see _configure_onboard_window_mode for why)."""
+    """First onboard launch must apply two gsettings writes BEFORE
+    the Popen so onboard reads the new values at startup:
+
+    - force-to-top=true so onboard claims _NET_WM_STATE_ABOVE and
+      stacks above the kiosk window.
+    - docking-enabled=false to undo a value a previous version of
+      this code (408f1e0) wrote to the user's dconf. dconf is
+      persistent so removing the WRITE alone wouldn't undo the
+      stuck state - we have to explicitly write false to remediate.
+    """
     make_osk(mode="always")
 
     set_calls = [
@@ -559,16 +564,21 @@ def test_first_spawn_runs_gsettings_force_to_top(
     ]
     keys_seen = {(call[2], call[3], call[4]) for call in set_calls}
     assert ("org.onboard.window", "force-to-top", "true") in keys_seen
+    assert ("org.onboard.window", "docking-enabled", "false") in keys_seen
 
-    # docking-enabled must NOT be touched: setting it true puts onboard
-    # into a persistent-dock auto-hide mode that needs AT-SPI focus
-    # events Qt doesn't emit, and the keyboard would only appear once.
-    docking_keys = {call for call in set_calls if call[3] == "docking-enabled"}
-    assert not docking_keys, (
-        f"docking-enabled must not be configured by us; got {docking_keys}"
+    # docking-enabled must explicitly be false, NEVER true.
+    docking_true = {
+        call for call in set_calls
+        if call[2] == "org.onboard.window"
+        and call[3] == "docking-enabled"
+        and call[4] == "true"
+    }
+    assert not docking_true, (
+        f"docking-enabled=true would put onboard into auto-hide mode "
+        f"and break the keyboard after first use; got {docking_true}"
     )
 
-    # And onboard itself was launched after the gsettings call.
+    # And onboard itself was launched after the gsettings calls.
     assert len(fake_subprocess.instances) == 1
 
 
