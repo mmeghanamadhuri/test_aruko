@@ -41,6 +41,16 @@ Optional OpenCV for vision streaming in the same venv:
 ./scripts/update-nina-link-jetson.sh --vision --restart
 ```
 
+Full **Sirena-style** deps for **`nina-link`** (gTTS, OpenCV, Ultralytics, Pillow, optional lidar/SLAM packages) **without PyQt5** — avoids Jetson **`pip install PyQt5`** failures (`qmake` / sipbuild). Do **not** run **`pip install -r sirena_ui/requirements.txt`** into `.venv-link` on Jetson; use:
+
+```bash
+./scripts/update-nina-link-jetson.sh --sirena-headless --restart
+# or manually:
+# ./.venv-link/bin/pip install -r sirena_ui/requirements-headless.txt
+```
+
+The desktop Sirena UI still wants **`sudo apt install python3-pyqt5 python3-pyqt5.qtsvg`** for Qt.
+
 Run `./scripts/update-nina-link-jetson.sh --help` for all flags.
 
 Smaller installs (no systemd / no apt): `./scripts/install-nina-link-jetson.sh --smoke` or add `--with-systemd` / `--install-system-deps` as needed. **`--no-systemd`** skips the unit when combined with **`--all`** (e.g. dev laptop).

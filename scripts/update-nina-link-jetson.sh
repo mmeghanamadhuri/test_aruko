@@ -9,6 +9,7 @@
 #   ./scripts/update-nina-link-jetson.sh
 #   ./scripts/update-nina-link-jetson.sh --pull --restart --verify
 #   ./scripts/update-nina-link-jetson.sh --vision
+#   ./scripts/update-nina-link-jetson.sh --sirena-headless   # OpenCV+gTTS+YOLO+sensors; no PyQt5 (Jetson-safe)
 #   ./scripts/update-nina-link-jetson.sh --install-dropin   # sudo: writes bridges.conf
 #
 # See docs/COMPANION_APP.md for env vars and companion features.
@@ -32,6 +33,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --pull) DO_PULL=1; shift ;;
         --vision) DO_VISION=1; shift ;;
+        --sirena-headless) DO_SIRENA_HEADLESS=1; shift ;;
         --restart) DO_RESTART=1; shift ;;
         --verify) DO_VERIFY=1; shift ;;
         --install-dropin) INSTALL_DROPIN=1; shift ;;
@@ -108,6 +110,22 @@ if [[ "${DO_VISION}" -eq 1 ]]; then
         ok "opencv + numpy in ${VENV_PATH}"
     else
         bad "vision pip install failed"
+        exit 1
+    fi
+fi
+
+HEADLESS_REQ="${REPO_ROOT}/sirena_ui/requirements-headless.txt"
+if [[ "${DO_SIRENA_HEADLESS}" -eq 1 ]]; then
+    if [[ ! -f "${HEADLESS_REQ}" ]]; then
+        bad "Missing ${HEADLESS_REQ}"
+        exit 1
+    fi
+    say "sirena_ui stack without PyQt5 (gTTS, OpenCV, ultralytics, optional sensors)"
+    warn "On Jetson: if ultralytics/torch fails, install NVIDIA PyTorch first, then pip install --no-deps ultralytics"
+    if "${PIP}" install -r "${HEADLESS_REQ}"; then
+        ok "requirements-headless.txt"
+    else
+        bad "pip install sirena_ui/requirements-headless.txt failed — see file header / torch wheels"
         exit 1
     fi
 fi

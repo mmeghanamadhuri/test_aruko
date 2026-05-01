@@ -3,7 +3,11 @@
 # Recommended on Jetson Nano: install via apt (no compile, fastest):
 #     sudo apt install -y python3-pyqt5 python3-pyqt5.qtsvg
 #
-# Pip alternative (if running inside a venv):
+# nina-link `.venv-link` / headless services: do NOT pip install this file on
+# Jetson — PyQt5 wheels often build from source and require qmake/Qt dev deps.
+# Use `requirements-headless.txt` instead (same stack minus PyQt5).
+#
+# Pip alternative (if running inside a venv on x86 / full Qt toolchain):
 PyQt5>=5.15
 Pillow>=8.0
 
@@ -40,7 +44,7 @@ ultralytics>=8.0.0
 # remains.
 #
 # Lidar (SLAMTEC RPLIDAR A1M8) - USB serial:
-rplidar>=0.9.5
+rplidar>=0.9.1
 # 2D occupancy-grid SLAM (CoreSLAM port; no ROS dep, runs on Nano):
 breezyslam>=0.5.0
 # I2C for the Sharp GP2Y0E02B IR cliff sensor:

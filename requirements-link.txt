@@ -11,9 +11,11 @@ pydantic>=2.0
 # Dynamixel / action & record bridges (build_app → DynamixelManager)
 pyserial>=3.5
 
-# Optional (Jetson): vision bridge imports sirena_ui + OpenCV. Install in the same venv:
+# Optional (Jetson): vision + gTTS + YOLO + same stack as Sirena (without PyQt5):
+#   pip install -r sirena_ui/requirements-headless.txt
+# Smaller vision-only shortcut:
 #   pip install opencv-python-headless 'numpy>=1.19'
-# For YOLO object detection, also install sirena_ui / requirements-vision.txt as on the robot.
+# For YOLO on Jetson you may need the correct PyTorch wheel before ultralytics — see that file's header.
 #
 # Optional: companion POST /v1/actions/audio/generate (gTTS) on the Jetson:
 #   pip install gTTS
