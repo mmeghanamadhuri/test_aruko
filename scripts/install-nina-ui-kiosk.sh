@@ -96,6 +96,29 @@ EOF
     echo "[INSTALL] wrote ${APPORT_USER_OVERRIDE} to suppress apport pop-ups on the kiosk"
 fi
 
+# Touchscreen on-screen keyboard. The Nina ships with a 10.1"
+# capacitive touch panel and no physical keyboard, so the GUI needs
+# to summon a virtual keyboard whenever a text field gets focus
+# (Settings > Wi-Fi password, Actions > rename recording, etc.).
+# `onboard` is Ubuntu's standard OSK and the one sirena_ui spawns
+# by default. It's a small package (~3 MB); install if missing.
+# Skipped on non-Debian-derivative distros - the operator can still
+# set NINA_UI_OSK_BIN to whatever OSK they have.
+if command -v apt-get >/dev/null 2>&1; then
+    if ! command -v onboard >/dev/null 2>&1; then
+        echo "[INSTALL] installing on-screen keyboard (onboard)..."
+        if sudo apt-get install -y onboard >/dev/null 2>&1; then
+            echo "[INSTALL]   onboard installed"
+        else
+            echo "[WARN] could not install onboard automatically; touchscreen text" >&2
+            echo "[WARN]   entry will not pop up a keyboard until you run:" >&2
+            echo "[WARN]      sudo apt install onboard" >&2
+            echo "[WARN]   (or set NINA_UI_OSK=off on the kiosk service to silence" >&2
+            echo "[WARN]   the warning if you have a physical keyboard plugged in)" >&2
+        fi
+    fi
+fi
+
 # loginctl enable-linger so the user systemd manager keeps running
 # across reboots even if no one logs in. Required for kiosk.
 # Best-effort - some restricted images don't allow this and the user

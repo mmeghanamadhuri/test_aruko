@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QApplication
 from sirena_ui.main_window import MainWindow
 from sirena_ui.styles import STYLESHEET, asset_path
 from sirena_ui.workers.nina_service import NinaService
+from sirena_ui.workers.osk import OnScreenKeyboardManager
 
 
 def main() -> int:
@@ -21,6 +22,15 @@ def main() -> int:
     app.setOrganizationName("Sirena Technologies")
     app.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
     app.setStyleSheet(STYLESHEET)
+
+    # Touchscreen on-screen keyboard. Pops up `onboard` (or whatever
+    # NINA_UI_OSK_BIN is set to) the first time a text-input widget
+    # gets focus. Silently disabled on dev hosts that don't have a
+    # touchscreen OSK installed - see workers/osk.py for the env-var
+    # surface (NINA_UI_OSK=auto|always|off, NINA_UI_OSK_BIN,
+    # NINA_UI_OSK_ARGS). Kept on `app` so it isn't garbage-collected
+    # when main() returns.
+    app._osk = OnScreenKeyboardManager(app)  # type: ignore[attr-defined]
 
     service = NinaService()
     window = MainWindow(service)

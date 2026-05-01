@@ -324,6 +324,38 @@ the Pi.
 | `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi                            |
 | `NINA_BRIDGE_BAUD` (on the Pi) | `115200`           | Pi-side baud                                       |
 | `NINA_BRIDGE_WATCHDOG_SEC` (on the Pi) | `1.5`      | Stop wheels if Jetson goes silent while moving     |
+| `NINA_UI_OSK`                  | `auto`             | Touchscreen on-screen keyboard. `auto` = pop up on focus when the OSK binary is on PATH; `always` = launch at startup; `off` = disable entirely. |
+| `NINA_UI_OSK_BIN`              | `onboard`          | OSK binary to launch (`florence`, `matchbox-keyboard`, etc. all work). |
+| `NINA_UI_OSK_ARGS`             | (empty)            | Shell-style extra args, e.g. `--theme=Nightshade --not-show-in-launcher`. |
+
+#### Touchscreen on-screen keyboard
+
+The Nina ships with a 10.1" capacitive touchscreen and no physical
+keyboard, so the GUI auto-launches `onboard` (Ubuntu's standard OSK)
+the first time a text field gets focus — Wi-Fi password entry on the
+Settings screen, recording-rename dialogs, action editor text fields,
+etc. The kiosk installer runs `apt-get install -y onboard` for you;
+if you skipped that step you can install it manually:
+
+```bash
+sudo apt install -y onboard
+```
+
+Behaviour you can rely on:
+
+- The keyboard pops up the **first** time any text-input widget gains
+  focus. If the operator dismisses it via its X button, the **next**
+  text-field focus re-spawns it.
+- Buttons / D-pad / sliders never summon the keyboard — only
+  `QLineEdit`, `QTextEdit`, `QPlainTextEdit`, `QSpinBox`, and
+  *editable* `QComboBox` widgets do.
+- Onboard's docking position, theme, and layout are configured
+  through onboard's own preferences pane (right-click its window →
+  **Preferences**). `NINA_UI_OSK_ARGS` lets you preset a theme via
+  `--theme=Nightshade` or similar at launch.
+- On dev hosts (Mac, headless CI) the binary isn't found, so the
+  manager silently disables itself with a one-time warning in the
+  log — the GUI still comes up cleanly.
 
 The local-mode `nav-test-direction` and `nav-test-pin` CLI commands
 refuse to run in remote mode — they probe Jetson GPIOs, which the Pi

@@ -267,6 +267,10 @@ reference if you hit anything weird.
       without a login,
     * sets `NINA_UI_FULLSCREEN=1`, `NINA_NAV_MODE=remote`,
       `NINA_NAV_REMOTE_PORT=/dev/ttyTHS1`, `NINA_NAV_INVERT_LEFT=1`,
+    * `apt-get install -y onboard` for the touchscreen on-screen
+      keyboard (Settings password fields, recording renames, etc. all
+      auto-pop the OSK on focus — see `NINA_UI_OSK*` env vars in
+      `sirena_ui/docs/NINA_APP.md` for tuning),
     * `systemctl --user enable --now`s the unit, so the GUI is on
       the panel within a few seconds of running it.
 
