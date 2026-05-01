@@ -219,11 +219,15 @@ class LinkClient {
         client.newCall(req).execute().use { resp ->
             val body = resp.body?.string().orEmpty()
             if (!resp.isSuccessful) {
-                val hint = try {
-                    JSONObject(body).toString()
-                } catch (_: Exception) {
-                    body.ifBlank { resp.message }
-                }
+                val hint =
+                    try {
+                        val j = JSONObject(body)
+                        j.optString("detail").takeIf { it.isNotBlank() }
+                            ?: j.optString("message").takeIf { it.isNotBlank() }
+                            ?: j.toString()
+                    } catch (_: Exception) {
+                        body.ifBlank { resp.message }
+                    }
                 throw LinkApiException(resp.code, hint)
             }
             return if (body.isBlank()) JSONObject() else JSONObject(body)

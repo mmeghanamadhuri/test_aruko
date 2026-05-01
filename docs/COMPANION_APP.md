@@ -165,6 +165,7 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 - **`{"detail":"Not Found"}` on `/v1/robot/...`**: Check spelling — the path is **`/v1/robot/capabilities`** (not `capabilites`).
 - **`503`** on **`POST /v1/actions/play`**: Action bridge off in the running process — set `NINA_LINK_ENABLE_ACTION_BRIDGE=1` in systemd and **`sudo systemctl restart nina-link`**.
 - **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`source .venv-link/bin/activate`** then **`pip install -r requirements-link.txt`** (includes `pyserial`) and restart **`nina-link`**.
+- **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
 ## REST API (summary)
 

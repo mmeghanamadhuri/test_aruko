@@ -26,6 +26,41 @@ from nina.link_daemon.state import LinkCoordinator, UserMode
 log = logging.getLogger("nina.link_daemon.api")
 
 
+def _bus_init_http_exception(exc: BaseException) -> HTTPException:
+    """Map Dynamixel / ``build_app`` failures to JSON ``detail`` (companion + curl)."""
+    if isinstance(exc, ModuleNotFoundError):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"Missing Python module: {exc}. On the Jetson: "
+                "source .venv-link/bin/activate && pip install -r requirements-link.txt "
+                "&& sudo systemctl restart nina-link"
+            ),
+        )
+    if isinstance(exc, RuntimeError):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc).strip() or repr(exc),
+        )
+    if isinstance(exc, PermissionError):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Permission denied (serial/dialout?): {exc}",
+        )
+    if isinstance(exc, OSError):
+        return HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                f"{type(exc).__name__}: {exc} — serial port may be busy; "
+                "close Sirena UI or any other app using the Dynamixel bus, then retry."
+            ),
+        )
+    return HTTPException(
+        status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=(str(exc).strip() or type(exc).__name__),
+    )
+
+
 def _client_ip(request: Request) -> str:
     xff = request.headers.get("x-forwarded-for")
     if xff:
@@ -409,7 +444,11 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                     "(stop Sirena UI / other bus users first)."
                 ),
             )
-        return actions_bridge.play_named_action(body.action)
+        try:
+            return actions_bridge.play_named_action(body.action)
+        except Exception as exc:
+            log.warning("POST /v1/actions/play init failed: %s", exc, exc_info=True)
+            raise _bus_init_http_exception(exc) from exc
 
     @app.get("/v1/actions/recordings")
     def list_recordings_http() -> Dict[str, Any]:
