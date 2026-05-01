@@ -8,10 +8,13 @@ From the repo root on the Jetson (after `git clone` / copy):
 
 ```bash
 chmod +x scripts/install-nina-link-jetson.sh
-./scripts/install-nina-link-jetson.sh --smoke
+# If venv fails with "ensurepip is not available", install OS packages first:
+./scripts/install-nina-link-jetson.sh --install-system-deps --smoke
 # Optional: register systemd (needs sudo)
 sudo ./scripts/install-nina-link-jetson.sh --with-systemd
 ```
+
+On stock Ubuntu/Jetson images you may need **`python3-venv`** once: either `sudo apt install python3-venv` or use **`--install-system-deps`** (runs `apt` for `python3.X-venv`, `python3-venv`, `pip`, `curl`).
 
 This creates **`.venv-link`**, installs **`requirements-link.txt`**, verifies imports, checks **`nmcli`/NetworkManager**, and with **`--smoke`** briefly runs the daemon and curls **`/health`**.
 

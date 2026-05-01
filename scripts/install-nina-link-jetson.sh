@@ -7,22 +7,26 @@
 #   ./scripts/install-nina-link-jetson.sh
 #
 # Options:
-#   --with-systemd    Install and enable systemd unit (needs sudo; paths from repo)
-#   --smoke           After install, briefly run daemon and curl /health (needs curl)
-#   --venv PATH       Virtualenv directory (default: <repo>/.venv-link)
+#   --install-system-deps   sudo apt install python3-venv, pip, curl (Ubuntu/Debian Jetson)
+#   --with-systemd          Install and enable systemd unit (needs sudo; paths from repo)
+#   --smoke                 After install, briefly run daemon and curl /health (needs curl)
+#   --venv PATH             Virtualenv directory (default: <repo>/.venv-link)
 #
-# This script does NOT install distro packages without asking when possible:
-# it prints what's missing (python3-venv, nmcli, etc.) and exits non-zero.
+# If venv creation fails with "ensurepip is not available", run:
+#   sudo apt install python3-venv
+# or re-run with --install-system-deps
 # -----------------------------------------------------------------------------
 
 set -u
 
 WITH_SYSTEMD=0
 SMOKE=0
+INSTALL_SYSTEM_DEPS=0
 VENV_PATH=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --install-system-deps) INSTALL_SYSTEM_DEPS=1; shift ;;
         --with-systemd) WITH_SYSTEMD=1; shift ;;
         --smoke)        SMOKE=1; shift ;;
         --venv)
@@ -99,13 +103,67 @@ fi
 # ---------------------------------------------------------------------------
 say "3. Virtualenv + pip packages"
 
+_sudo_apt() {
+    local -a cmd=(sudo)
+    if [[ "$(id -u)" -eq 0 ]]; then
+        cmd=()
+    fi
+    if [[ "${#cmd[@]}" -gt 0 ]] && ! command -v sudo >/dev/null 2>&1; then
+        bad "Need sudo or root to install packages"
+        return 1
+    fi
+    "${cmd[@]}" "$@"
+}
+
+if [[ "${INSTALL_SYSTEM_DEPS}" -eq 1 ]]; then
+    say "  Installing distro packages (apt)"
+    _sudo_apt apt-get update -qq || { bad "apt-get update failed"; exit 1; }
+    PY_MINOR="$(python3 -c 'import sys; print(sys.version_info[1])' 2>/dev/null || echo 10)"
+    # python3.10-venv provides ensurepip on Ubuntu/Jetson images without full python3-venv metapackage
+    _sudo_apt apt-get install -y \
+        "python3.${PY_MINOR}-venv" \
+        python3-venv \
+        python3-pip \
+        curl \
+        || { bad "apt-get install failed"; exit 1; }
+    ok "python3-venv, pip, curl (apt)"
+fi
+
+# Remove broken half-created venv from a previous failed run
+if [[ -d "${VENV_PATH}" ]] && [[ ! -x "${VENV_PATH}/bin/python" ]]; then
+    warn "Removing incomplete venv: ${VENV_PATH}"
+    rm -rf "${VENV_PATH}"
+fi
+
+_venv_ready() {
+    python3 -c "import ensurepip" >/dev/null 2>&1
+}
+
+if ! _venv_ready; then
+    if [[ "${INSTALL_SYSTEM_DEPS}" -eq 1 ]]; then
+        bad "ensurepip still unavailable after apt — try: sudo apt install python3-venv"
+        exit 1
+    fi
+    bad "ensurepip not available (python3-venv missing on Ubuntu/Debian)"
+    echo ""
+    echo "  Fix one of:"
+    echo "    sudo apt install python3-venv"
+    echo "    ./scripts/install-nina-link-jetson.sh --install-system-deps --smoke"
+    echo ""
+    exit 1
+fi
+
 if [[ ! -d "${VENV_PATH}" ]]; then
     if ! python3 -m venv --help >/dev/null 2>&1; then
-        bad "python3-venv not available — install: sudo apt install python3-venv"
+        bad "python3 -m venv failed — install python3-venv (see above)"
         exit 1
     fi
     say "  Creating venv: ${VENV_PATH}"
-    python3 -m venv "${VENV_PATH}" || { bad "venv creation failed"; exit 1; }
+    if ! python3 -m venv "${VENV_PATH}"; then
+        bad "venv creation failed"
+        rm -rf "${VENV_PATH}"
+        exit 1
+    fi
     ok "Virtualenv created"
 else
     ok "Using existing venv: ${VENV_PATH}"
