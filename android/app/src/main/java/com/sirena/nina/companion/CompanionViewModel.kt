@@ -110,19 +110,31 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private suspend fun buildCandidateUrls(): List<String> {
         val ordered = LinkedHashSet<String>()
+        val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
         val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
-        val gwUrl = gw?.let { Prefs.normalizeBaseUrl("http://$gw:8787") }
-        val saved = prefs.baseUrl.first()
+        val gwUrl = gw?.let { Prefs.normalizeBaseUrl("http://$it:8787") }
 
-        if (gwUrl != null && DaemonUrlResolver.isLikelyJetsonApGateway(gw)) {
+        // 1) Gateway from route table (Jetson), never this tablet's address
+        if (gwUrl != null && gw != null && !gw.equals(myIp, ignoreCase = true)) {
             ordered.add(gwUrl)
         }
-        ordered.add(saved)
-        if (gwUrl != null && !DaemonUrlResolver.isLikelyJetsonApGateway(gw)) {
-            ordered.add(gwUrl)
+
+        // 2) NM / tether subnet heuristics when routes are empty or misleading
+        DaemonUrlResolver.heuristicGatewayForDeviceIp(myIp)?.let { hint ->
+            ordered.add(Prefs.normalizeBaseUrl("http://$hint:8787"))
         }
+
+        // 3) Saved URL unless it mistakenly targets this device
+        val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
+        val savedHost = Uri.parse(savedNorm).host
+        if (!savedHost.isNullOrBlank() && !savedHost.equals(myIp, ignoreCase = true)) {
+            ordered.add(savedNorm)
+        }
+
+        // 4) Common Jetson / hotspot gateways
         ordered.add(Prefs.normalizeBaseUrl("http://10.42.0.1:8787"))
         ordered.add(Prefs.normalizeBaseUrl("http://192.168.4.1:8787"))
+
         return ordered.toList()
     }
 

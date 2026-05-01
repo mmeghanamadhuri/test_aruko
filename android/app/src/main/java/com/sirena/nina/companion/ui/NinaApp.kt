@@ -117,7 +117,7 @@ fun NinaApp(vm: CompanionViewModel) {
             when (tab) {
                 0 -> HomeTab(state, vm, snack)
                 1 -> NetworksTab(state, vm)
-                2 -> DriveTab(vm)
+                2 -> DriveTab(state, vm)
                 3 -> SetupTab(vm, snack)
             }
         }
@@ -352,14 +352,22 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
 }
 
 @Composable
-private fun DriveTab(vm: CompanionViewModel) {
+private fun DriveTab(state: CompanionUiState, vm: CompanionViewModel) {
     var capsJson by remember { mutableStateOf<String?>(null) }
     var capsErr by remember { mutableStateOf<String?>(null) }
-    LaunchedEffect(Unit) {
+    val daemonUrl = (state as? CompanionUiState.Ready)?.url
+    LaunchedEffect(daemonUrl) {
+        if (daemonUrl.isNullOrBlank()) {
+            capsJson = null
+            capsErr = null
+            return@LaunchedEffect
+        }
         try {
             capsJson = vm.loadRobotCapabilities().toString(2)
+            capsErr = null
         } catch (e: Exception) {
             capsErr = e.message
+            capsJson = null
         }
     }
     Column(

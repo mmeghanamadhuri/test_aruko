@@ -20,7 +20,7 @@ gradle wrapper --gradle-version 8.7
 ## Defaults
 
 - **minSdk 26**, **compileSdk 34**
-- Default Jetson URL: `http://192.168.4.1:8787` (common hotspot gateway; change in **Setup** if your Jetson uses another address).
+- Default Jetson URL: `http://10.42.0.1:8787` (NetworkManager hotspot on Jetson; use **Setup** if your gateway differs, e.g. `192.168.4.1` on some tether-style subnets).
 - Cleartext HTTP is allowed for local robot communication (`network_security_config`).
 
 ## Project layout

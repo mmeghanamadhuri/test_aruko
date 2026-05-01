@@ -39,7 +39,8 @@ class Prefs(private val context: Context) {
     }
 
     companion object {
-        const val DEFAULT_BASE_URL = "http://192.168.4.1:8787"
+        /** NM `wifi hotspot` on Jetson typically uses 10.42.x.x with gateway 10.42.0.1. */
+        const val DEFAULT_BASE_URL = "http://10.42.0.1:8787"
 
         /**
          * Jetson URL must include a scheme and must not start with `/` (OkHttp treats that as a bad host).

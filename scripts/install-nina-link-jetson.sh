@@ -348,7 +348,7 @@ say "Done."
 
 cat <<EOF
 
-  Companion app on hotspot (typical): http://192.168.4.1:8787
+  Companion app on hotspot (NetworkManager / Jetson typical): http://10.42.0.1:8787
 
   Manual foreground run (no systemd):
     export PYTHONPATH=${REPO_ROOT}
