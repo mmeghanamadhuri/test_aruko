@@ -69,6 +69,10 @@ class LinkDaemonConfig:
     wifi_ready_poll_sec: float = 2.0
     #: Retries for `nmcli device wifi hotspot` after disconnect (transient NM races).
     hotspot_attempts: int = 5
+    #: When True, POST /v1/robot/drive may command BLDC hardware (conflicts with desktop UI if both run).
+    enable_robot_bridge: bool = False
+    robot_drive_speed_percent: int = 35
+    robot_drive_default_duration_ms: int = 280
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -101,6 +105,13 @@ def load_config() -> LinkDaemonConfig:
             _env_float("NINA_LINK_WIFI_READY_POLL", 2.0),
         ),
         hotspot_attempts=max(1, _env_int("NINA_LINK_HOTSPOT_ATTEMPTS", 5)),
+        enable_robot_bridge=_env_bool("NINA_LINK_ENABLE_ROBOT_BRIDGE", False),
+        robot_drive_speed_percent=max(
+            5, min(100, _env_int("NINA_LINK_DRIVE_SPEED_PERCENT", 35))
+        ),
+        robot_drive_default_duration_ms=max(
+            50, min(5000, _env_int("NINA_LINK_DRIVE_DURATION_MS", 280))
+        ),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

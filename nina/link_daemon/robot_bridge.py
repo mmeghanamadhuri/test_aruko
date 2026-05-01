@@ -1,0 +1,89 @@
+"""Optional BLDC control from nina-link HTTP (same NavigationManager as desktop UI).
+
+Enable with ``NINA_LINK_ENABLE_ROBOT_BRIDGE=1``. Do not run Sirena UI Drive screen
+simultaneously — both compete for GPIO / the navigation manager.
+
+Momentary moves run on a worker thread so FastAPI returns immediately.
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+log = logging.getLogger("nina.link_daemon.robot_bridge")
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+
+_motion_lock = threading.Lock()
+_nav = None  # lazy NavigationManager
+
+
+def _navigation():
+    global _nav
+    if _nav is None:
+        from nina.config.settings import load_settings
+        from nina.controllers.navigation_factory import build_navigation_manager
+
+        settings = load_settings(_REPO_ROOT)
+        nm = build_navigation_manager(settings.navigation)
+        nm.initialize()
+        _nav = nm
+        log.info("Robot bridge: NavigationManager ready")
+    return _nav
+
+
+def momentary_drive(
+    *,
+    direction: str,
+    duration_ms: int,
+    speed_percent: int,
+) -> Dict[str, Any]:
+    valid = frozenset({"forward", "back", "left", "right", "stop"})
+    if direction not in valid:
+        return {"ok": False, "error": f"invalid direction {direction!r}"}
+
+    duration_ms = max(50, min(5000, int(duration_ms)))
+    speed_percent = max(5, min(100, int(speed_percent)))
+    d_sec = duration_ms / 1000.0
+
+    def run() -> None:
+        try:
+            nav = _navigation()
+            with _motion_lock:
+                if direction == "stop":
+                    nav.stop()
+                    return
+                if direction == "forward":
+                    nav.forward(speed_percent=speed_percent)
+                    time.sleep(d_sec)
+                    nav.stop()
+                elif direction == "back":
+                    nav.backward(speed_percent=speed_percent)
+                    time.sleep(d_sec)
+                    nav.stop()
+                elif direction == "left":
+                    nav.turn_left(speed_percent=speed_percent, duration=d_sec)
+                elif direction == "right":
+                    nav.turn_right(speed_percent=speed_percent, duration=d_sec)
+        except Exception:
+            log.exception("momentary_drive %s", direction)
+
+    threading.Thread(target=run, daemon=True, name=f"nina-drive-{direction}").start()
+    return {"ok": True, "queued": True, "direction": direction, "duration_ms": duration_ms}
+
+
+def emergency_stop() -> Dict[str, Any]:
+    def run() -> None:
+        try:
+            nav = _navigation()
+            with _motion_lock:
+                nav.emergency_stop()
+        except Exception:
+            log.exception("emergency_stop")
+
+    threading.Thread(target=run, daemon=True, name="nina-estop").start()
+    return {"ok": True, "queued": True}

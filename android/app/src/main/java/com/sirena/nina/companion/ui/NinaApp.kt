@@ -120,7 +120,7 @@ fun NinaApp(vm: CompanionViewModel) {
                     onOpenNinaConsole = { showNinaConsole = true },
                     onOpenCarbotPlaceholder = {
                         scope.launch {
-                            snack.showSnackbar("Carbot / BLDC bridge — coming soon.")
+                            snack.showSnackbar("Carbot motor bridge — coming soon.")
                         }
                     },
                     onOpenSystemSetup = { tab = 2 },
@@ -174,7 +174,7 @@ private fun HomeTab(
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Choose a control surface. Nina opens the same feature areas as Sirena UI on the robot.",
+                "Choose a control surface. Nina opens the same feature areas as the robot touchscreen UI.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -186,7 +186,7 @@ private fun HomeTab(
             ) {
                 DashboardCard(
                     title = "Carbot",
-                    subtitle = "Mobility / BLDC bridge (Pi)",
+                    subtitle = "Mobility / motor bridge (Pi)",
                     placeholderLabel = "Carbot",
                     modifier = Modifier.weight(1f),
                     onClick = onOpenCarbotPlaceholder,
@@ -481,7 +481,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         item {
             Text("Provisioning", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             Text(
-                "Save home Wi‑Fi on the Jetson and switch modes — same as Sirena Settings → Network flows.",
+                "Save home Wi‑Fi on the Jetson and switch modes — same flows as on-robot Network settings.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

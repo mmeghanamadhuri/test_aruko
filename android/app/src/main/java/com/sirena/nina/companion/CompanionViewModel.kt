@@ -68,7 +68,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 val (url, statusUi) = resolveAndFetchStatus()
                 val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
-                _gatewayHint.value = gw?.let { "Wi‑Fi gateway (Jetson): http://$it:8787" }
+                val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
+                _gatewayHint.value = buildDiscoveryHint(myIp, gw)
                 _state.value = CompanionUiState.Ready(url, statusUi, null)
             } catch (e: LinkApiException) {
                 _state.update {
@@ -108,34 +109,60 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         throw lastError ?: IllegalStateException("Could not reach Nina Link.")
     }
 
+    private fun buildDiscoveryHint(myIp: String?, gw: String?): String {
+        return when {
+            DaemonUrlResolver.isTypicalHomeLanClient(myIp) ->
+                "Home Wi‑Fi: the default gateway (${gw ?: "router"}) is usually not the Jetson. " +
+                    "Under Setup, set Daemon URL to the robot's address (same subnet as this tablet, " +
+                    "e.g. http://192.168.1.x:8787), then Save & test."
+            gw != null ->
+                "Wi‑Fi gateway: http://$gw:8787 (use Setup if that is your router, not the robot)."
+            else ->
+                "Open Setup and enter the Jetson link-daemon URL if discovery fails."
+        }
+    }
+
     private suspend fun buildCandidateUrls(): List<String> {
-        val ordered = LinkedHashSet<String>()
         val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
         val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
-        val gwUrl = gw?.let { Prefs.normalizeBaseUrl("http://$it:8787") }
-
-        // 1) Gateway from route table (Jetson), never this tablet's address
-        if (gwUrl != null && gw != null && !gw.equals(myIp, ignoreCase = true)) {
-            ordered.add(gwUrl)
-        }
-
-        // 2) NM / tether subnet heuristics when routes are empty or misleading
-        DaemonUrlResolver.heuristicGatewayForDeviceIp(myIp)?.let { hint ->
-            ordered.add(Prefs.normalizeBaseUrl("http://$hint:8787"))
-        }
-
-        // 3) Saved URL unless it mistakenly targets this device
         val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
-        val savedHost = Uri.parse(savedNorm).host
-        if (!savedHost.isNullOrBlank() && !savedHost.equals(myIp, ignoreCase = true)) {
-            ordered.add(savedNorm)
+        val hotspot = DaemonUrlResolver.isNinaHotspotClient(myIp)
+        val homeLan = DaemonUrlResolver.isTypicalHomeLanClient(myIp)
+
+        val candidates = mutableListOf<String>()
+
+        fun offer(raw: String) {
+            val n = Prefs.normalizeBaseUrl(raw)
+            val host = Uri.parse(n).host ?: return
+            if (host.equals(myIp, ignoreCase = true)) return
+            if (n !in candidates) candidates.add(n)
         }
 
-        // 4) Common Jetson / hotspot gateways
-        ordered.add(Prefs.normalizeBaseUrl("http://10.42.0.1:8787"))
-        ordered.add(Prefs.normalizeBaseUrl("http://192.168.4.1:8787"))
+        // On home/office LAN the DHCP gateway is almost always the router, not the Jetson —
+        // try the saved URL first (operator sets Jetson LAN IP under Setup).
+        if (homeLan) {
+            offer(savedNorm)
+        }
 
-        return ordered.toList()
+        if (gw != null && !gw.equals(myIp, ignoreCase = true)) {
+            offer("http://$gw:8787")
+        }
+
+        if (!homeLan) {
+            offer(savedNorm)
+        }
+
+        DaemonUrlResolver.heuristicGatewayForDeviceIp(myIp)?.let { offer("http://$it:8787") }
+
+        if (hotspot) {
+            offer("http://10.42.0.1:8787")
+            offer("http://192.168.4.1:8787")
+        } else {
+            if (myIp?.startsWith("10.42.") == true) offer("http://10.42.0.1:8787")
+            if (myIp?.startsWith("192.168.4.") == true) offer("http://192.168.4.1:8787")
+        }
+
+        return candidates
     }
 
     private fun assertUrlNotTabletOwnIp(url: String) {
@@ -274,6 +301,19 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun loadRobotCapabilities(): JSONObject {
         val url = prefs.baseUrl.first()
         return client.capabilities(url)
+    }
+
+    /** Momentary drive pulse — requires Jetson `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`. */
+    suspend fun robotDriveMomentary(direction: String, durationMs: Int = 280) {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        client.robotDriveMomentary(url, bearer, direction, durationMs, null)
+    }
+
+    suspend fun robotEmergencyStop() {
+        val url = prefs.baseUrl.first()
+        val bearer = prefs.bearerToken.first()
+        client.robotEmergencyStop(url, bearer)
     }
 
     private fun parseStatus(j: JSONObject): StatusUi {

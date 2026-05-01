@@ -85,6 +85,23 @@ class LinkClient {
         get("$baseUrl/v1/robot/capabilities")
     }
 
+    suspend fun robotDriveMomentary(
+        baseUrl: String,
+        bearer: String?,
+        direction: String,
+        durationMs: Int,
+        speedPercent: Int? = null,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val json = JSONObject().put("direction", direction).put("duration_ms", durationMs)
+        if (speedPercent != null) json.put("speed_percent", speedPercent)
+        post("$baseUrl/v1/robot/drive", bearer, json.toString())
+    }
+
+    suspend fun robotEmergencyStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
+        }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)

@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from nina.link_daemon.config import LinkDaemonConfig
+from nina.link_daemon import robot_bridge
 from nina.link_daemon.nm import NMError
 from nina.link_daemon.state import LinkCoordinator, UserMode
 
@@ -48,6 +49,15 @@ class HomeWifiBody(BaseModel):
 
 class PairBody(BaseModel):
     pin: str = Field(..., min_length=4, max_length=12)
+
+
+class DriveBody(BaseModel):
+    direction: str = Field(
+        ...,
+        description="forward | back | left | right | stop",
+    )
+    duration_ms: int = Field(default=280, ge=50, le=5000)
+    speed_percent: Optional[int] = Field(default=None, ge=5, le=100)
 
 
 def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
@@ -273,8 +283,64 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
     @app.get("/v1/robot/capabilities")
     def capabilities() -> Dict[str, Any]:
         return {
-            "drive": "preview",
-            "message": "Drive commands will attach to NinaService in a future revision.",
+            "drive": "momentary" if cfg.enable_robot_bridge else "disabled",
+            "robot_bridge_enabled": cfg.enable_robot_bridge,
+            "drive_endpoint": "/v1/robot/drive",
+            "default_duration_ms": cfg.robot_drive_default_duration_ms,
+            "default_speed_percent": cfg.robot_drive_speed_percent,
+            "message": (
+                "POST /v1/robot/drive with direction+duration_ms when "
+                "NINA_LINK_ENABLE_ROBOT_BRIDGE=1 on the Jetson."
+                if cfg.enable_robot_bridge
+                else "Enable NINA_LINK_ENABLE_ROBOT_BRIDGE on the Jetson for HTTP drive."
+            ),
         }
+
+    @app.post("/v1/robot/drive")
+    def robot_drive(
+        body: DriveBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1 on the Jetson "
+                    "(do not run desktop Drive at the same time)."
+                ),
+            )
+        direction = body.direction.strip().lower()
+        allowed = frozenset({"forward", "back", "left", "right", "stop"})
+        if direction not in allowed:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail=f"direction must be one of {sorted(allowed)}",
+            )
+        speed = (
+            body.speed_percent
+            if body.speed_percent is not None
+            else cfg.robot_drive_speed_percent
+        )
+        duration_ms = body.duration_ms or cfg.robot_drive_default_duration_ms
+        return robot_bridge.momentary_drive(
+            direction=direction,
+            duration_ms=duration_ms,
+            speed_percent=speed,
+        )
+
+    @app.post("/v1/robot/emergency-stop")
+    def robot_emergency_stop(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled",
+            )
+        return robot_bridge.emergency_stop()
 
     return app

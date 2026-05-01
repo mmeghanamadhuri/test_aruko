@@ -70,6 +70,24 @@ object DaemonUrlResolver {
         return false
     }
 
+    /** Client on NM hotspot (10.42.x) or Android-style tether (192.168.4.x). */
+    fun isNinaHotspotClient(deviceIpv4: String?): Boolean {
+        if (deviceIpv4.isNullOrBlank()) return false
+        return deviceIpv4.startsWith("10.42.") || deviceIpv4.startsWith("192.168.4.")
+    }
+
+    /**
+     * Home/office LAN: router gateway is usually **not** the Jetson — prefer a saved Jetson URL.
+     * Excludes Nina hotspot client subnets.
+     */
+    fun isTypicalHomeLanClient(deviceIpv4: String?): Boolean {
+        if (deviceIpv4.isNullOrBlank()) return false
+        if (deviceIpv4.startsWith("10.42.") || deviceIpv4.startsWith("192.168.4.")) return false
+        return deviceIpv4.startsWith("192.168.") ||
+            deviceIpv4.startsWith("172.") ||
+            (deviceIpv4.startsWith("10.") && !deviceIpv4.startsWith("10.42."))
+    }
+
     /**
      * Prefer the IPv4 default gateway; never return this device's address.
      */

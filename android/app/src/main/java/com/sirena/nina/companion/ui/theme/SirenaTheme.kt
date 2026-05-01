@@ -15,6 +15,9 @@ private val BrandCharcoal = Color(0xFF2C2C2E)
 private val BrandText = Color(0xFF1C1C1E)
 private val BrandMuted = Color(0xFF6E6E73)
 
+/** Bottom status strip background (mirrors sirena_ui StatusBar charcoal). */
+val Charcoal800 = Color(0xFF2C2C2E)
+
 private val LightColors = lightColorScheme(
     primary = BrandRed,
     onPrimary = Color.White,

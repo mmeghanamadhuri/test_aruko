@@ -13,6 +13,10 @@ Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
 Environment=NINA_LINK_WIFI_READY_TIMEOUT=240
 Environment=NINA_LINK_WIFI_READY_POLL=2
 Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
+# Optional: companion HTTP drive (same BLDC stack as desktop UI — do not run both at once)
+# Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
+# Environment=NINA_LINK_DRIVE_SPEED_PERCENT=35
+# Environment=NINA_LINK_DRIVE_DURATION_MS=280
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
 # Optional fleet-wide auth for remote mutation when off trusted AP:
