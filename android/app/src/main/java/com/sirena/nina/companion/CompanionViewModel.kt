@@ -8,6 +8,7 @@ import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.LinkClient
 import com.sirena.nina.companion.data.Prefs
 import com.sirena.nina.companion.network.DaemonUrlResolver
+import com.sirena.nina.companion.network.LanDaemonScanner
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -15,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class StatusUi(
@@ -37,6 +39,14 @@ data class SavedNetUi(
     val nmAutoconnect: Boolean,
 )
 
+/** One row from Jetson `GET /v1/actions` (manifest). */
+data class ActionRowUi(
+    val name: String,
+    val file: String?,
+    val audio: String?,
+    val audioOffsetSec: Double?,
+)
+
 sealed interface CompanionUiState {
     data object Loading : CompanionUiState
     data class Ready(val url: String, val status: StatusUi?, val message: String?) : CompanionUiState
@@ -55,6 +65,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _gatewayHint = MutableStateFlow<String?>(null)
     val gatewayHint: StateFlow<String?> = _gatewayHint.asStateFlow()
+
+    private val _manifestActions = MutableStateFlow<List<ActionRowUi>>(emptyList())
+    val manifestActions: StateFlow<List<ActionRowUi>> = _manifestActions.asStateFlow()
+
+    private val _manifestActionsError = MutableStateFlow<String?>(null)
+    val manifestActionsError: StateFlow<String?> = _manifestActionsError.asStateFlow()
 
     private val _state = MutableStateFlow<CompanionUiState>(CompanionUiState.Loading)
     val state: StateFlow<CompanionUiState> = _state.asStateFlow()
@@ -89,9 +105,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun resolveAndFetchStatus(): Pair<String, StatusUi> {
         val bearer = prefs.bearerToken.first()
-        val candidates = buildCandidateUrls()
+        val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
+        val homeLan = DaemonUrlResolver.isTypicalHomeLanClient(myIp)
         var lastError: Exception? = null
-        for (url in candidates) {
+        val tried = mutableSetOf<String>()
+
+        fun attempt(url: String): Pair<String, StatusUi>? {
             try {
                 assertUrlNotTabletOwnIp(url)
                 client.health(url)
@@ -100,34 +119,56 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 return url to parseStatus(st)
             } catch (e: IllegalArgumentException) {
                 lastError = e
-                continue
+                return null
             } catch (e: Exception) {
                 lastError = e
-                continue
+                return null
             }
         }
+
+        fun tryNormalized(raw: String): Pair<String, StatusUi>? {
+            val n = Prefs.normalizeBaseUrl(raw)
+            if (n in tried) return null
+            tried.add(n)
+            return attempt(n)
+        }
+
+        for (raw in buildCandidateUrls()) {
+            tryNormalized(raw)?.let { return it }
+        }
+
+        // Same Wi‑Fi as the Jetson but saved URL / gateway guesses failed — scan the /24 for :8787.
+        if (homeLan) {
+            for (base in LanDaemonScanner.scanIpv4Subnet(myIp)) {
+                tryNormalized(base)?.let { return it }
+            }
+        }
+
         throw lastError ?: IllegalStateException("Could not reach Nina Link.")
     }
 
     private fun buildDiscoveryHint(myIp: String?, gw: String?): String {
         return when {
             DaemonUrlResolver.isTypicalHomeLanClient(myIp) ->
-                "Home Wi‑Fi: the default gateway (${gw ?: "router"}) is usually not the Jetson. " +
-                    "Under Setup, set Daemon URL to the robot's address (same subnet as this tablet, " +
-                    "e.g. http://192.168.1.x:8787), then Save & test."
+                "Home Wi‑Fi: the router (${gw ?: "gateway"}) is not the robot. " +
+                    "This app tries your saved URL first, then scans this subnet for port 8787. " +
+                    "You can still set the Jetson address manually under Setup."
             gw != null ->
-                "Wi‑Fi gateway: http://$gw:8787 (use Setup if that is your router, not the robot)."
+                "Jetson AP gateway (if any): http://$gw:8787 — home routers are never used as the daemon host."
             else ->
                 "Open Setup and enter the Jetson link-daemon URL if discovery fails."
         }
     }
 
-    private suspend fun buildCandidateUrls(): List<String> {
+    /**
+     * Fast candidates only — no full-subnet scan (scan runs in [resolveAndFetchStatus] on failure).
+     * Never treats the home LAN default gateway as the Jetson (that caused connects to e.g. 192.168.1.1).
+     */
+    private fun buildCandidateUrls(): List<String> {
         val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
         val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
         val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
         val hotspot = DaemonUrlResolver.isNinaHotspotClient(myIp)
-        val homeLan = DaemonUrlResolver.isTypicalHomeLanClient(myIp)
 
         val candidates = mutableListOf<String>()
 
@@ -138,18 +179,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             if (n !in candidates) candidates.add(n)
         }
 
-        // On home/office LAN the DHCP gateway is almost always the router, not the Jetson —
-        // try the saved URL first (operator sets Jetson LAN IP under Setup).
-        if (homeLan) {
-            offer(savedNorm)
-        }
+        offer(savedNorm)
 
-        if (gw != null && !gw.equals(myIp, ignoreCase = true)) {
+        // Only Nina hotspot / USB-tether gateways host nina-link — never a typical home router.
+        if (gw != null &&
+            DaemonUrlResolver.isLikelyJetsonApGateway(gw) &&
+            !gw.equals(myIp, ignoreCase = true)
+        ) {
             offer("http://$gw:8787")
-        }
-
-        if (!homeLan) {
-            offer(savedNorm)
         }
 
         DaemonUrlResolver.heuristicGatewayForDeviceIp(myIp)?.let { offer("http://$it:8787") }
@@ -171,8 +208,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         if (host.equals(my, ignoreCase = true)) {
             throw IllegalArgumentException(
                 "That address ($host) is this tablet, not the Jetson. " +
-                    "Use the Router/Gateway IP from Wi‑Fi details (often ends in .1), " +
-                    "e.g. http://10.42.0.1:8787",
+                    "Enter the robot's LAN IP from your router's client list, or connect via Nina AP " +
+                    "(e.g. http://10.42.0.1:8787).",
             )
         }
     }
@@ -301,6 +338,52 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun loadRobotCapabilities(): JSONObject {
         val url = prefs.baseUrl.first()
         return client.capabilities(url)
+    }
+
+    fun refreshManifestActions() {
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val j = client.listActions(url)
+                val arr = j.optJSONArray("actions") ?: JSONArray()
+                val list = mutableListOf<ActionRowUi>()
+                for (i in 0 until arr.length()) {
+                    val o = arr.getJSONObject(i)
+                    val off =
+                        when {
+                            !o.has("audio_offset") -> null
+                            o.isNull("audio_offset") -> null
+                            else -> o.optDouble("audio_offset").takeUnless { it.isNaN() }
+                        }
+                    list.add(
+                        ActionRowUi(
+                            name = o.optString("name"),
+                            file = o.optString("file").takeIf { it.isNotBlank() },
+                            audio = o.optString("audio").takeIf { it.isNotBlank() },
+                            audioOffsetSec = off,
+                        ),
+                    )
+                }
+                _manifestActions.value = list.sortedBy { it.name.lowercase() }
+                _manifestActionsError.value = null
+            } catch (e: Exception) {
+                _manifestActionsError.value = e.message
+                _manifestActions.value = emptyList()
+            }
+        }
+    }
+
+    fun playManifestAction(name: String) {
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.playAction(url, bearer, name)
+                _manifestActionsError.value = null
+            } catch (e: Exception) {
+                _manifestActionsError.value = e.message ?: "Play failed"
+            }
+        }
     }
 
     /** Momentary drive pulse — requires Jetson `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`. */

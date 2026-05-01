@@ -11,6 +11,8 @@ from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
+from nina.link_daemon import actions_bridge
+from nina.link_daemon import actions_manifest
 from nina.link_daemon.config import LinkDaemonConfig
 from nina.link_daemon import robot_bridge
 from nina.link_daemon.nm import NMError
@@ -58,6 +60,10 @@ class DriveBody(BaseModel):
     )
     duration_ms: int = Field(default=280, ge=50, le=5000)
     speed_percent: Optional[int] = Field(default=None, ge=5, le=100)
+
+
+class PlayActionBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
 
 
 def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
@@ -288,6 +294,10 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "drive_endpoint": "/v1/robot/drive",
             "default_duration_ms": cfg.robot_drive_default_duration_ms,
             "default_speed_percent": cfg.robot_drive_speed_percent,
+            "actions_endpoint": "/v1/actions",
+            "action_play_endpoint": "/v1/actions/play",
+            "action_bridge_enabled": cfg.enable_action_bridge,
+            "manifest_path": str(cfg.actions_manifest_path),
             "message": (
                 "POST /v1/robot/drive with direction+duration_ms when "
                 "NINA_LINK_ENABLE_ROBOT_BRIDGE=1 on the Jetson."
@@ -342,5 +352,28 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 detail="Robot bridge disabled",
             )
         return robot_bridge.emergency_stop()
+
+    @app.get("/v1/actions")
+    def list_actions_http() -> Dict[str, Any]:
+        path = cfg.actions_manifest_path
+        actions = actions_manifest.load_manifest_actions(path)
+        return {"actions": actions, "manifest_path": str(path)}
+
+    @app.post("/v1/actions/play")
+    def play_action_http(
+        body: PlayActionBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_action_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Action bridge disabled — set NINA_LINK_ENABLE_ACTION_BRIDGE=1 on the Jetson "
+                    "(stop Sirena UI / other bus users first)."
+                ),
+            )
+        return actions_bridge.play_named_action(body.action)
 
     return app

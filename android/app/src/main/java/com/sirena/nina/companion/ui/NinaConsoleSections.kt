@@ -6,6 +6,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.sirena.nina.companion.ActionRowUi
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.ui.sirena.SIRENA_SETTINGS_CATEGORIES
@@ -36,6 +38,15 @@ fun NinaConsoleSectionContent(
     var caps by remember { mutableStateOf<JSONObject?>(null) }
     var capsErr by remember { mutableStateOf<String?>(null) }
 
+    val manifestActions by vm.manifestActions.collectAsStateWithLifecycle(emptyList<ActionRowUi>())
+    val manifestErr by vm.manifestActionsError.collectAsStateWithLifecycle(null)
+
+    LaunchedEffect(section, daemonUrl) {
+        if (section == "actions" && !daemonUrl.isNullOrBlank()) {
+            vm.refreshManifestActions()
+        }
+    }
+
     LaunchedEffect(daemonUrl) {
         if (!daemonUrl.isNullOrBlank()) {
             try {
@@ -64,6 +75,10 @@ fun NinaConsoleSectionContent(
             SirenaActionsScreen(
                 selectedTab = actionsSubtab,
                 onTabSelected = onActionsSubtabChange,
+                manifestActions = manifestActions,
+                manifestError = manifestErr,
+                onRefreshManifest = { vm.refreshManifestActions() },
+                onPlayAction = { vm.playManifestAction(it) },
             )
 
         "settings" ->

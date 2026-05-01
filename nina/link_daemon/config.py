@@ -42,6 +42,12 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _default_actions_manifest_path() -> Path:
+    """``nina/actions/manifest.json`` relative to the nina-app repo root."""
+    root = Path(__file__).resolve().parents[2]
+    return root / "nina" / "actions" / "manifest.json"
+
+
 def _env_float(name: str, default: float) -> float:
     raw = os.environ.get(name, "").strip()
     if not raw:
@@ -73,6 +79,10 @@ class LinkDaemonConfig:
     enable_robot_bridge: bool = False
     robot_drive_speed_percent: int = 35
     robot_drive_default_duration_ms: int = 280
+    #: Path to ``manifest.json`` for companion GET /v1/actions (override with ``NINA_ACTIONS_MANIFEST``).
+    actions_manifest_path: Path = field(default_factory=_default_actions_manifest_path)
+    #: When True, POST /v1/actions/play runs Dynamixel playback (do not use while Sirena UI holds the bus).
+    enable_action_bridge: bool = False
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -82,6 +92,7 @@ def load_config() -> LinkDaemonConfig:
     token_raw = os.environ.get("NINA_LINK_TOKEN", "").strip()
     ssid = os.environ.get("NINA_LINK_AP_SSID", "Nina-Setup").strip() or "Nina-Setup"
     pwd = os.environ.get("NINA_LINK_AP_PASSWORD", "ninsetup") or "ninsetup"
+    manifest_raw = os.environ.get("NINA_ACTIONS_MANIFEST", "").strip()
     cfg = LinkDaemonConfig(
         host=os.environ.get("NINA_LINK_HOST", "0.0.0.0").strip() or "0.0.0.0",
         port=_env_int("NINA_LINK_PORT", 8787),
@@ -112,6 +123,10 @@ def load_config() -> LinkDaemonConfig:
         robot_drive_default_duration_ms=max(
             50, min(5000, _env_int("NINA_LINK_DRIVE_DURATION_MS", 280))
         ),
+        actions_manifest_path=(
+            Path(manifest_raw) if manifest_raw else _default_actions_manifest_path()
+        ),
+        enable_action_bridge=_env_bool("NINA_LINK_ENABLE_ACTION_BRIDGE", False),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

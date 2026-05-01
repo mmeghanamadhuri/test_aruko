@@ -102,6 +102,22 @@ class LinkClient {
             post("$baseUrl/v1/robot/emergency-stop", bearer, "{}")
         }
 
+    /** Manifest-backed action list from the Jetson (`nina/actions/manifest.json`). */
+    suspend fun listActions(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/actions")
+        }
+
+    /** Runs a named action on the Jetson when `NINA_LINK_ENABLE_ACTION_BRIDGE=1`. */
+    suspend fun playAction(baseUrl: String, bearer: String?, actionName: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/actions/play",
+                bearer,
+                JSONObject().put("action", actionName).toString(),
+            )
+        }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)
