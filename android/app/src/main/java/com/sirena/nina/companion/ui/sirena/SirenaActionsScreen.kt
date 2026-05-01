@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -130,39 +131,8 @@ fun SirenaActionsScreen(
                 .weight(1f),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Card(
-                Modifier
-                    .weight(0.38f)
-                    .fillMaxHeight(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
-            ) {
-                Column(
-                    Modifier
-                        .fillMaxSize()
-                        .padding(12.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Image(
-                        painter = painterResource(R.drawable.nina_hero),
-                        contentDescription = "Nina",
-                        modifier =
-                            Modifier
-                                .fillMaxWidth()
-                                .weight(1f)
-                                .clip(RoundedCornerShape(10.dp)),
-                        contentScale = ContentScale.Crop,
-                    )
-                    Text("Nina", fontWeight = FontWeight.Bold)
-                    Text(
-                        "Manifest from Jetson GET /v1/actions.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    OutlinedButton(onClick = onRefreshManifest, modifier = Modifier.fillMaxWidth()) {
-                        Text("Refresh list")
-                    }
-                }
+            Box(Modifier.weight(0.38f).fillMaxHeight()) {
+                ActionsHeroCard(onRefreshManifest = onRefreshManifest)
             }
             Column(
                 Modifier
@@ -173,8 +143,10 @@ fun SirenaActionsScreen(
                 when (selectedTab) {
                     0 ->
                         PlaybackTab(
+                            vm = vm,
                             manifestActions = manifestActions,
                             onPlayAction = onPlayAction,
+                            onRefreshManifest = onRefreshManifest,
                         )
 
                     1 -> RecordTabContent(vm = vm, caps = caps)
@@ -193,18 +165,101 @@ fun SirenaActionsScreen(
 }
 
 @Composable
+private fun ActionsHeroCard(onRefreshManifest: () -> Unit) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
+    ) {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.nina_hero),
+                contentDescription = "Nina",
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(4f / 3f)
+                        .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Fit,
+            )
+            Text("Nina", fontWeight = FontWeight.Bold)
+            Text(
+                "Manifest from Jetson GET /v1/actions.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onRefreshManifest, modifier = Modifier.fillMaxWidth()) {
+                Text("Refresh list")
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlaybackTab(
+    vm: CompanionViewModel,
     manifestActions: List<ActionRowUi>,
     onPlayAction: (String) -> Unit,
+    onRefreshManifest: () -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    var pendingDelete by remember { mutableStateOf<String?>(null) }
+    var deleteErr by remember { mutableStateOf<String?>(null) }
+
+    pendingDelete?.let { name ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Remove action") },
+            text = {
+                Text(
+                    "Remove \"$name\" from the Jetson manifest and delete its recording file? " +
+                        "Requires ``NINA_LINK_ENABLE_ACTIONS_STATIC=1`` and auth.",
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        scope.launch {
+                            deleteErr = vm.deleteManifestAction(name, deleteRecording = true, deleteAudio = false)
+                            pendingDelete = null
+                            if (deleteErr == null) {
+                                onRefreshManifest()
+                            }
+                        }
+                    },
+                ) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     Column(Modifier.fillMaxSize()) {
         Text("Playback", fontWeight = FontWeight.SemiBold)
         Text(
-            "Registered motions from the robot manifest. Tap Play to queue on the Jetson (requires action bridge).",
+            "Registered motions from the robot manifest. Play queues motion on the Jetson; Delete removes the manifest entry.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp),
         )
+        deleteErr?.let {
+            Text(
+                it,
+                color = MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
         if (manifestActions.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
@@ -227,7 +282,7 @@ private fun PlaybackTab(
                             Modifier
                                 .fillMaxWidth()
                                 .padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f)) {
@@ -242,8 +297,13 @@ private fun PlaybackTab(
                                     )
                                 }
                             }
-                            Button(onClick = { onPlayAction(row.name) }) {
-                                Text("Play")
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(onClick = { onPlayAction(row.name) }) {
+                                    Text("Play")
+                                }
+                                OutlinedButton(onClick = { pendingDelete = row.name }) {
+                                    Text("Delete")
+                                }
                             }
                         }
                     }
@@ -475,7 +535,6 @@ private fun AudioTabContent(
 
     var audioRel by remember { mutableStateOf<String?>(null) }
     var clipExists by remember { mutableStateOf(false) }
-    var gttsErr by remember { mutableStateOf<String?>(null) }
     var infoLoading by remember { mutableStateOf(false) }
     var infoLine by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf("") }
@@ -491,7 +550,6 @@ private fun AudioTabContent(
             infoLine = "Could not load audio info from nina-link."
             audioRel = null
             clipExists = false
-            gttsErr = null
             return@LaunchedEffect
         }
         audioRel = j.optString("audio_rel").takeIf { it.isNotBlank() }
@@ -503,7 +561,6 @@ private fun AudioTabContent(
             } else {
                 "0"
             }
-        gttsErr = j.optString("gtts_error").takeIf { it.isNotBlank() }
     }
 
     Column(
@@ -616,20 +673,6 @@ private fun AudioTabContent(
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 8.dp),
         )
-        gttsErr?.let {
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.35f)),
-                modifier = Modifier.padding(top = 8.dp),
-            ) {
-                Text(
-                    "gTTS on Jetson: $it",
-                    Modifier.padding(12.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                )
-            }
-        }
-
         OutlinedTextField(
             value = offsetStr,
             onValueChange = { offsetStr = it },
@@ -672,7 +715,7 @@ private fun AudioTabContent(
                 },
                 enabled = staticOn && clipExists && !audioRel.isNullOrBlank(),
             ) {
-                Text("Preview clip")
+                Text("Play clip")
             }
             OutlinedButton(
                 onClick = {

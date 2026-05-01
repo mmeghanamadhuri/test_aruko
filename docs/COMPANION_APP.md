@@ -201,8 +201,10 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 
 ## Tablet: APK flow
 
+The companion **MainActivity** is locked to **landscape** (`sensorLandscape` in the manifest). On cold start it plays **`res/raw/nina_splash.mp4`** full screen, then shows the app. **Jetson link status**, **daemon URL**, and **session log / diagnostics** live under the **Setup** tab (not Home).
+
 1. Join the Jetson **access point** (SSID/password match daemon / Jetson screen).
-2. Open **Nina Companion**. It **auto-tries** the Wi‑Fi **gateway** (Jetson) plus saved/fallback URLs — you usually do **not** need to type an IP. If you use **Setup** manually, use the **Router/Gateway** address from Wi‑Fi details — **never** the tablet’s own IP (e.g. not `10.42.0.153`). Common gateways: **`http://10.42.0.1:8787`** when the tablet has a **`10.42.x.x`** address, or **`http://192.168.4.1:8787`** when the tablet has **`192.168.4.x`**.
+2. Open **Sirena UI**. It **auto-tries** the Wi‑Fi **gateway** (Jetson) plus saved/fallback URLs — you usually do **not** need to type an IP. If you use **Setup** manually, use the **Router/Gateway** address from Wi‑Fi details — **never** the tablet’s own IP (e.g. not `10.42.0.153`). Common gateways: **`http://10.42.0.1:8787`** when the tablet has a **`10.42.x.x`** address, or **`http://192.168.4.1:8787`** when the tablet has **`192.168.4.x`**.
 3. **Save home Wi‑Fi** credentials on the Jetson (sends them to NetworkManager via the daemon).
 4. **Connect Jetson to home Wi‑Fi** (STA), then use **Open Android Wi‑Fi settings** to join the **same** SSID on the tablet. Android does not allow silent Wi‑Fi switching; this step is intentional.
 5. Change the app **Setup** URL to the Jetson’s new LAN address (or mDNS later) and **Save & test connection**.
@@ -217,7 +219,7 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 
 - **Wrong Wi‑Fi password**: Jetson returns an error string; fix credentials and retry.
 - **Tablet on AP, Jetson on home**: Status requests fail — switch the tablet Wi‑Fi first.
-- **401 Unauthorized**: Set `NINA_LINK_TOKEN` on the Jetson and paste the same token under Setup, or **Pair with PIN** (PIN is visible only on localhost status in Sirena Settings → Network on the Jetson).
+- **401 Unauthorized**: Set `NINA_LINK_TOKEN` on the Jetson and paste the same token under Setup, or **Pair** with the PIN (PIN is visible only on localhost status in Sirena Settings → Network on the Jetson).
 
 ### Troubleshooting companion HTTP errors
 

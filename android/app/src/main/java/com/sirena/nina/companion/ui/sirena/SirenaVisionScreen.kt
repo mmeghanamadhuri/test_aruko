@@ -4,12 +4,16 @@ import android.annotation.SuppressLint
 import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -138,33 +142,47 @@ fun SirenaVisionScreen(
                 if (statusMsg.isNotBlank()) {
                     Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(220.dp),
+                // Same MJPEG resolution from Jetson; constrain display size so the frame fits comfortably on tablet.
+                BoxWithConstraints(
+                    Modifier.fillMaxWidth(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    if (pipelineOn && streamRoot.isNotBlank()) {
-                        val streamUrl = "$streamRoot/v1/vision/stream"
-                        val html =
-                            remember(streamUrl) {
-                                "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
-                                    "<body style=\"margin:0;background:#000;\">" +
-                                    "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block\" />" +
-                                    "</body></html>"
-                            }
-                        MjpegWebView(html = html)
-                    } else {
-                        Surface(
-                            Modifier.fillMaxSize(),
-                            shape = RoundedCornerShape(8.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        ) {
-                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Text(
-                                    "Turn on Camera stream",
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                    val maxPreviewHeight = 260.dp
+                    val widthWhenCapped = maxPreviewHeight * (16f / 9f)
+                    val naturalHeight = maxWidth * (9f / 16f)
+                    val previewModifier =
+                        if (naturalHeight <= maxPreviewHeight) {
+                            Modifier
+                                .fillMaxWidth()
+                                .aspectRatio(16f / 9f)
+                        } else {
+                            Modifier
+                                .width(widthWhenCapped)
+                                .height(maxPreviewHeight)
+                        }
+                    Box(previewModifier, contentAlignment = Alignment.Center) {
+                        if (pipelineOn && streamRoot.isNotBlank()) {
+                            val streamUrl = "$streamRoot/v1/vision/stream"
+                            val html =
+                                remember(streamUrl) {
+                                    "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
+                                        "<body style=\"margin:0;background:#000;\">" +
+                                        "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block\" />" +
+                                        "</body></html>"
+                                }
+                            MjpegWebView(html = html)
+                        } else {
+                            Surface(
+                                Modifier.fillMaxSize(),
+                                shape = RoundedCornerShape(8.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Text(
+                                        "Turn on Camera stream",
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
                             }
                         }
                     }
@@ -205,7 +223,7 @@ private fun MjpegWebView(html: String) {
         update = { wv ->
             wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
         },
-        modifier = Modifier.fillMaxWidth().height(220.dp),
+        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
     )
 }
 

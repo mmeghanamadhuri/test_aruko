@@ -1,14 +1,18 @@
 package com.sirena.nina.companion.ui.sirena
 
+import android.annotation.SuppressLint
+import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
@@ -16,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -28,6 +33,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.util.NinaLog
 import kotlinx.coroutines.launch
@@ -45,16 +52,37 @@ import org.json.JSONObject
 
 /**
  * Mirrors [sirena_ui.screens.drive_screen.DriveScreen] —
- * breadcrumb row, camera card (~55%) + control card (~45%), HUD row, speed slider, D-pad, E-stop.
+ * camera preview (MJPEG when vision bridge on), manual BLDC pulses, autonomy UI toggle.
  */
 @Composable
-fun SirenaDriveScreen(vm: CompanionViewModel, caps: JSONObject?) {
+fun SirenaDriveScreen(
+    vm: CompanionViewModel,
+    caps: JSONObject?,
+    daemonUrl: String?,
+) {
     val scope = rememberCoroutineScope()
     var actionErr by remember { mutableStateOf<String?>(null) }
     val bridgeOn = caps?.optBoolean("robot_bridge_enabled") == true
+    val visionOn = caps?.optBoolean("vision_bridge_enabled") == true
     val defaultMs = caps?.optInt("default_duration_ms")?.takeIf { it > 0 } ?: 280
     var speedPct by remember { mutableFloatStateOf(40f) }
     var autonomyOn by remember { mutableStateOf(false) }
+    var cameraPreviewOn by remember { mutableStateOf(false) }
+
+    val streamRoot = daemonUrl?.trimEnd('/') ?: ""
+
+    LaunchedEffect(cameraPreviewOn, visionOn, streamRoot) {
+        if (!cameraPreviewOn || !visionOn || streamRoot.isBlank()) {
+            return@LaunchedEffect
+        }
+        val err = vm.visionOpen()
+        if (err != null) actionErr = err
+    }
+
+    LaunchedEffect(cameraPreviewOn, visionOn) {
+        if (cameraPreviewOn || !visionOn) return@LaunchedEffect
+        vm.visionStop()
+    }
 
     Column(
         Modifier
@@ -72,19 +100,48 @@ fun SirenaDriveScreen(vm: CompanionViewModel, caps: JSONObject?) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
-                        if (autonomyOn) "Autonomous: ON" else "Autonomous: OFF",
-                        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(
                         if (bridgeOn) "BLDC (bridge)" else "BLDC not connected",
                         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
             }
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Camera preview", style = MaterialTheme.typography.bodyMedium)
+            Switch(
+                checked = cameraPreviewOn,
+                onCheckedChange = { cameraPreviewOn = it },
+                enabled = visionOn && streamRoot.isNotBlank(),
+            )
+        }
+        if (!visionOn || streamRoot.isBlank()) {
+            Text(
+                "Enable vision bridge on the Jetson and set a daemon URL for MJPEG preview.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Autonomous", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    "UI only until the Jetson exposes an autonomy API.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Switch(checked = autonomyOn, onCheckedChange = { autonomyOn = it }, enabled = bridgeOn)
         }
 
         if (!bridgeOn) {
@@ -106,21 +163,26 @@ fun SirenaDriveScreen(vm: CompanionViewModel, caps: JSONObject?) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(420.dp),
+                .heightIn(min = 280.dp, max = 520.dp),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            CameraCard(modifier = Modifier.weight(0.55f).fillMaxHeight())
+            CameraCard(
+                modifier =
+                    Modifier
+                        .weight(0.55f)
+                        .fillMaxHeight(),
+                cameraPreviewOn = cameraPreviewOn && visionOn && streamRoot.isNotBlank(),
+                streamRoot = streamRoot,
+            )
             ControlCard(
-                modifier = Modifier.weight(0.45f).fillMaxHeight(),
+                modifier =
+                    Modifier
+                        .weight(0.45f)
+                        .fillMaxHeight(),
                 bridgeOn = bridgeOn,
                 defaultMs = defaultMs,
                 speedPct = speedPct,
                 onSpeedChange = { speedPct = it },
-                autonomyOn = autonomyOn,
-                onAutonomyChange = {
-                    NinaLog.tap("Drive", "autonomy_toggle", if (it) "on" else "off")
-                    autonomyOn = it
-                },
                 onDrive = { dir ->
                     scope.launch {
                         try {
@@ -152,15 +214,23 @@ fun SirenaDriveScreen(vm: CompanionViewModel, caps: JSONObject?) {
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun CameraCard(modifier: Modifier = Modifier) {
+private fun CameraCard(
+    modifier: Modifier = Modifier,
+    cameraPreviewOn: Boolean,
+    streamRoot: String,
+) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Front camera", fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Outlined.TwoWheeler, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Text("Front camera", fontWeight = FontWeight.Bold)
+                }
                 Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
-                        "Preview — camera not connected",
+                        if (cameraPreviewOn) "Live (MJPEG)" else "Preview off",
                         Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                     )
@@ -169,16 +239,32 @@ private fun CameraCard(modifier: Modifier = Modifier) {
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(240.dp),
+                    .aspectRatio(16f / 9f),
                 contentAlignment = Alignment.Center,
             ) {
-                Surface(
-                    Modifier.fillMaxSize(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("Camera viewport", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (cameraPreviewOn && streamRoot.isNotBlank()) {
+                    val streamUrl = "$streamRoot/v1/vision/stream"
+                    val html =
+                        remember(streamUrl) {
+                            "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
+                                "<body style=\"margin:0;background:#000;\">" +
+                                "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block\" />" +
+                                "</body></html>"
+                        }
+                    DriveMjpegWebView(html = html)
+                } else {
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "Turn on Camera preview",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
                     }
                 }
             }
@@ -200,6 +286,25 @@ private fun CameraCard(modifier: Modifier = Modifier) {
     }
 }
 
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun DriveMjpegWebView(html: String) {
+    AndroidView(
+        factory = { context ->
+            WebView(context).apply {
+                settings.javaScriptEnabled = false
+                settings.loadWithOverviewMode = true
+                settings.useWideViewPort = true
+                loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+            }
+        },
+        update = { wv ->
+            wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
+        },
+        modifier = Modifier.fillMaxWidth().aspectRatio(16f / 9f),
+    )
+}
+
 @Composable
 private fun ControlCard(
     modifier: Modifier = Modifier,
@@ -207,25 +312,19 @@ private fun ControlCard(
     defaultMs: Int,
     speedPct: Float,
     onSpeedChange: (Float) -> Unit,
-    autonomyOn: Boolean,
-    onAutonomyChange: (Boolean) -> Unit,
     onDrive: (String) -> Unit,
     onEstop: () -> Unit,
 ) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Manual control", fontWeight = FontWeight.Bold)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                Text("Autonomy", style = MaterialTheme.typography.bodyMedium)
-                Switch(checked = autonomyOn, onCheckedChange = onAutonomyChange, enabled = bridgeOn)
-            }
             Text("Speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Slider(value = speedPct, onValueChange = onSpeedChange, valueRange = 0f..100f, enabled = bridgeOn)
             Text("${speedPct.toInt()}%", style = MaterialTheme.typography.labelSmall)
 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 DrivePadButton("Forward", bridgeOn) { onDrive("forward") }
-                Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                     DrivePadButton("Left", bridgeOn) { onDrive("left") }
                     DrivePadButton("Stop", bridgeOn, PadEmphasis.Stop) { onDrive("stop") }
                     DrivePadButton("Right", bridgeOn) { onDrive("right") }
@@ -233,17 +332,18 @@ private fun ControlCard(
                 DrivePadButton("Back", bridgeOn) { onDrive("back") }
             }
 
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = onEstop,
-                    enabled = bridgeOn,
-                    modifier = Modifier.weight(1f),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                ) {
-                    Icon(Icons.Default.Stop, null, Modifier.size(18.dp))
-                    Spacer(Modifier.size(4.dp))
-                    Text("E-stop")
-                }
+            OutlinedButton(
+                onClick = onEstop,
+                enabled = bridgeOn,
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = 48.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Icon(Icons.Default.Stop, null, Modifier.size(20.dp))
+                Spacer(Modifier.size(8.dp))
+                Text("E-stop")
             }
         }
     }
@@ -270,7 +370,8 @@ private fun DrivePadButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(width = 108.dp, height = 48.dp),
+        modifier =
+            Modifier.size(width = 112.dp, height = 52.dp),
         colors = colors,
     ) {
         Text(label, style = MaterialTheme.typography.labelLarge)

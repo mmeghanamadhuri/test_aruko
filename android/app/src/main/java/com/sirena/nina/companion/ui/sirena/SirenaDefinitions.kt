@@ -48,7 +48,7 @@ val SIRENA_SETTINGS_CATEGORIES: List<SettingsCategory> =
         SettingsCategory("audio", "Audio", "\u266B"),
         SettingsCategory("privacy", "Privacy", "\u26C4"),
         SettingsCategory("autodock", "Autodock", "\u2693"),
-        SettingsCategory("voice", "Voice", "\u2693"),
+        SettingsCategory("voice", "Voice", "\uD83C\uDFA4"),
         SettingsCategory("power", "Power", "\u26A1"),
         SettingsCategory("ota", "OTA", "\u21BB"),
     )

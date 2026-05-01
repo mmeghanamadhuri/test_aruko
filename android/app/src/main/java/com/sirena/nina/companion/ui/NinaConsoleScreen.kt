@@ -8,7 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.DirectionsCar
+import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Home
@@ -188,7 +188,7 @@ fun NinaConsoleScreen(
 private fun navIcon(key: String): ImageVector =
     when (key) {
         "home" -> Icons.Default.Home
-        "drive" -> Icons.Default.DirectionsCar
+        "drive" -> Icons.Outlined.TwoWheeler
         "vision" -> Icons.Default.Visibility
         "map" -> Icons.Default.GridOn
         "actions" -> Icons.Default.Menu

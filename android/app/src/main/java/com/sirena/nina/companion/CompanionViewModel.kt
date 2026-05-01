@@ -31,6 +31,8 @@ data class StatusUi(
     val apSsid: String?,
     val activeStaSsid: String?,
     val activeStaProfile: String?,
+    /** Jetson has issued a session token (fleet / pairing). */
+    val paired: Boolean,
 )
 
 data class SavedNetUi(
@@ -437,6 +439,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             apSsid = j.optCleanString("ap_ssid"),
             activeStaSsid = j.optCleanString("active_sta_ssid"),
             activeStaProfile = j.optCleanString("active_sta_profile"),
+            paired = j.optBoolean("paired"),
         )
     }
 
@@ -461,8 +464,39 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val bearer = prefs.bearerToken.first()
             client.recordStart(url, bearer, name.trim(), seconds, hz, countdown, holdAfter, register)
             null
+        } catch (e: LinkApiException) {
+            normalizeRemoteError(e)
         } catch (e: Exception) {
-            e.message
+            normalizeRemoteError(e)
+        }
+
+    suspend fun deleteManifestAction(
+        actionName: String,
+        deleteRecording: Boolean = true,
+        deleteAudio: Boolean = false,
+    ): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.deleteManifestAction(url, bearer, actionName, deleteRecording, deleteAudio)
+            null
+        } catch (e: LinkApiException) {
+            normalizeRemoteError(e)
+        } catch (e: Exception) {
+            normalizeRemoteError(e)
+        }
+
+    private fun normalizeRemoteError(e: Exception): String =
+        when (e) {
+            is LinkApiException -> friendlyHttp(e)
+            else -> {
+                val m = e.message?.trim()
+                if (m.isNullOrBlank() || m.equals("null", ignoreCase = true)) {
+                    "Request failed (${e.javaClass.simpleName})"
+                } else {
+                    m
+                }
+            }
         }
 
     suspend fun fetchDaemonHealth(): JSONObject? =

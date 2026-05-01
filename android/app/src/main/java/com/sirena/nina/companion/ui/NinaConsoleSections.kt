@@ -50,7 +50,7 @@ fun NinaConsoleSectionContent(
         }
     }
 
-    LaunchedEffect(daemonUrl) {
+    LaunchedEffect(daemonUrl, section) {
         if (!daemonUrl.isNullOrBlank()) {
             try {
                 caps = vm.loadRobotCapabilities()
@@ -59,6 +59,8 @@ fun NinaConsoleSectionContent(
                 capsErr = e.message
                 caps = null
             }
+        } else {
+            caps = null
         }
     }
 
@@ -66,28 +68,19 @@ fun NinaConsoleSectionContent(
         "home" ->
             SirenaHomeScreen(
                 caps = caps,
-                capsErr = capsErr,
-                daemonUrl = daemonUrl,
                 statusUi = statusUi,
                 onNavigate = { key ->
                     NinaLog.tap("SirenaHome", "nav", key)
                     onNavigate(key)
                 },
-                onSessionClaim = {
-                    NinaLog.tap("SirenaHome", "session_claim")
-                    vm.sessionClaim { err ->
-                        err?.let { NinaLog.warn("session_claim", it) }
-                    }
-                },
-                onSessionRelease = {
-                    NinaLog.tap("SirenaHome", "session_release")
-                    vm.sessionRelease { err ->
-                        err?.let { NinaLog.warn("session_release", it) }
-                    }
-                },
             )
 
-        "drive" -> SirenaDriveScreen(vm = vm, caps = caps)
+        "drive" ->
+            SirenaDriveScreen(
+                vm = vm,
+                caps = caps,
+                daemonUrl = daemonUrl,
+            )
         "vision" ->
             SirenaVisionScreen(
                 vm = vm,
@@ -127,6 +120,7 @@ fun NinaConsoleSectionContent(
                     NinaLog.tap("SirenaSettings", "category", key)
                     onSettingsCategoryChange(key)
                 },
+                vm = vm,
                 daemonUrl = daemonUrl,
                 caps = caps,
                 statusUi = readyState?.status,
@@ -142,18 +136,10 @@ fun NinaConsoleSectionContent(
         else ->
             SirenaHomeScreen(
                 caps = caps,
-                capsErr = capsErr,
-                daemonUrl = daemonUrl,
                 statusUi = statusUi,
                 onNavigate = { key ->
                     NinaLog.tap("SirenaHome", "nav", key)
                     onNavigate(key)
-                },
-                onSessionClaim = {
-                    vm.sessionClaim { err -> err?.let { NinaLog.warn("session_claim", it) } }
-                },
-                onSessionRelease = {
-                    vm.sessionRelease { err -> err?.let { NinaLog.warn("session_release", it) } }
                 },
             )
     }

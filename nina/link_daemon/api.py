@@ -16,6 +16,7 @@ from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
 from nina.link_daemon.config import LinkDaemonConfig
 from nina.link_daemon import manifest_audio
+from nina.link_daemon import manifest_delete
 from nina.link_daemon import media_static
 from nina.link_daemon import record_bridge
 from nina.link_daemon import robot_bridge
@@ -142,6 +143,12 @@ class ActionAudioGenerateBody(BaseModel):
     lang: str = Field(default="en", min_length=2, max_length=16)
     tld: str = Field(default="com", min_length=2, max_length=16)
     audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
+
+
+class DeleteManifestActionBody(BaseModel):
+    action: str = Field(..., min_length=1, max_length=160)
+    delete_recording: bool = Field(default=True)
+    delete_audio: bool = Field(default=False)
 
 
 def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
@@ -389,6 +396,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "action_audio_offset_endpoint": "/v1/actions/audio/offset",
             "action_audio_clear_endpoint": "/v1/actions/audio/clear",
             "action_audio_generate_endpoint": "/v1/actions/audio/generate",
+            "action_delete_endpoint": "/v1/actions/delete",
             "manifest_path": str(cfg.actions_manifest_path),
             "session_script_configured": bool(cfg.session_script),
             "message": (
@@ -617,6 +625,31 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             ) from exc
         except ValueError as exc:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    @app.post("/v1/actions/delete")
+    def delete_manifest_action_http(
+        body: DeleteManifestActionBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        _require_actions_static_for_audio_edit()
+        actions_root = cfg.actions_manifest_path.parent
+        try:
+            return manifest_delete.delete_manifest_action(
+                cfg.actions_manifest_path,
+                actions_root,
+                body.action.strip(),
+                delete_recording=body.delete_recording,
+                delete_audio=body.delete_audio,
+            )
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc),
+            ) from exc
 
     @app.get("/v1/vision/status")
     def vision_status_http() -> Dict[str, Any]:

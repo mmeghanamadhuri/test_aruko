@@ -13,7 +13,12 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -37,6 +42,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -54,8 +60,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.sirena.nina.companion.R
@@ -83,7 +89,7 @@ fun NinaApp(vm: CompanionViewModel) {
             TopAppBar(
                 title = {
                     Text(
-                        "Nina Companion",
+                        "Sirena UI",
                         fontWeight = FontWeight.SemiBold,
                     )
                 },
@@ -132,16 +138,13 @@ fun NinaApp(vm: CompanionViewModel) {
         ) {
             when (tab) {
                 0 -> HomeTab(
-                    state = state,
-                    vm = vm,
                     snack = snack,
                     onOpenNinaConsole = { showNinaConsole = true },
                     onOpenCarbotPlaceholder = {
                         scope.launch {
-                            snack.showSnackbar("Carbot motor bridge — coming soon.")
+                            snack.showSnackbar("Carbot — coming soon.")
                         }
                     },
-                    onOpenSystemSetup = { tab = 2 },
                 )
                 1 -> NetworksTab(state = state, vm = vm, snack = snack)
                 2 -> SetupTab(vm = vm, snack = snack)
@@ -168,236 +171,200 @@ fun NinaApp(vm: CompanionViewModel) {
 
 @Composable
 private fun HomeTab(
-    state: CompanionUiState,
-    vm: CompanionViewModel,
     snack: SnackbarHostState,
     onOpenNinaConsole: () -> Unit,
     onOpenCarbotPlaceholder: () -> Unit,
-    onOpenSystemSetup: () -> Unit,
 ) {
-    val gatewayHint by vm.gatewayHint.collectAsStateWithLifecycle(null)
-    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
 
-    LazyColumn(
+    Box(
         Modifier
             .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+            .padding(horizontal = 24.dp, vertical = 20.dp),
+        contentAlignment = Alignment.Center,
     ) {
-        item {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.sirena_technologies_logo_color),
+                contentDescription = null,
+                modifier =
+                    Modifier
+                        .heightIn(max = 112.dp)
+                        .widthIn(max = 280.dp),
+                contentScale = ContentScale.Fit,
+            )
             Text(
-                "Dashboard",
-                style = MaterialTheme.typography.titleLarge,
+                "Sirena UI",
+                style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                "Choose a control surface. Nina opens the same feature areas as the robot touchscreen UI.",
+                "Connection and diagnostics live under Setup.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 16.dp),
             )
+            Spacer(Modifier.height(8.dp))
+            Button(
+                onClick = {
+                    NinaLog.tap("Home", "open_robot_ui")
+                    onOpenNinaConsole()
+                },
+                modifier =
+                    Modifier
+                        .widthIn(min = 220.dp, max = 400.dp)
+                        .fillMaxWidth(0.85f),
+            ) {
+                Text("Nina")
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = {
+                        NinaLog.tap("Home", "carbot_placeholder")
+                        onOpenCarbotPlaceholder()
+                    },
+                ) {
+                    Text("Carbot")
+                }
+                TextButton(
+                    onClick = {
+                        scope.launch { snack.showSnackbar("System — coming soon.") }
+                    },
+                ) {
+                    Text("System")
+                }
+            }
         }
-        item {
+    }
+}
+
+@Composable
+private fun SetupDiagnosticsCard(snack: SnackbarHostState) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val logFile = NinaFileLogger.activeLogFile(ctx)
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Session log", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                DashboardCard(
-                    title = "Carbot",
-                    subtitle = "Mobility / motor bridge (Pi)",
-                    placeholderLabel = "Carbot",
-                    modifier = Modifier.weight(1f),
-                    heroDrawableId = R.drawable.sirena_logo,
-                    onClick = onOpenCarbotPlaceholder,
-                )
-                DashboardCard(
-                    title = "Nina",
-                    subtitle = "Arms, vision, drive, actions",
-                    placeholderLabel = "Nina",
-                    modifier = Modifier.weight(1f),
-                    heroDrawableId = R.drawable.nina_hero,
-                    onClick = onOpenNinaConsole,
-                )
-                DashboardCard(
-                    title = "System",
-                    subtitle = "Wi‑Fi, link, provisioning",
-                    placeholderLabel = "System",
-                    modifier = Modifier.weight(1f),
-                    heroDrawableId = null,
-                    onClick = onOpenSystemSetup,
-                )
-            }
-        }
-        item {
-            gatewayHint?.let { hint ->
-                Text(
-                    hint,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Dashboard", "wifi_settings")
-                        ctx.startActivity(
-                            Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                        scope.launch {
-                            snack.showSnackbar(
-                                "Join the Jetson Wi‑Fi, then return and tap Refresh.",
-                            )
-                        }
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Wi‑Fi settings")
-                }
-                Button(
-                    onClick = {
-                        NinaLog.tap("Dashboard", "refresh_status")
-                        vm.refreshStatus()
-                    },
-                    modifier = Modifier.weight(1f),
-                ) {
-                    Text("Refresh status")
-                }
-            }
-        }
-        when (state) {
-            CompanionUiState.Loading -> item {
-                Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                    CircularProgressIndicator()
-                }
-            }
-            is CompanionUiState.Error -> item {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        (state as CompanionUiState.Error).text,
-                        Modifier.padding(12.dp),
-                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        NinaFileLogger.ACTIVE_LOG_NAME,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium,
+                    )
+                    Text(
+                        "logs/ · app-private storage",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-            }
-            is CompanionUiState.Ready -> {
-                val ready = state as CompanionUiState.Ready
-                val st = ready.status
-                if (st != null && st.wifiRole == "ap") {
-                    item {
-                        Card(
-                            Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            ),
-                        ) {
-                            Text(
-                                "Connected to Nina Link on the robot access point.",
-                                Modifier.padding(16.dp),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
-                            )
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "export_session_log")
+                        if (!logFile.exists()) {
+                            scope.launch {
+                                snack.showSnackbar("No log file yet — use the app, then try again.")
+                            }
+                            return@OutlinedButton
                         }
-                    }
-                }
-                if (st != null) {
-                    item {
-                        Text(
-                            "Daemon: ${ready.url}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        StatusCard(st)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DashboardCard(
-    title: String,
-    subtitle: String,
-    placeholderLabel: String,
-    modifier: Modifier = Modifier,
-    heroDrawableId: Int? = null,
-    onClick: () -> Unit,
-) {
-    Card(
-        onClick = {
-            NinaLog.tap("Dashboard", "card", title)
-            onClick()
-        },
-        modifier = modifier.height(200.dp),
-    ) {
-        Column(
-            Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(72.dp),
-            ) {
-                Box(
-                    Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center,
+                        val uri =
+                            FileProvider.getUriForFile(
+                                ctx,
+                                "${ctx.packageName}.fileprovider",
+                                logFile,
+                            )
+                        val send =
+                            Intent(Intent.ACTION_SEND).apply {
+                                type = "text/plain"
+                                putExtra(Intent.EXTRA_STREAM, uri)
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                clipData = ClipData.newUri(ctx.contentResolver, "Session log", uri)
+                            }
+                        ctx.startActivity(Intent.createChooser(send, "Export session log"))
+                    },
                 ) {
-                    if (heroDrawableId != null) {
-                        Image(
-                            painter = painterResource(heroDrawableId),
-                            contentDescription = title,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(8.dp),
-                            contentScale = ContentScale.Fit,
-                        )
-                    } else {
-                        Text(
-                            placeholderLabel,
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+                    Text("Export")
                 }
             }
-            Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
     }
 }
 
 @Composable
-private fun StatusCard(st: StatusUi) {
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("Jetson link status", fontWeight = FontWeight.SemiBold)
-            Text("Wi‑Fi role: ${st.wifiRole}")
-            Text("IPv4: ${st.ipv4 ?: "—"}")
-            Text("User mode: ${st.userMode}")
-            Text("Boot window: ${st.bootWaitRemainingSec}s")
-            Text("Client seen: ${st.clientSeen}")
-            st.apSsid?.let { Text("AP SSID: $it") }
+private fun StatusGridCard(st: StatusUi) {
+    val rows =
+        buildList {
+            add("Wi‑Fi role" to st.wifiRole)
+            add("IPv4" to (st.ipv4 ?: "—"))
+            add("User mode" to st.userMode)
+            add("Boot window" to "${st.bootWaitRemainingSec}s")
+            add("Client seen" to if (st.clientSeen) "Yes" else "—")
+            st.apSsid?.let { add("AP SSID" to it) }
             if (!st.activeStaSsid.isNullOrBlank()) {
-                Text("Connected (STA): ${st.activeStaSsid}")
-                st.activeStaProfile?.let { Text("NM profile: $it") }
+                add("STA SSID" to st.activeStaSsid!!)
+                st.activeStaProfile?.let { add("NM profile" to it) }
+            }
+        }
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Jetson link", fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            rows.chunked(2).forEach { pair ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    pair.forEach { (label, value) ->
+                        StatusStatCell(label, value, Modifier.weight(1f))
+                    }
+                    if (pair.size == 1) {
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
             }
             st.lastError?.let {
-                Text("Last error: $it", color = MaterialTheme.colorScheme.error)
+                Text(
+                    "Last error: $it",
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun StatusStatCell(label: String, value: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier.padding(vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.Medium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 
@@ -421,7 +388,7 @@ private fun NetworksTab(
         Spacer(Modifier.height(8.dp))
         Text(
             "Connect Jetson asks the robot to join that profile (STA). Then join the same Wi‑Fi on " +
-                "this tablet and tap Refresh on Home.",
+                "this tablet and tap Refresh in Setup.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -462,7 +429,7 @@ private fun NetworksTab(
                                                 scope.launch {
                                                     snack.showSnackbar(
                                                         "Jetson is connecting to “${net.ssid}”. " +
-                                                            "When online, join that Wi‑Fi on this tablet, open the app, tap Refresh.",
+                                                            "When online, join that Wi‑Fi on this tablet, open the app, tap Refresh in Setup.",
                                                     )
                                                 }
                                             },
@@ -486,7 +453,7 @@ private fun NetworksTab(
                     }
                 }
             }
-            else -> Text("Connect to the robot first (Refresh on Home).")
+            else -> Text("Connect to the robot first (Refresh in Setup).")
         }
     }
 }
@@ -496,6 +463,7 @@ private fun NetworksTab(
 private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
+    val gatewayHint by vm.gatewayHint.collectAsStateWithLifecycle(null)
     val state by vm.state.collectAsStateWithLifecycle()
     val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(Prefs.DEFAULT_BASE_URL)
     var urlDraft by remember { mutableStateOf<String?>(null) }
@@ -517,28 +485,17 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         )
     }
 
-    LazyColumn(
-        Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item {
-            Text("Provisioning", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+    val scrollState = rememberScrollState()
+
+    @Composable
+    fun WifiBlock() {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Home Wi‑Fi (Jetson)", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
             Text(
-                "Save home Wi‑Fi on the Jetson and switch modes — same flows as on-robot Network settings.",
+                "Saved on the Jetson (Network settings).",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-        }
-        if (state is CompanionUiState.Ready) {
-            val st = (state as CompanionUiState.Ready).status
-            if (st != null) {
-                item { StatusCard(st) }
-            }
-        }
-        item {
-            Text("Home network (saved on Jetson)", fontWeight = FontWeight.Medium)
             OutlinedTextField(
                 ssid,
                 onValueChange = { ssid = it },
@@ -546,7 +503,6 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            Spacer(Modifier.height(8.dp))
             OutlinedTextField(
                 password,
                 onValueChange = { password = it },
@@ -554,46 +510,59 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = {
-                    NinaLog.tap("Setup", "save_wifi_credentials_only")
-                    vm.saveHomeAndOptionallyConnect(ssid, password, connect = false)
-                },
-                modifier = Modifier.fillMaxWidth(),
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Save credentials on Jetson only")
+                Button(
+                    onClick = {
+                        NinaLog.tap("Setup", "save_wifi_credentials_only")
+                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = false)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save creds")
+                }
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "save_wifi_and_connect_jetson")
+                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = true)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save & connect")
+                }
             }
-            OutlinedButton(
-                onClick = {
-                    NinaLog.tap("Setup", "save_wifi_and_connect_jetson")
-                    vm.saveHomeAndOptionallyConnect(ssid, password, connect = true)
-                },
-                modifier = Modifier.fillMaxWidth(),
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                Text("Save on Jetson & connect Jetson to this SSID")
-            }
-            OutlinedButton(
-                onClick = {
-                    NinaLog.tap("Setup", "connect_jetson_first_saved")
-                    vm.connectJetsonHome(null)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Connect Jetson using first saved profile")
-            }
-            OutlinedButton(
-                onClick = {
-                    NinaLog.tap("Setup", "force_ap_on_jetson")
-                    vm.startApOnJetson()
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) {
-                Text("Force Jetson back to AP mode")
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "connect_jetson_first_saved")
+                        vm.connectJetsonHome(null)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Connect saved")
+                }
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "force_ap_on_jetson")
+                        vm.startApOnJetson()
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Force AP")
+                }
             }
         }
-        item {
-            Text("Daemon URL", fontWeight = FontWeight.Medium)
+    }
+
+    @Composable
+    fun DaemonAuthBlock() {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Daemon URL", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 url,
                 onValueChange = { urlDraft = it },
@@ -602,7 +571,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 singleLine = true,
             )
             Text(
-                "Use the Wi‑Fi gateway (e.g. http://10.42.0.1:8787 on Nina AP). Never this tablet's IP.",
+                "Use Wi‑Fi gateway, not this tablet’s IP.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -614,19 +583,13 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save & test connection")
+                Text("Save & test")
             }
-        }
-        item {
-            Text(
-                "Optional: fleet token or pairing PIN.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            Text("Auth", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
             OutlinedTextField(
                 bearer,
                 onValueChange = { bearer = it },
-                label = { Text("Bearer token") },
+                label = { Text("Bearer (optional)") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -637,14 +600,12 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Save bearer token")
+                Text("Save token")
             }
-        }
-        item {
             OutlinedTextField(
                 pin,
                 onValueChange = { pin = it },
-                label = { Text("Pairing PIN (Jetson Settings → Network)") },
+                label = { Text("Pairing PIN") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
             )
@@ -658,83 +619,209 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) {
-                Text("Pair with PIN")
+                Text("Pair")
             }
         }
-        item {
-            Text("Mode override", fontWeight = FontWeight.Medium)
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(
-                    onClick = {
-                        NinaLog.tap("Setup", "mode", "boot_default")
-                        vm.setMode("boot_default")
-                    },
-                    Modifier.fillMaxWidth(),
-                ) {
-                    Text("boot_default")
-                }
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "mode", "force_ap")
-                        vm.setMode("force_ap")
-                    },
-                    Modifier.fillMaxWidth(),
-                ) {
-                    Text("force_ap (stay on AP)")
-                }
-                OutlinedButton(
-                    onClick = {
-                        NinaLog.tap("Setup", "mode", "force_sta")
-                        vm.setMode("force_sta")
-                    },
-                    Modifier.fillMaxWidth(),
-                ) {
-                    Text("force_sta (use saved Wi‑Fi)")
-                }
-            }
-        }
-        item {
-            Text("Session log (on-device)", fontWeight = FontWeight.Medium)
-            Text(
-                "Taps and API events are appended under app-private storage (no extra permission).",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                NinaFileLogger.activeLogFile(ctx).absolutePath,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(vertical = 4.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(
-                onClick = {
-                    NinaLog.tap("Setup", "export_session_log")
-                    val f = NinaFileLogger.activeLogFile(ctx)
-                    if (!f.exists()) {
-                        scope.launch {
-                            snack.showSnackbar("No log file yet — use the app, then try again.")
-                        }
-                        return@OutlinedButton
-                    }
-                    val uri =
-                        FileProvider.getUriForFile(
-                            ctx,
-                            "${ctx.packageName}.fileprovider",
-                            f,
-                        )
-                    val send =
-                        Intent(Intent.ACTION_SEND).apply {
-                            type = "text/plain"
-                            putExtra(Intent.EXTRA_STREAM, uri)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            clipData = ClipData.newUri(ctx.contentResolver, "Session log", uri)
-                        }
-                    ctx.startActivity(Intent.createChooser(send, "Export session log"))
-                },
-                modifier = Modifier.fillMaxWidth(),
+    }
+
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            Modifier
+                .fillMaxSize()
+                .verticalScroll(scrollState)
+                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .align(Alignment.TopCenter),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Column(
+                Modifier
+                    .widthIn(max = 720.dp)
+                    .fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text("Export / share log file")
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+                ) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Connection", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Wi‑Fi shortcuts and live Jetson status.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            OutlinedButton(
+                                onClick = {
+                                    NinaLog.tap("Setup", "wifi_settings")
+                                    ctx.startActivity(
+                                        Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                                    )
+                                    scope.launch {
+                                        snack.showSnackbar("Join the Jetson Wi‑Fi, then return and tap Refresh.")
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Wi‑Fi")
+                            }
+                            Button(
+                                onClick = {
+                                    NinaLog.tap("Setup", "refresh_status")
+                                    vm.refreshStatus()
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Refresh")
+                            }
+                        }
+                        gatewayHint?.let { hint ->
+                            Text(
+                                hint,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        }
+                    }
+                }
+
+                when (state) {
+                    CompanionUiState.Loading ->
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            CircularProgressIndicator()
+                        }
+
+                    is CompanionUiState.Error ->
+                        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                            Text(
+                                (state as CompanionUiState.Error).text,
+                                Modifier.padding(12.dp),
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+
+                    is CompanionUiState.Ready -> {
+                        val ready = state as CompanionUiState.Ready
+                        val st = ready.status
+                        if (st != null && st.wifiRole == "ap") {
+                            Card(
+                                Modifier.fillMaxWidth(),
+                                colors =
+                                    CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                                    ),
+                            ) {
+                                Text(
+                                    "On robot access point (Nina Link).",
+                                    Modifier.padding(12.dp),
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                        }
+                        if (st != null) {
+                            Text(
+                                "Daemon: ${ready.url}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            StatusGridCard(st)
+                        }
+                    }
+                }
+
+                SetupDiagnosticsCard(snack = snack)
+
+                BoxWithConstraints(Modifier.fillMaxWidth()) {
+                    val split = maxWidth >= 520.dp
+                    if (split) {
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Card(
+                                Modifier.weight(1f),
+                                colors = CardDefaults.cardColors(),
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    WifiBlock()
+                                }
+                            }
+                            Card(
+                                Modifier.weight(1f),
+                                colors = CardDefaults.cardColors(),
+                            ) {
+                                Column(Modifier.padding(12.dp)) {
+                                    DaemonAuthBlock()
+                                }
+                            }
+                        }
+                    } else {
+                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+                            Column(Modifier.padding(12.dp)) {
+                                WifiBlock()
+                            }
+                        }
+                        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+                            Column(Modifier.padding(12.dp)) {
+                                DaemonAuthBlock()
+                            }
+                        }
+                    }
+                }
+
+                Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Boot mode", fontWeight = FontWeight.Medium, style = MaterialTheme.typography.titleSmall)
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Button(
+                                onClick = {
+                                    NinaLog.tap("Setup", "mode", "boot_default")
+                                    vm.setMode("boot_default")
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "Default",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    NinaLog.tap("Setup", "mode", "force_ap")
+                                    vm.setMode("force_ap")
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "AP",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    NinaLog.tap("Setup", "mode", "force_sta")
+                                    vm.setMode("force_sta")
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(
+                                    "STA",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }

@@ -24,7 +24,14 @@ def play_named_action(action_name: str) -> Dict[str, Any]:
     def run() -> None:
         try:
             with bus_lock:
-                ar.run_named_action(name)
+                # Match sirena_ui PlaybackWorker defaults (smooth path, half speed like desktop UI).
+                ar.run_named_action(
+                    name,
+                    smooth=True,
+                    sub_hz=50.0,
+                    max_speed=1023,
+                    speed=0.5,
+                )
         except Exception:
             log.exception("play_named_action %s", name)
 

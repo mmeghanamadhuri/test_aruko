@@ -196,6 +196,23 @@ class LinkClient {
             post("$baseUrl/v1/actions/audio/generate", bearer, body.toString())
         }
 
+    /** Remove manifest entry and optionally delete files (`POST /v1/actions/delete`). */
+    suspend fun deleteManifestAction(
+        baseUrl: String,
+        bearer: String?,
+        action: String,
+        deleteRecording: Boolean = true,
+        deleteAudio: Boolean = false,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("action", action)
+                    .put("delete_recording", deleteRecording)
+                    .put("delete_audio", deleteAudio)
+            post("$baseUrl/v1/actions/delete", bearer, body.toString())
+        }
+
     suspend fun visionStatus(baseUrl: String): JSONObject =
         withContext(Dispatchers.IO) { get("$baseUrl/v1/vision/status") }
 
