@@ -10,6 +10,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.sirena.nina.companion.ActionRowUi
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.util.NinaLog
 import com.sirena.nina.companion.ui.sirena.SIRENA_SETTINGS_CATEGORIES
 import com.sirena.nina.companion.ui.sirena.SirenaActionsScreen
 import com.sirena.nina.companion.ui.sirena.SirenaDriveScreen
@@ -34,7 +35,9 @@ fun NinaConsoleSectionContent(
     onActionsSubtabChange: (Int) -> Unit,
     onSettingsCategoryChange: (String) -> Unit,
 ) {
-    val daemonUrl = (state as? CompanionUiState.Ready)?.url
+    val readyState = state as? CompanionUiState.Ready
+    val daemonUrl = readyState?.url
+    val statusUi = readyState?.status
     var caps by remember { mutableStateOf<JSONObject?>(null) }
     var capsErr by remember { mutableStateOf<String?>(null) }
 
@@ -65,20 +68,53 @@ fun NinaConsoleSectionContent(
                 caps = caps,
                 capsErr = capsErr,
                 daemonUrl = daemonUrl,
-                onNavigate = onNavigate,
+                statusUi = statusUi,
+                onNavigate = { key ->
+                    NinaLog.tap("SirenaHome", "nav", key)
+                    onNavigate(key)
+                },
+                onSessionClaim = {
+                    NinaLog.tap("SirenaHome", "session_claim")
+                    vm.sessionClaim { err ->
+                        err?.let { NinaLog.warn("session_claim", it) }
+                    }
+                },
+                onSessionRelease = {
+                    NinaLog.tap("SirenaHome", "session_release")
+                    vm.sessionRelease { err ->
+                        err?.let { NinaLog.warn("session_release", it) }
+                    }
+                },
             )
 
         "drive" -> SirenaDriveScreen(vm = vm, caps = caps)
-        "vision" -> SirenaVisionScreen()
+        "vision" ->
+            SirenaVisionScreen(
+                vm = vm,
+                daemonUrl = daemonUrl,
+                caps = caps,
+            )
         "map" -> SirenaMapScreen()
         "actions" ->
             SirenaActionsScreen(
                 selectedTab = actionsSubtab,
-                onTabSelected = onActionsSubtabChange,
+                onTabSelected = { idx ->
+                    NinaLog.tap(
+                        "SirenaActions",
+                        "subtab",
+                        listOf("playback", "record", "audio").getOrElse(idx) { "$idx" },
+                    )
+                    onActionsSubtabChange(idx)
+                },
                 manifestActions = manifestActions,
                 manifestError = manifestErr,
-                onRefreshManifest = { vm.refreshManifestActions() },
+                onRefreshManifest = {
+                    NinaLog.tap("SirenaActions", "refresh_manifest")
+                    vm.refreshManifestActions()
+                },
                 onPlayAction = { vm.playManifestAction(it) },
+                vm = vm,
+                caps = caps,
             )
 
         "settings" ->
@@ -87,7 +123,10 @@ fun NinaConsoleSectionContent(
                     settingsCategory.takeIf { key ->
                         SIRENA_SETTINGS_CATEGORIES.any { it.key == key }
                     } ?: "general",
-                onCategorySelected = onSettingsCategoryChange,
+                onCategorySelected = { key ->
+                    NinaLog.tap("SirenaSettings", "category", key)
+                    onSettingsCategoryChange(key)
+                },
             )
 
         "health" -> SirenaHealthScreen()
@@ -96,7 +135,17 @@ fun NinaConsoleSectionContent(
                 caps = caps,
                 capsErr = capsErr,
                 daemonUrl = daemonUrl,
-                onNavigate = onNavigate,
+                statusUi = statusUi,
+                onNavigate = { key ->
+                    NinaLog.tap("SirenaHome", "nav", key)
+                    onNavigate(key)
+                },
+                onSessionClaim = {
+                    vm.sessionClaim { err -> err?.let { NinaLog.warn("session_claim", it) } }
+                },
+                onSessionRelease = {
+                    vm.sessionRelease { err -> err?.let { NinaLog.warn("session_release", it) } }
+                },
             )
     }
 }

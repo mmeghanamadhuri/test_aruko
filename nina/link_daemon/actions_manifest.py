@@ -7,6 +7,28 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 
+def list_recordings_on_disk(manifest_path: Path) -> List[Dict[str, Any]]:
+    """``recordings/*.json`` next to ``manifest.json`` — no Dynamixel access."""
+    rd = manifest_path.parent / "recordings"
+    if not rd.is_dir():
+        return []
+    out: List[Dict[str, Any]] = []
+    for p in sorted(rd.glob("*.json")):
+        try:
+            st = p.stat()
+            out.append(
+                {
+                    "file": f"recordings/{p.name}",
+                    "name": p.stem,
+                    "size_bytes": st.st_size,
+                    "mtime": st.st_mtime,
+                }
+            )
+        except OSError:
+            continue
+    return out
+
+
 def load_manifest_actions(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         return []

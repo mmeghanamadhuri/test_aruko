@@ -9,6 +9,7 @@ import com.sirena.nina.companion.data.LinkClient
 import com.sirena.nina.companion.data.Prefs
 import com.sirena.nina.companion.network.DaemonUrlResolver
 import com.sirena.nina.companion.network.LanDaemonScanner
+import com.sirena.nina.companion.util.NinaLog
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -88,10 +89,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 _gatewayHint.value = buildDiscoveryHint(myIp, gw)
                 _state.value = CompanionUiState.Ready(url, statusUi, null)
             } catch (e: LinkApiException) {
+                NinaLog.warn("refreshStatus", friendlyHttp(e))
                 _state.update {
                     CompanionUiState.Error(friendlyHttp(e))
                 }
             } catch (e: Exception) {
+                NinaLog.warn("refreshStatus", e.message ?: "unknown")
                 _state.value = CompanionUiState.Error(
                     e.message ?: "Could not reach Nina Link daemon. Check Wi‑Fi.",
                 )
@@ -105,12 +108,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      */
     private suspend fun resolveAndFetchStatus(): Pair<String, StatusUi> {
         val bearer = prefs.bearerToken.first()
+        val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
         val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
         val homeLan = DaemonUrlResolver.isTypicalHomeLanClient(myIp)
         var lastError: Exception? = null
         val tried = mutableSetOf<String>()
 
-        fun attempt(url: String): Pair<String, StatusUi>? {
+        suspend fun attempt(url: String): Pair<String, StatusUi>? {
             try {
                 assertUrlNotTabletOwnIp(url)
                 client.health(url)
@@ -126,14 +130,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
 
-        fun tryNormalized(raw: String): Pair<String, StatusUi>? {
+        suspend fun tryNormalized(raw: String): Pair<String, StatusUi>? {
             val n = Prefs.normalizeBaseUrl(raw)
             if (n in tried) return null
             tried.add(n)
             return attempt(n)
         }
 
-        for (raw in buildCandidateUrls()) {
+        for (raw in buildCandidateUrls(savedNorm)) {
             tryNormalized(raw)?.let { return it }
         }
 
@@ -164,10 +168,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
      * Fast candidates only — no full-subnet scan (scan runs in [resolveAndFetchStatus] on failure).
      * Never treats the home LAN default gateway as the Jetson (that caused connects to e.g. 192.168.1.1).
      */
-    private fun buildCandidateUrls(): List<String> {
+    private fun buildCandidateUrls(savedNorm: String): List<String> {
         val myIp = DaemonUrlResolver.deviceIpv4(appCtx)
         val gw = DaemonUrlResolver.gatewayIpv4(appCtx)
-        val savedNorm = Prefs.normalizeBaseUrl(prefs.baseUrl.first())
         val hotspot = DaemonUrlResolver.isNinaHotspotClient(myIp)
 
         val candidates = mutableListOf<String>()
@@ -342,6 +345,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshManifestActions() {
         viewModelScope.launch {
+            NinaLog.api("GET", "/v1/actions")
             try {
                 val url = prefs.baseUrl.first()
                 val j = client.listActions(url)
@@ -366,7 +370,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 _manifestActions.value = list.sortedBy { it.name.lowercase() }
                 _manifestActionsError.value = null
+                NinaLog.api("manifest_actions", "ok count=${list.size}")
             } catch (e: Exception) {
+                NinaLog.warn("manifest_actions", e.message ?: "failed")
                 _manifestActionsError.value = e.message
                 _manifestActions.value = emptyList()
             }
@@ -374,13 +380,16 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun playManifestAction(name: String) {
+        NinaLog.tap("Actions", "play_motion", name)
         viewModelScope.launch {
             try {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
+                NinaLog.api("POST", "/v1/actions/play action=$name")
                 client.playAction(url, bearer, name)
                 _manifestActionsError.value = null
             } catch (e: Exception) {
+                NinaLog.warn("play_action", e.message ?: "failed")
                 _manifestActionsError.value = e.message ?: "Play failed"
             }
         }
@@ -388,12 +397,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Momentary drive pulse — requires Jetson `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`. */
     suspend fun robotDriveMomentary(direction: String, durationMs: Int = 280) {
+        NinaLog.tap("Drive", "momentary", "$direction ${durationMs}ms")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
         client.robotDriveMomentary(url, bearer, direction, durationMs, null)
     }
 
     suspend fun robotEmergencyStop() {
+        NinaLog.tap("Drive", "emergency_stop", "")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
         client.robotEmergencyStop(url, bearer)
@@ -409,24 +420,121 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                     SavedNetUi(
                         o.optString("id"),
                         o.optString("uuid"),
-                        o.optString("ssid"),
+                        o.optCleanString("ssid") ?: "",
                         nmAutoconnect = o.optBoolean("autoconnect", false),
                     ),
                 )
             }
         }
         return StatusUi(
-            wifiRole = j.optString("wifi_role", "—"),
-            ipv4 = j.optString("ipv4").takeIf { it.isNotBlank() },
-            userMode = j.optString("user_mode", "—"),
+            wifiRole = j.optCleanString("wifi_role") ?: "—",
+            ipv4 = j.optCleanString("ipv4"),
+            userMode = j.optCleanString("user_mode") ?: "—",
             bootWaitRemainingSec = j.optInt("boot_wait_remaining_sec"),
             clientSeen = j.optBoolean("client_seen"),
-            lastError = j.optString("last_error").takeIf { it.isNotBlank() },
+            lastError = j.optCleanString("last_error"),
             savedNetworks = saved,
-            apSsid = j.optString("ap_ssid").takeIf { it.isNotBlank() },
-            activeStaSsid = j.optString("active_sta_ssid").takeIf { it.isNotBlank() },
-            activeStaProfile = j.optString("active_sta_profile").takeIf { it.isNotBlank() },
+            apSsid = j.optCleanString("ap_ssid"),
+            activeStaSsid = j.optCleanString("active_sta_ssid"),
+            activeStaProfile = j.optCleanString("active_sta_profile"),
         )
+    }
+
+    suspend fun fetchRecordStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.recordStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun startRemoteRecord(
+        name: String,
+        seconds: Double = 5.0,
+        hz: Double = 20.0,
+        countdown: Double = 3.0,
+        holdAfter: Boolean = false,
+        register: Boolean = true,
+    ): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.recordStart(url, bearer, name.trim(), seconds, hz, countdown, holdAfter, register)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    suspend fun fetchVisionStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.visionStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    fun postVisionOptions(face: Boolean?, objects: Boolean?, objectConfidence: Double? = null) {
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.visionOptions(url, bearer, face, objects, objectConfidence)
+            } catch (e: Exception) {
+                NinaLog.warn("vision_options", e.message ?: "failed")
+            }
+        }
+    }
+
+    suspend fun visionOpen(): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionOpen(url, bearer)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    suspend fun visionStop(): String? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.visionStop(url, bearer)
+            null
+        } catch (e: Exception) {
+            e.message
+        }
+
+    fun sessionClaim(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.sessionClaim(url, bearer)
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message)
+            }
+        }
+    }
+
+    fun sessionRelease(onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val url = prefs.baseUrl.first()
+                val bearer = prefs.bearerToken.first()
+                client.sessionRelease(url, bearer)
+                onResult(null)
+            } catch (e: Exception) {
+                onResult(e.message)
+            }
+        }
+    }
+
+    suspend fun mediaFileUrl(relativePath: String): String {
+        val base = prefs.baseUrl.first().trimEnd('/')
+        val enc = java.net.URLEncoder.encode(relativePath, Charsets.UTF_8.toString())
+        return "$base/v1/media/file?relative=$enc"
     }
 
     private fun friendlyHttp(e: LinkApiException): String =
@@ -435,4 +543,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             e.message ?: "HTTP ${e.code}"
         }
+}
+
+/** JSON string fields: treat blank and literal `"null"` as absent (some intermediaries stringify null). */
+private fun JSONObject.optCleanString(key: String): String? {
+    if (!has(key) || isNull(key)) return null
+    val s = optString(key).trim()
+    if (s.isEmpty() || s.equals("null", ignoreCase = true)) return null
+    return s
 }

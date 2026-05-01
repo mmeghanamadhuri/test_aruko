@@ -1,5 +1,7 @@
 package com.sirena.nina.companion.ui.sirena
 
+import android.media.MediaPlayer
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,23 +14,42 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.ActionRowUi
+import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.R
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * Mirrors [sirena_ui.screens.actions_screen.ActionsScreen] —
@@ -42,6 +63,8 @@ fun SirenaActionsScreen(
     manifestError: String?,
     onRefreshManifest: () -> Unit,
     onPlayAction: (String) -> Unit,
+    vm: CompanionViewModel,
+    caps: JSONObject?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -107,21 +130,31 @@ fun SirenaActionsScreen(
                     .fillMaxHeight(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)),
             ) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                        modifier = Modifier.padding(12.dp),
-                    ) {
-                        Text("Nina", fontWeight = FontWeight.Bold)
-                        Text(
-                            "Actions match ``nina/actions/manifest.json`` on the Jetson via GET /v1/actions.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        OutlinedButton(onClick = onRefreshManifest) {
-                            Text("Refresh list")
-                        }
+                Column(
+                    Modifier
+                        .fillMaxSize()
+                        .padding(12.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    Image(
+                        painter = painterResource(R.drawable.nina_hero),
+                        contentDescription = "Nina",
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(10.dp)),
+                        contentScale = ContentScale.Crop,
+                    )
+                    Text("Nina", fontWeight = FontWeight.Bold)
+                    Text(
+                        "Manifest from Jetson GET /v1/actions.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    OutlinedButton(onClick = onRefreshManifest, modifier = Modifier.fillMaxWidth()) {
+                        Text("Refresh list")
                     }
                 }
             }
@@ -138,11 +171,13 @@ fun SirenaActionsScreen(
                             onPlayAction = onPlayAction,
                         )
 
-                    1 -> RecordTabContent()
+                    1 -> RecordTabContent(vm = vm, caps = caps)
                     2 ->
                         AudioTabContent(
-                            manifestActions.filter { !it.audio.isNullOrBlank() },
-                            onPlayAction,
+                            vm = vm,
+                            caps = caps,
+                            withAudio = manifestActions.filter { !it.audio.isNullOrBlank() },
+                            onPlayAction = onPlayAction,
                         )
                 }
             }
@@ -212,21 +247,113 @@ private fun PlaybackTab(
 }
 
 @Composable
-private fun RecordTabContent() {
+private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
+    val scope = rememberCoroutineScope()
+    var name by remember { mutableStateOf("demo_motion") }
+    var statusLine by remember { mutableStateOf("") }
+    var poll by remember { mutableStateOf(false) }
+    val recordOn = caps?.optBoolean("record_bridge_enabled") == true
+
+    LaunchedEffect(poll) {
+        if (!poll) return@LaunchedEffect
+        while (true) {
+            val j = vm.fetchRecordStatus()
+            if (j == null) {
+                delay(500)
+                continue
+            }
+            val ph = j.optString("phase", "idle")
+            val err = j.optString("error").takeIf { it.isNotBlank() }
+            val extra =
+                buildString {
+                    if (j.has("samples_done") && !j.isNull("samples_done")) {
+                        append(" samples ${j.optInt("samples_done")}")
+                        if (j.has("samples_total") && !j.isNull("samples_total")) {
+                            append("/${j.optInt("samples_total")}")
+                        }
+                    }
+                    if (j.has("countdown_remaining_sec")) {
+                        append(" · countdown ${j.optInt("countdown_remaining_sec")}s")
+                    }
+                }
+            statusLine =
+                when {
+                    err != null -> "Error: $err"
+                    ph == "idle" && j.optString("last_saved").isNotBlank() ->
+                        "Saved: ${j.optString("last_saved")}"
+
+                    else -> "Phase: $ph$extra"
+                }
+            if (ph == "idle") {
+                poll = false
+                vm.refreshManifestActions()
+                break
+            }
+            delay(450)
+        }
+    }
+
     Column(Modifier.verticalScroll(rememberScrollState())) {
         Text("Record", fontWeight = FontWeight.SemiBold)
         Text(
-            "Recording captures poses into ``nina/actions/recordings/`` on the Jetson and updates the manifest. " +
-                "Use the robot's Sirena UI or ``python -m nina.app record-action`` over SSH for now.",
+            "Captures poses into ``nina/actions/recordings/`` on the Jetson and can register the clip in the manifest. " +
+                "Requires ``NINA_LINK_ENABLE_RECORD_BRIDGE=1`` and no other bus owner (stop Sirena motion UI).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp),
         )
-        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))) {
+        if (!recordOn) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))) {
+                Text(
+                    "Record bridge is off on the Jetson — set NINA_LINK_ENABLE_RECORD_BRIDGE=1 and restart nina-link.",
+                    Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+            return@Column
+        }
+        OutlinedTextField(
+            value = name,
+            onValueChange = { name = it },
+            label = { Text("Action name") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions =
+                KeyboardOptions(
+                    capitalization = KeyboardCapitalization.None,
+                ),
+        )
+        Button(
+            onClick = {
+                scope.launch {
+                    statusLine = "Starting…"
+                    val err =
+                        vm.startRemoteRecord(
+                            name = name.trim(),
+                            seconds = 5.0,
+                            hz = 20.0,
+                            countdown = 3.0,
+                            holdAfter = false,
+                            register = true,
+                        )
+                    if (err != null) {
+                        statusLine = err
+                    } else {
+                        poll = true
+                    }
+                }
+            },
+            modifier = Modifier.padding(top = 8.dp),
+            enabled = name.trim().length >= 2,
+        ) {
+            Text("Start recording")
+        }
+        if (statusLine.isNotBlank()) {
             Text(
-                "Companion recording controls can be added once the link daemon exposes record endpoints.",
-                Modifier.padding(16.dp),
+                statusLine,
                 style = MaterialTheme.typography.bodySmall,
+                modifier = Modifier.padding(top = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }
@@ -234,17 +361,32 @@ private fun RecordTabContent() {
 
 @Composable
 private fun AudioTabContent(
+    vm: CompanionViewModel,
+    caps: JSONObject?,
     withAudio: List<ActionRowUi>,
     onPlayAction: (String) -> Unit,
 ) {
+    val scope = rememberCoroutineScope()
+    val staticOn = caps?.optBoolean("actions_static_enabled") == true
+
     Column(Modifier.fillMaxSize()) {
         Text("Audio", fontWeight = FontWeight.SemiBold)
         Text(
-            "Actions with clips under ``nina/actions/audio/``. Playback uses the motion Play button when the bridge is enabled.",
+            "Clips live under ``nina/actions/audio/``. Motion playback runs on the Jetson when you tap Play motion. " +
+                "Preview requires ``NINA_LINK_ENABLE_ACTIONS_STATIC=1``.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 8.dp),
         )
+        if (!staticOn) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))) {
+                Text(
+                    "HTTP audio preview disabled — enable NINA_LINK_ENABLE_ACTIONS_STATIC on the Jetson to stream clips to the tablet.",
+                    Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
+        }
         if (withAudio.isEmpty()) {
             Text(
                 "No audio-linked entries in the manifest.",
@@ -258,21 +400,49 @@ private fun AudioTabContent(
                         Modifier.fillMaxWidth(),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     ) {
-                        Row(
-                            Modifier.padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(row.name, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    row.audio ?: "",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(row.name, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        row.audio ?: "",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Button(onClick = { onPlayAction(row.name) }) {
+                                    Text("Play motion")
+                                }
                             }
-                            Button(onClick = { onPlayAction(row.name) }) {
-                                Text("Play motion")
+                            if (staticOn && !row.audio.isNullOrBlank()) {
+                                OutlinedButton(
+                                    onClick = {
+                                        scope.launch {
+                                            val url = vm.mediaFileUrl(row.audio!!)
+                                            try {
+                                                val mp =
+                                                    withContext(Dispatchers.IO) {
+                                                        MediaPlayer().apply {
+                                                            setDataSource(url)
+                                                            prepare()
+                                                        }
+                                                    }
+                                                withContext(Dispatchers.Main) {
+                                                    mp.start()
+                                                    mp.setOnCompletionListener { it.release() }
+                                                }
+                                            } catch (_: Exception) {
+                                            }
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text("Preview clip on tablet")
+                                }
                             }
                         }
                     }

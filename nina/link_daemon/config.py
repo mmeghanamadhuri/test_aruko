@@ -83,6 +83,14 @@ class LinkDaemonConfig:
     actions_manifest_path: Path = field(default_factory=_default_actions_manifest_path)
     #: When True, POST /v1/actions/play runs Dynamixel playback (do not use while Sirena UI holds the bus).
     enable_action_bridge: bool = False
+    #: When True, POST /v1/actions/record/start queues a recording session (same bus as Sirena UI).
+    enable_record_bridge: bool = False
+    #: When True, GET /v1/vision/stream serves MJPEG (OpenCV + sirena_ui VisionPipeline when available).
+    enable_vision_bridge: bool = False
+    #: When True, GET /v1/media/file serves read-only files under the actions directory (e.g. audio clips).
+    enable_actions_static: bool = False
+    #: Optional script invoked as ``script claim|release`` for kiosk / UI mutual exclusion (must be executable).
+    session_script: Optional[str] = None
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -127,6 +135,12 @@ def load_config() -> LinkDaemonConfig:
             Path(manifest_raw) if manifest_raw else _default_actions_manifest_path()
         ),
         enable_action_bridge=_env_bool("NINA_LINK_ENABLE_ACTION_BRIDGE", False),
+        enable_record_bridge=_env_bool("NINA_LINK_ENABLE_RECORD_BRIDGE", False),
+        enable_vision_bridge=_env_bool("NINA_LINK_ENABLE_VISION_BRIDGE", False),
+        enable_actions_static=_env_bool("NINA_LINK_ENABLE_ACTIONS_STATIC", False),
+        session_script=(
+            os.environ.get("NINA_LINK_SESSION_SCRIPT", "").strip() or None
+        ),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

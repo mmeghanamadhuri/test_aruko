@@ -118,6 +118,72 @@ class LinkClient {
             )
         }
 
+    suspend fun listRecordings(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) { get("$baseUrl/v1/actions/recordings") }
+
+    suspend fun recordStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) { get("$baseUrl/v1/actions/record/status") }
+
+    suspend fun recordStart(
+        baseUrl: String,
+        bearer: String?,
+        name: String,
+        seconds: Double,
+        hz: Double,
+        countdown: Double,
+        holdAfter: Boolean,
+        register: Boolean,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val body =
+                JSONObject()
+                    .put("name", name)
+                    .put("seconds", seconds)
+                    .put("hz", hz)
+                    .put("countdown", countdown)
+                    .put("hold_after", holdAfter)
+                    .put("register", register)
+            post("$baseUrl/v1/actions/record/start", bearer, body.toString())
+        }
+
+    suspend fun visionStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) { get("$baseUrl/v1/vision/status") }
+
+    suspend fun visionOptions(
+        baseUrl: String,
+        bearer: String?,
+        face: Boolean?,
+        objects: Boolean?,
+        objectConfidence: Double?,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            val o = JSONObject()
+            if (face != null) o.put("face", face)
+            if (objects != null) o.put("objects", objects)
+            if (objectConfidence != null) o.put("object_confidence", objectConfidence)
+            post("$baseUrl/v1/vision/options", bearer, o.toString())
+        }
+
+    suspend fun visionOpen(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/vision/open", bearer, "{}")
+        }
+
+    suspend fun visionStop(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/vision/stop", bearer, "{}")
+        }
+
+    suspend fun sessionClaim(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/session/claim", bearer, "{}")
+        }
+
+    suspend fun sessionRelease(baseUrl: String, bearer: String?): JSONObject =
+        withContext(Dispatchers.IO) {
+            post("$baseUrl/v1/session/release", bearer, "{}")
+        }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)

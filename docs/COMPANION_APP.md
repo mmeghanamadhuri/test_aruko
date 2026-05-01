@@ -20,6 +20,29 @@ sudo ./scripts/install-nina-link-jetson.sh --systemd-only
 ./scripts/uninstall-nina-link-jetson.sh --purge
 ```
 
+## Jetson: quick update after `git pull` (recommended)
+
+From the repo root on the robot — refreshes `.venv-link` from `requirements-link.txt`, runs an import check, and optionally restarts systemd + curls `/health`:
+
+```bash
+chmod +x scripts/update-nina-link-jetson.sh
+./scripts/update-nina-link-jetson.sh --pull --restart --verify
+```
+
+First time enabling HTTP bridges via systemd drop-in (editable after install):
+
+```bash
+./scripts/update-nina-link-jetson.sh --install-dropin --restart --verify
+```
+
+Optional OpenCV for vision streaming in the same venv:
+
+```bash
+./scripts/update-nina-link-jetson.sh --vision --restart
+```
+
+Run `./scripts/update-nina-link-jetson.sh --help` for all flags.
+
 Smaller installs (no systemd / no apt): `./scripts/install-nina-link-jetson.sh --smoke` or add `--with-systemd` / `--install-system-deps` as needed. **`--no-systemd`** skips the unit when combined with **`--all`** (e.g. dev laptop).
 
 On stock Ubuntu/Jetson images you may need **`python3-venv`** once: either `sudo apt install python3-venv` or use **`--install-system-deps`** (runs `apt` for `python3.X-venv`, `python3-venv`, `pip`, `curl`).
@@ -52,8 +75,52 @@ Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/co
 | `NINA_LINK_DISABLE_WIFI_AUTOCONNECT` | If `1` (default), saved Wi‑Fi profiles get **autoconnect=no** at boot and new profiles from the app don’t auto-join |
 | `NINA_LINK_TOKEN` | If set, remote clients must send `Authorization: Bearer <token>` for mutating calls (localhost always trusted) |
 | `NINA_LINK_MOCK` | If `1`, simulate Wi-Fi (for laptops without NetworkManager) |
+| `NINA_LINK_ENABLE_ROBOT_BRIDGE` | If `1`, `POST /v1/robot/drive` (do not use desktop Drive at the same time) |
+| `NINA_LINK_ENABLE_ACTION_BRIDGE` | If `1`, `POST /v1/actions/play` (stop Sirena UI / other bus users first) |
+| `NINA_LINK_ENABLE_RECORD_BRIDGE` | If `1`, `POST /v1/actions/record/start` (same serial bus as Sirena UI) |
+| `NINA_LINK_ENABLE_VISION_BRIDGE` | If `1`, `GET /v1/vision/stream` (MJPEG; needs OpenCV + `sirena_ui` vision stack on `PYTHONPATH`) |
+| `NINA_LINK_ENABLE_ACTIONS_STATIC` | If `1`, `GET /v1/media/file?relative=…` for `nina/actions/` files (e.g. audio MP3) |
+| `NINA_LINK_SESSION_SCRIPT` | Optional executable: invoked as `script claim` / `script release` (Jetson UI takeover) |
 
 Systemd example: [`nina/systemd/nina-link.service`](../nina/systemd/nina-link.service).
+
+### Systemd: enable drive / play / record / vision (drop-in)
+
+Prefer a **drop-in** so future `install-nina-link-jetson.sh` runs do not overwrite your flags:
+
+```bash
+sudo mkdir -p /etc/systemd/system/nina-link.service.d
+sudo tee /etc/systemd/system/nina-link.service.d/bridges.conf <<'EOF'
+[Service]
+# HTTP features (see table above). Adjust to your site.
+Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
+Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
+# Optional: path to an executable helper — see scripts/nina-link-session-helper.example.sh
+# Environment=NINA_LINK_SESSION_SCRIPT=/usr/local/bin/nina-link-session-helper
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl restart nina-link
+```
+
+Verify from the Jetson:
+
+```bash
+curl -s http://127.0.0.1:8787/v1/robot/capabilities | head
+curl -s http://127.0.0.1:8787/v1/vision/status | head
+```
+
+Companion toggles (Vision MJPEG, audio preview, recording) read **`capabilities`** from this endpoint.
+
+Optional vision dependencies on top of `requirements-link.txt` (same repo the Jetson uses for Sirena UI):
+
+```bash
+pip install opencv-python-headless 'numpy>=1.19'
+# If object detection is enabled: ultralytics / CUDA stack per sirena_ui/requirements.txt
+```
 
 ### Systemd: service loops with `CHDIR` / `status=200/CHDIR`
 
@@ -103,5 +170,11 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 - `POST /v1/wifi/start-ap` — bring up hotspot.
 - `DELETE /v1/wifi/saved/{id_or_uuid}` — remove saved NM profile.
 - `POST /v1/pair` — `{ "pin" }` → `{ "token" }` for session bearer.
-
-Drive commands remain **preview** until wired to `NinaService`; see `GET /v1/robot/capabilities`.
+- `GET /v1/robot/capabilities` — which bridges are enabled and endpoint paths.
+- `POST /v1/robot/drive` / `POST /v1/robot/emergency-stop` — when `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`.
+- `GET /v1/actions` / `POST /v1/actions/play` — when `NINA_LINK_ENABLE_ACTION_BRIDGE=1`.
+- `GET /v1/actions/recordings` — list `recordings/*.json` (no bus access).
+- `GET /v1/actions/record/status` / `POST /v1/actions/record/start` — when `NINA_LINK_ENABLE_RECORD_BRIDGE=1`.
+- `GET /v1/vision/status` / `GET /v1/vision/stream` (MJPEG) / `POST /v1/vision/options` / `POST /v1/vision/open` / `POST /v1/vision/stop` — when `NINA_LINK_ENABLE_VISION_BRIDGE=1`.
+- `GET /v1/media/file?relative=audio/foo.mp3` — when `NINA_LINK_ENABLE_ACTIONS_STATIC=1` (path must stay under `nina/actions/`).
+- `POST /v1/session/claim` / `POST /v1/session/release` — if `NINA_LINK_SESSION_SCRIPT` is set.

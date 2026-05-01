@@ -35,6 +35,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.util.NinaLog
 import com.sirena.nina.companion.ui.sirena.SIRENA_NAV_ITEMS
 import com.sirena.nina.companion.ui.sirena.SIRENA_SETTINGS_CATEGORIES
 import com.sirena.nina.companion.ui.sirena.SirenaStatusFooter
@@ -56,6 +57,7 @@ fun NinaConsoleScreen(
     var settingsCategory by rememberSaveable { mutableStateOf("general") }
 
     fun navigate(navKey: String) {
+        NinaLog.tap("NinaConsole", "deep_link", navKey)
         val parts = navKey.split(":", limit = 2)
         val screen = parts[0]
         val sub = parts.getOrNull(1)
@@ -112,7 +114,12 @@ fun NinaConsoleScreen(
             TopAppBar(
                 title = { Text(titles[section] ?: "Nina") },
                 navigationIcon = {
-                    IconButton(onClick = onBack) {
+                    IconButton(
+                        onClick = {
+                            NinaLog.tap("NinaConsole", "top_bar", "back")
+                            onBack()
+                        },
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
@@ -146,7 +153,10 @@ fun NinaConsoleScreen(
                     val icon = navIcon(item.key)
                     NavigationRailItem(
                         selected = section == item.key,
-                        onClick = { section = item.key },
+                        onClick = {
+                            NinaLog.tap("NinaConsole", "rail", item.key)
+                            section = item.key
+                        },
                         icon = { Icon(icon, item.label) },
                         label = { Text(item.label, style = MaterialTheme.typography.labelSmall) },
                     )

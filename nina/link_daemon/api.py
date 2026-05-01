@@ -5,16 +5,21 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterator, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field
 
 from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
 from nina.link_daemon.config import LinkDaemonConfig
+from nina.link_daemon import media_static
+from nina.link_daemon import record_bridge
 from nina.link_daemon import robot_bridge
+from nina.link_daemon import session_claim
+from nina.link_daemon import vision_http
 from nina.link_daemon.nm import NMError
 from nina.link_daemon.state import LinkCoordinator, UserMode
 
@@ -64,6 +69,21 @@ class DriveBody(BaseModel):
 
 class PlayActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
+
+
+class RecordStartBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    seconds: float = Field(default=5.0, ge=0.5, le=120.0)
+    hz: float = Field(default=20.0, ge=0.5, le=60.0)
+    countdown: float = Field(default=3.0, ge=0.0, le=60.0)
+    hold_after: bool = Field(default=False)
+    register: bool = Field(default=True)
+
+
+class VisionOptionsBody(BaseModel):
+    face: Optional[bool] = None
+    objects: Optional[bool] = None
+    object_confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
 
 
 def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
@@ -297,7 +317,18 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "actions_endpoint": "/v1/actions",
             "action_play_endpoint": "/v1/actions/play",
             "action_bridge_enabled": cfg.enable_action_bridge,
+            "record_bridge_enabled": cfg.enable_record_bridge,
+            "record_start_endpoint": "/v1/actions/record/start",
+            "record_status_endpoint": "/v1/actions/record/status",
+            "recordings_list_endpoint": "/v1/actions/recordings",
+            "vision_stream_endpoint": "/v1/vision/stream",
+            "vision_status_endpoint": "/v1/vision/status",
+            "vision_options_endpoint": "/v1/vision/options",
+            "vision_bridge_enabled": cfg.enable_vision_bridge,
+            "actions_static_enabled": cfg.enable_actions_static,
+            "media_file_endpoint": "/v1/media/file",
             "manifest_path": str(cfg.actions_manifest_path),
+            "session_script_configured": bool(cfg.session_script),
             "message": (
                 "POST /v1/robot/drive with direction+duration_ms when "
                 "NINA_LINK_ENABLE_ROBOT_BRIDGE=1 on the Jetson."
@@ -375,5 +406,177 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 ),
             )
         return actions_bridge.play_named_action(body.action)
+
+    @app.get("/v1/actions/recordings")
+    def list_recordings_http() -> Dict[str, Any]:
+        items = actions_manifest.list_recordings_on_disk(cfg.actions_manifest_path)
+        return {"recordings": items}
+
+    @app.get("/v1/actions/record/status")
+    def record_status_http() -> Dict[str, Any]:
+        return record_bridge.get_record_status()
+
+    @app.post("/v1/actions/record/start")
+    def record_start_http(
+        body: RecordStartBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_record_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Record bridge disabled — set NINA_LINK_ENABLE_RECORD_BRIDGE=1 on the Jetson "
+                    "(stop Sirena UI / other bus users first)."
+                ),
+            )
+        return record_bridge.queue_record_session(
+            name=body.name,
+            seconds=body.seconds,
+            hz=body.hz,
+            countdown=body.countdown,
+            hold_after=body.hold_after,
+            register_manifest=body.register,
+        )
+
+    @app.get("/v1/media/file")
+    def media_file_http(relative: str = Query(..., min_length=1, max_length=512)):
+        if not cfg.enable_actions_static:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Static media disabled — set NINA_LINK_ENABLE_ACTIONS_STATIC=1 on the Jetson."
+                ),
+            )
+        root = cfg.actions_manifest_path.parent
+        path = media_static.resolve_safe_media_path(root, relative)
+        return FileResponse(
+            path,
+            media_type=media_static.guess_content_type(path),
+            filename=path.name,
+        )
+
+    @app.get("/v1/vision/status")
+    def vision_status_http() -> Dict[str, Any]:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Vision bridge disabled — set NINA_LINK_ENABLE_VISION_BRIDGE=1 on the Jetson."
+                ),
+            )
+        err = vision_http.vision_pipeline_error()
+        if err:
+            return {"ok": False, "message": err}
+        return vision_http.vision_status_payload()
+
+    @app.post("/v1/vision/options")
+    def vision_options_http(
+        body: VisionOptionsBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Vision bridge disabled",
+            )
+        try:
+            return vision_http.set_vision_options(
+                face=body.face,
+                object_=body.objects,
+                object_confidence=body.object_confidence,
+            )
+        except Exception as e:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)) from e
+
+    @app.post("/v1/vision/open")
+    def vision_open_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+        try:
+            return vision_http.open_camera_if_needed()
+        except Exception as e:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)) from e
+
+    @app.post("/v1/vision/stop")
+    def vision_stop_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, str]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+        vision_http.close_camera()
+        return {"ok": "true"}
+
+    @app.get("/v1/vision/detections")
+    def vision_detections_http() -> Dict[str, Any]:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="Vision off")
+        try:
+            dets = vision_http.last_detections_json()
+            return {"detections": dets}
+        except Exception as e:
+            raise HTTPException(status.HTTP_500_INTERNAL_SERVER_ERROR, str(e)) from e
+
+    def _mjpeg_iter() -> Iterator[bytes]:
+        boundary = b"frame"
+        for jpeg in vision_http.iter_mjpeg_frames(lambda: False, fps_cap=15.0):
+            yield (
+                b"--" + boundary + b"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n"
+                + jpeg
+                + b"\r\n"
+            )
+
+    @app.get("/v1/vision/stream")
+    def vision_stream_http() -> StreamingResponse:
+        if not cfg.enable_vision_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Vision bridge disabled — set NINA_LINK_ENABLE_VISION_BRIDGE=1 "
+                    "(install OpenCV + sirena_ui vision deps on the Jetson)."
+                ),
+            )
+        err = vision_http.vision_pipeline_error()
+        if err:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail=err)
+        return StreamingResponse(
+            _mjpeg_iter(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    @app.post("/v1/session/claim")
+    def session_claim_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.session_script:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Configure NINA_LINK_SESSION_SCRIPT on the Jetson (executable helper)."
+                ),
+            )
+        return session_claim.invoke_script(cfg.session_script, "claim")
+
+    @app.post("/v1/session/release")
+    def session_release_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.session_script:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="No script")
+        return session_claim.invoke_script(cfg.session_script, "release")
 
     return app

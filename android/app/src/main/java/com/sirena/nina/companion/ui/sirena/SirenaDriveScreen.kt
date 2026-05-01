@@ -39,6 +39,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.util.NinaLog
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
@@ -116,7 +117,10 @@ fun SirenaDriveScreen(vm: CompanionViewModel, caps: JSONObject?) {
                 speedPct = speedPct,
                 onSpeedChange = { speedPct = it },
                 autonomyOn = autonomyOn,
-                onAutonomyChange = { autonomyOn = it },
+                onAutonomyChange = {
+                    NinaLog.tap("Drive", "autonomy_toggle", if (it) "on" else "off")
+                    autonomyOn = it
+                },
                 onDrive = { dir ->
                     scope.launch {
                         try {

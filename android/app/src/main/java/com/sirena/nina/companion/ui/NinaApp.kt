@@ -1,7 +1,10 @@
 package com.sirena.nina.companion.ui
 
+import android.content.ClipData
 import android.content.Intent
 import android.provider.Settings
+import androidx.core.content.FileProvider
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -48,14 +51,20 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.sirena.nina.companion.R
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.StatusUi
 import com.sirena.nina.companion.data.Prefs
+import com.sirena.nina.companion.util.NinaFileLogger
+import com.sirena.nina.companion.util.NinaLog
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -88,19 +97,28 @@ fun NinaApp(vm: CompanionViewModel) {
             NavigationBar {
                 NavigationBarItem(
                     selected = tab == 0,
-                    onClick = { tab = 0 },
+                    onClick = {
+                        NinaLog.tap("Main", "bottom_nav", "Home")
+                        tab = 0
+                    },
                     icon = { Icon(Icons.Default.Home, null) },
                     label = { Text("Home") },
                 )
                 NavigationBarItem(
                     selected = tab == 1,
-                    onClick = { tab = 1 },
+                    onClick = {
+                        NinaLog.tap("Main", "bottom_nav", "Networks")
+                        tab = 1
+                    },
                     icon = { Icon(Icons.Default.Wifi, null) },
                     label = { Text("Networks") },
                 )
                 NavigationBarItem(
                     selected = tab == 2,
-                    onClick = { tab = 2 },
+                    onClick = {
+                        NinaLog.tap("Main", "bottom_nav", "Setup")
+                        tab = 2
+                    },
                     icon = { Icon(Icons.Default.Settings, null) },
                     label = { Text("Setup") },
                 )
@@ -189,6 +207,7 @@ private fun HomeTab(
                     subtitle = "Mobility / motor bridge (Pi)",
                     placeholderLabel = "Carbot",
                     modifier = Modifier.weight(1f),
+                    heroDrawableId = R.drawable.sirena_logo,
                     onClick = onOpenCarbotPlaceholder,
                 )
                 DashboardCard(
@@ -196,6 +215,7 @@ private fun HomeTab(
                     subtitle = "Arms, vision, drive, actions",
                     placeholderLabel = "Nina",
                     modifier = Modifier.weight(1f),
+                    heroDrawableId = R.drawable.nina_hero,
                     onClick = onOpenNinaConsole,
                 )
                 DashboardCard(
@@ -203,6 +223,7 @@ private fun HomeTab(
                     subtitle = "Wi‑Fi, link, provisioning",
                     placeholderLabel = "System",
                     modifier = Modifier.weight(1f),
+                    heroDrawableId = null,
                     onClick = onOpenSystemSetup,
                 )
             }
@@ -223,6 +244,7 @@ private fun HomeTab(
             ) {
                 OutlinedButton(
                     onClick = {
+                        NinaLog.tap("Dashboard", "wifi_settings")
                         ctx.startActivity(
                             Intent(Settings.ACTION_WIFI_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                         )
@@ -237,7 +259,10 @@ private fun HomeTab(
                     Text("Wi‑Fi settings")
                 }
                 Button(
-                    onClick = { vm.refreshStatus() },
+                    onClick = {
+                        NinaLog.tap("Dashboard", "refresh_status")
+                        vm.refreshStatus()
+                    },
                     modifier = Modifier.weight(1f),
                 ) {
                     Text("Refresh status")
@@ -300,10 +325,14 @@ private fun DashboardCard(
     subtitle: String,
     placeholderLabel: String,
     modifier: Modifier = Modifier,
+    heroDrawableId: Int? = null,
     onClick: () -> Unit,
 ) {
     Card(
-        onClick = onClick,
+        onClick = {
+            NinaLog.tap("Dashboard", "card", title)
+            onClick()
+        },
         modifier = modifier.height(200.dp),
     ) {
         Column(
@@ -322,11 +351,22 @@ private fun DashboardCard(
                     Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        placeholderLabel,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    if (heroDrawableId != null) {
+                        Image(
+                            painter = painterResource(heroDrawableId),
+                            contentDescription = title,
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(8.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    } else {
+                        Text(
+                            placeholderLabel,
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             Text(title, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
@@ -417,6 +457,7 @@ private fun NetworksTab(
                                     ) {
                                         Button(
                                             onClick = {
+                                                NinaLog.tap("Networks", "connect_jetson", net.ssid)
                                                 vm.connectJetsonHome(net.ssid)
                                                 scope.launch {
                                                     snack.showSnackbar(
@@ -430,7 +471,10 @@ private fun NetworksTab(
                                             Text("Connect Jetson")
                                         }
                                         OutlinedButton(
-                                            onClick = { vm.deleteProfile(net.id) },
+                                            onClick = {
+                                                NinaLog.tap("Networks", "delete_profile", net.ssid)
+                                                vm.deleteProfile(net.id)
+                                            },
                                             modifier = Modifier.weight(1f),
                                         ) {
                                             Text("Remove")
@@ -451,6 +495,7 @@ private fun NetworksTab(
 @Composable
 private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
     val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
     val state by vm.state.collectAsStateWithLifecycle()
     val savedUrl by vm.savedDaemonUrl.collectAsStateWithLifecycle(Prefs.DEFAULT_BASE_URL)
     var urlDraft by remember { mutableStateOf<String?>(null) }
@@ -511,25 +556,37 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
             )
             Spacer(Modifier.height(8.dp))
             Button(
-                onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = false) },
+                onClick = {
+                    NinaLog.tap("Setup", "save_wifi_credentials_only")
+                    vm.saveHomeAndOptionallyConnect(ssid, password, connect = false)
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Save credentials on Jetson only")
             }
             OutlinedButton(
-                onClick = { vm.saveHomeAndOptionallyConnect(ssid, password, connect = true) },
+                onClick = {
+                    NinaLog.tap("Setup", "save_wifi_and_connect_jetson")
+                    vm.saveHomeAndOptionallyConnect(ssid, password, connect = true)
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Save on Jetson & connect Jetson to this SSID")
             }
             OutlinedButton(
-                onClick = { vm.connectJetsonHome(null) },
+                onClick = {
+                    NinaLog.tap("Setup", "connect_jetson_first_saved")
+                    vm.connectJetsonHome(null)
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Connect Jetson using first saved profile")
             }
             OutlinedButton(
-                onClick = { vm.startApOnJetson() },
+                onClick = {
+                    NinaLog.tap("Setup", "force_ap_on_jetson")
+                    vm.startApOnJetson()
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Force Jetson back to AP mode")
@@ -551,6 +608,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
             )
             Button(
                 onClick = {
+                    NinaLog.tap("Setup", "save_and_test_daemon_url")
                     vm.saveBaseUrl(url)
                     vm.ping(url)
                 },
@@ -573,7 +631,10 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
                 singleLine = true,
             )
             Button(
-                onClick = { vm.saveBearer(bearer.takeIf { it.isNotBlank() }) },
+                onClick = {
+                    NinaLog.tap("Setup", "save_bearer")
+                    vm.saveBearer(bearer.takeIf { it.isNotBlank() })
+                },
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text("Save bearer token")
@@ -589,6 +650,7 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
             )
             Button(
                 onClick = {
+                    NinaLog.tap("Setup", "pair_pin")
                     vm.pair(pin) { tok ->
                         showToken = tok
                         scope.launch { snack.showSnackbar("Paired; token stored.") }
@@ -602,15 +664,77 @@ private fun SetupTab(vm: CompanionViewModel, snack: SnackbarHostState) {
         item {
             Text("Mode override", fontWeight = FontWeight.Medium)
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.setMode("boot_default") }, Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = {
+                        NinaLog.tap("Setup", "mode", "boot_default")
+                        vm.setMode("boot_default")
+                    },
+                    Modifier.fillMaxWidth(),
+                ) {
                     Text("boot_default")
                 }
-                OutlinedButton(onClick = { vm.setMode("force_ap") }, Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "mode", "force_ap")
+                        vm.setMode("force_ap")
+                    },
+                    Modifier.fillMaxWidth(),
+                ) {
                     Text("force_ap (stay on AP)")
                 }
-                OutlinedButton(onClick = { vm.setMode("force_sta") }, Modifier.fillMaxWidth()) {
+                OutlinedButton(
+                    onClick = {
+                        NinaLog.tap("Setup", "mode", "force_sta")
+                        vm.setMode("force_sta")
+                    },
+                    Modifier.fillMaxWidth(),
+                ) {
                     Text("force_sta (use saved Wi‑Fi)")
                 }
+            }
+        }
+        item {
+            Text("Session log (on-device)", fontWeight = FontWeight.Medium)
+            Text(
+                "Taps and API events are appended under app-private storage (no extra permission).",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                NinaFileLogger.activeLogFile(ctx).absolutePath,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = {
+                    NinaLog.tap("Setup", "export_session_log")
+                    val f = NinaFileLogger.activeLogFile(ctx)
+                    if (!f.exists()) {
+                        scope.launch {
+                            snack.showSnackbar("No log file yet — use the app, then try again.")
+                        }
+                        return@OutlinedButton
+                    }
+                    val uri =
+                        FileProvider.getUriForFile(
+                            ctx,
+                            "${ctx.packageName}.fileprovider",
+                            f,
+                        )
+                    val send =
+                        Intent(Intent.ACTION_SEND).apply {
+                            type = "text/plain"
+                            putExtra(Intent.EXTRA_STREAM, uri)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            clipData = ClipData.newUri(ctx.contentResolver, "Session log", uri)
+                        }
+                    ctx.startActivity(Intent.createChooser(send, "Export session log"))
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Export / share log file")
             }
         }
     }

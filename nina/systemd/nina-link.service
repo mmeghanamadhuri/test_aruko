@@ -19,6 +19,11 @@ Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 # Environment=NINA_LINK_DRIVE_DURATION_MS=280
 # Optional: HTTP playback for manifest actions (same Dynamixel bus as Sirena UI — pick one)
 # Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+# Optional: HTTP record (same bus), vision MJPEG, static audio files, session script:
+# Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
+# Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1
+# Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
+# Environment=NINA_LINK_SESSION_SCRIPT=/usr/local/bin/nina-link-session-helper
 # Override manifest path if the repo lives elsewhere on disk:
 # Environment=NINA_ACTIONS_MANIFEST=/opt/nvidia-jetson-platform/nina/actions/manifest.json
 Environment=NINA_LINK_HOST=0.0.0.0

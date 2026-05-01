@@ -10,6 +10,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.lifecycle.ViewModelProvider
 import com.sirena.nina.companion.ui.NinaApp
 import com.sirena.nina.companion.ui.theme.SirenaTheme
+import com.sirena.nina.companion.util.NinaFileLogger
 
 class MainActivity : ComponentActivity() {
 
@@ -17,6 +18,7 @@ class MainActivity : ComponentActivity() {
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        NinaFileLogger.install(applicationContext)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         vm = ViewModelProvider(
