@@ -73,6 +73,39 @@ _DIR_RIGHT = "right"
 
 _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
 
+
+# Operator-facing speed envelope. The Yalu hub motors + JYQD drivers on
+# the current Nina build are not safe to run above 25% PWM duty - the
+# wheels accelerate harder than the chassis can absorb and the bot
+# launches off the bench. 15% is the lowest reliable cold-start speed
+# (anything below stalls on the kick), so the slider is constrained to
+# this band end-to-end:
+#
+#   * `set_speed()` clamps any caller (slider, autonomy, env-var, CLI)
+#     into [MIN_SPEED_PCT, MAX_SPEED_PCT] before it lands in `_state`.
+#   * `__init__` clamps the resolved initial speed the same way, so a
+#     stale `NINA_NAV_SPEED=80` env var on the kiosk service can't smuggle
+#     a faster default in.
+#   * The Drive screen's slider is set to the same range, so the GUI
+#     never even shows out-of-band values.
+#
+# Bump these together (and re-test on a wheels-up bench) when the
+# mechanical build can handle more. They're module-level so screens /
+# tests can import the same constants instead of re-deriving them.
+MIN_SPEED_PCT = 15
+MAX_SPEED_PCT = 25
+
+
+def _clamp_speed(pct: int) -> int:
+    """Clamp `pct` into the operator-safe envelope. Negative / non-int
+    inputs are coerced to MIN_SPEED_PCT rather than 0 - inside this
+    project there's no legitimate caller asking for speed=0 (stops go
+    through `set_brake()` / `stop()` which don't touch speed_pct), so
+    treating speed=0 as "minimum cruise" is safer than letting it slip
+    through as a literal halt that bypasses the brake state machine.
+    """
+    return max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, int(pct)))
+
 # Heartbeat interval for re-issuing the current SET while a D-pad
 # button or arrow key is held. Only matters when the active backend is
 # the remote Pi bridge - the bridge has a safety watchdog (default
@@ -221,9 +254,9 @@ class DriveController(QObject):
         self._init_attempted = False
 
         if default_speed_percent is not None:
-            initial_speed = int(default_speed_percent)
+            initial_speed = _clamp_speed(default_speed_percent)
         else:
-            initial_speed = int(self._config.default_speed_percent)
+            initial_speed = _clamp_speed(self._config.default_speed_percent)
 
         self._lock = threading.RLock()
         # Wheel polarity is resolved here (persisted JSON > env var >
@@ -311,7 +344,7 @@ class DriveController(QObject):
         self._heartbeat.join(timeout=2.0)
 
     def set_speed(self, pct: int) -> None:
-        pct = max(0, min(100, int(pct)))
+        pct = _clamp_speed(pct)
         with self._lock:
             self._state["speed_pct"] = pct
             direction = self._state["direction"]

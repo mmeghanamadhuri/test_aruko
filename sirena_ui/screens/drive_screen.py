@@ -44,6 +44,7 @@ from sirena_ui.widgets.common import (
     SectionLabel,
 )
 from sirena_ui.widgets.dpad import DPad
+from sirena_ui.workers.drive_controller import MAX_SPEED_PCT, MIN_SPEED_PCT
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -213,9 +214,12 @@ class DriveScreen(QWidget):
         dpad_row.addStretch(1)
         card.add_layout(dpad_row)
 
-        # Speed row - inline label + - slider + + pill, no SECTION label
-        # above it (the "-" / "+" / "%" cluster is self-explanatory and
-        # the section header was eating 16 px of vertical space).
+        # Speed row - inline label + slider + pill. The +/- buttons that
+        # used to flank the slider were removed: with the slider clamped
+        # to a 10-percentage-point window (MIN_SPEED_PCT..MAX_SPEED_PCT)
+        # they were redundant and just stole touch targets from the
+        # D-pad above. The slider's own handle is now the single way to
+        # change speed.
         speed_row = QHBoxLayout()
         speed_row.setSpacing(6)
         card.add_layout(speed_row)
@@ -226,29 +230,17 @@ class DriveScreen(QWidget):
         )
         speed_row.addWidget(speed_lbl)
 
-        minus = QPushButton("\u2212")
-        minus.setObjectName("secondaryButton")
-        minus.setCursor(Qt.PointingHandCursor)
-        minus.setFixedSize(36, 36)
-        minus.setFocusPolicy(Qt.NoFocus)
-        minus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] - 5))
-        speed_row.addWidget(minus)
-
         self._speed_slider = QSlider(Qt.Horizontal)
-        self._speed_slider.setRange(0, 100)
-        self._speed_slider.setValue(15)
+        # Range matches the controller's clamp envelope so the GUI never
+        # shows a value the controller would silently rewrite. Importing
+        # the constants from drive_controller keeps the two in lockstep -
+        # bumping the cap there flows through here without a code edit.
+        self._speed_slider.setRange(MIN_SPEED_PCT, MAX_SPEED_PCT)
+        self._speed_slider.setValue(MIN_SPEED_PCT)
         self._speed_slider.valueChanged.connect(self._drive.set_speed)
         speed_row.addWidget(self._speed_slider, stretch=1)
 
-        plus = QPushButton("+")
-        plus.setObjectName("secondaryButton")
-        plus.setCursor(Qt.PointingHandCursor)
-        plus.setFixedSize(36, 36)
-        plus.setFocusPolicy(Qt.NoFocus)
-        plus.clicked.connect(lambda: self._drive.set_speed(self._drive.state()["speed_pct"] + 5))
-        speed_row.addWidget(plus)
-
-        self._speed_pill = Pill("15%", Pill.KIND_ERROR)
+        self._speed_pill = Pill(f"{MIN_SPEED_PCT}%", Pill.KIND_ERROR)
         speed_row.addWidget(self._speed_pill)
 
         # Wheel polarity calibration. The first time a Nina is built the
