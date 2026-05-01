@@ -323,28 +323,25 @@ class OnScreenKeyboardManager(QObject):
     def _configure_onboard_window_mode(self) -> None:
         """One-shot gsettings tweak so onboard renders above the kiosk.
 
-        Without this, onboard launches fine but stacks BELOW the
-        kiosk window even when the kiosk is in maximized (non-X11-
-        fullscreen) mode - because by default onboard is a normal
-        toplevel that the WM places in z-order along with everything
-        else. We need two flags:
-
-        - org.onboard.window.force-to-top = true
-            Sets _NET_WM_STATE_ABOVE on the onboard window so the WM
-            keeps it above peer windows.
-        - org.onboard.window.docking-enabled = true
-            Switches onboard from a free-floating window to a screen-
-            edge dock that reserves a strut. Maximized windows (and
-            our kiosk window in maximized mode) respect that strut
-            and shrink to leave the keyboard visible. Operator sees
-            both their text field AND the keyboard at the same time,
-            instead of the keyboard covering whatever they're typing
-            into.
+        Sets `org.onboard.window force-to-top=true` so onboard claims
+        `_NET_WM_STATE_ABOVE` and the WM keeps it above the kiosk
+        window. We deliberately leave `docking-enabled` alone here:
+        an earlier iteration set it to true (so onboard reserved a
+        bottom-of-screen strut), but that turned out to switch
+        onboard from "floating window dismissed by its X button"
+        into "persistent dock that auto-hides on focus-out" - and
+        Qt apps don't reliably emit the AT-SPI focus events onboard's
+        auto-show needs, so the keyboard came up the first time and
+        was then permanently invisible (process alive, just hidden).
+        Plain force-to-top + floating window means each spawn pops
+        a fresh visible keyboard, dismissal cleanly exits the
+        process, and the next FocusIn re-spawns it.
 
         Best-effort: if gsettings is missing (no GNOME stack) or the
-        schema isn't installed (different OSK binary, partial install),
-        we log once and carry on. onboard might still appear via the
-        maximized-mode change above, just without docking.
+        schema isn't installed (different OSK binary, partial
+        install), we log once and carry on. onboard will still come
+        up - the kiosk's manual-sized non-fullscreen window already
+        lets ABOVE-state windows stack above it.
 
         Only runs for the literal binary "onboard" - custom OSK
         binaries pointed at via NINA_UI_OSK_BIN don't get touched
@@ -363,13 +360,12 @@ class OnScreenKeyboardManager(QObject):
                 "OSK: gsettings not on PATH - skipping onboard window-mode "
                 "config. The keyboard may render below the kiosk window; "
                 "install glib2.0-bin (provides gsettings) to enable the "
-                "force-to-top + docking auto-config."
+                "force-to-top auto-config."
             )
             return
 
         tweaks = (
             ("org.onboard.window", "force-to-top", "true"),
-            ("org.onboard.window", "docking-enabled", "true"),
         )
         for schema, key, value in tweaks:
             try:

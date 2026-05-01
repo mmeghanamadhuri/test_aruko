@@ -543,13 +543,14 @@ def test_spawn_health_check_with_live_process_does_nothing(
 # ---------------------------------------------------------------------
 
 
-def test_first_spawn_runs_gsettings_force_to_top_and_docking(
+def test_first_spawn_runs_gsettings_force_to_top(
     isolate_env, with_osk_binary, fake_subprocess, make_osk
 ) -> None:
-    """First onboard launch must apply the force-to-top + docking
-    gsettings BEFORE the Popen so onboard reads the new values at
-    startup. This is what stops the keyboard from being buried under
-    the kiosk window."""
+    """First onboard launch must apply the force-to-top gsettings
+    BEFORE the Popen so onboard reads the new value at startup.
+    This is what stops the keyboard from being buried under the
+    kiosk window. We deliberately do NOT touch `docking-enabled`
+    (see _configure_onboard_window_mode for why)."""
     make_osk(mode="always")
 
     set_calls = [
@@ -558,9 +559,16 @@ def test_first_spawn_runs_gsettings_force_to_top_and_docking(
     ]
     keys_seen = {(call[2], call[3], call[4]) for call in set_calls}
     assert ("org.onboard.window", "force-to-top", "true") in keys_seen
-    assert ("org.onboard.window", "docking-enabled", "true") in keys_seen
 
-    # And onboard itself was launched after them.
+    # docking-enabled must NOT be touched: setting it true puts onboard
+    # into a persistent-dock auto-hide mode that needs AT-SPI focus
+    # events Qt doesn't emit, and the keyboard would only appear once.
+    docking_keys = {call for call in set_calls if call[3] == "docking-enabled"}
+    assert not docking_keys, (
+        f"docking-enabled must not be configured by us; got {docking_keys}"
+    )
+
+    # And onboard itself was launched after the gsettings call.
     assert len(fake_subprocess.instances) == 1
 
 
@@ -577,7 +585,7 @@ def test_gsettings_only_runs_once_per_manager(
     edit = QLineEdit()
     _send_focus_in(edit)
     initial_run_count = len(fake_subprocess.run_calls)
-    assert initial_run_count >= 2  # force-to-top + docking-enabled
+    assert initial_run_count >= 1  # at least force-to-top
 
     fake_subprocess.instances[0].die()  # operator dismissed the OSK
     edit2 = QLineEdit()
