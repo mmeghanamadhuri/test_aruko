@@ -153,14 +153,30 @@ class PerceptionScreen(QWidget):
         self._lidar_pill = Pill("waiting", Pill.KIND_NEUTRAL)
         header.addWidget(self._lidar_pill)
 
-        self._grid = OccupancyGridView()
-        # The grid view's default min is 240x240. On a 3-column
-        # layout at 1024 wide we get ~270 px per column - that's
-        # enough for the grid to render and stay readable.
-        card.add(self._grid, stretch=1)
-        card.add(MutedLabel(
-            "BreezySLAM occupancy map. Red triangle = Nina's pose."
-        ))
+        # Wrap the grid in a cardSubtle viewport, exactly like the
+        # RGB and Depth panes. Without this wrapper the grid was
+        # the only direct child in its column, and the Qt layout
+        # treated its sizeHint as authoritative - on the 1/3-width
+        # Perception column that translated to a tiny 200x200 grid
+        # in the top-left of the card while RGB and Depth filled
+        # their viewports normally. Wrapping puts all three panes
+        # on the same min-height (220) and Expanding policy contract
+        # so the layout treats the lidar pane consistently with the
+        # others.
+        viewport = QFrame()
+        viewport.setObjectName("cardSubtle")
+        viewport.setMinimumHeight(220)
+        viewport.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        v = QVBoxLayout(viewport)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        self._grid = OccupancyGridView(viewport)
+        v.addWidget(self._grid, stretch=1)
+        card.add(viewport, stretch=1)
+        # Trailing description label was eating ~30 px of vertical
+        # space the grid actually needed; the title + pill in the
+        # header carry the meaning. Drop it here (Map screen still
+        # has the full legend right under the grid).
         return card
 
     def _build_camera_card(self) -> Card:

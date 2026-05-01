@@ -27,17 +27,27 @@ from PyQt5.QtGui import (
     QPen,
     QPolygon,
 )
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QSizePolicy, QWidget
 
 
 class OccupancyGridView(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         # Was 360 x 360 - too large for the 1024 x 600 panel after the
-        # sidebar (160), the side card (~330), and chrome (~110). 240
-        # still gives a usable map and the QImage scales up to fill
-        # whatever extra space the parent layout grants us.
-        self.setMinimumSize(240, 240)
+        # sidebar (160), the side card (~330), and chrome (~110). 200
+        # is the floor we need so the grid still fits the Perception
+        # screen's three-column layout (each column ~280 px wide,
+        # minus 8 + 8 card padding = ~264 inner). The QImage scales
+        # up to fill whatever extra space the parent layout grants us.
+        self.setMinimumSize(200, 200)
+        # Expanding both axes so the layout actually grants us all
+        # available space - default Preferred would be honoured by
+        # most layouts, but in tight containers (Perception lidar
+        # card) Preferred sometimes leaves the widget at sizeHint
+        # while a sibling-policy widget eats the leftover. Expanding
+        # is a hard "I want everything" so the lidar pane fills the
+        # card the way the RGB and Depth viewports do.
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.setStyleSheet("background-color: #f5f5f7; border-radius: 12px;")
         self._image: Optional[QImage] = None
         self._image_width = 0
@@ -140,7 +150,15 @@ class OccupancyGridView(QWidget):
         px = ox + (cx_world + (self._pose_x_mm / self._scale_mm_per_px)) * scale_x
         py = oy + (cy_world - (self._pose_y_mm / self._scale_mm_per_px)) * scale_y
 
-        size = 10
+        # Pose triangle scales with the rendered map size so it stays
+        # readable across the full range of containers we host this
+        # widget in: ~6 px on a tiny 200x200 cell, ~22 px on the big
+        # Map screen card. Hard-coded 10 px (the previous value)
+        # rendered the Map screen pose as a barely-visible dot AND
+        # the Perception screen lidar pane as 'just a dot in the
+        # middle of empty grey' on a fresh boot before the SLAM grid
+        # had built up walls.
+        size = max(6, min(target[0], target[1]) // 16)
         from math import cos, sin, radians
         a = radians(self._pose_theta_deg)
         # Front of triangle = +y in robot frame -> -y on screen.
@@ -153,8 +171,12 @@ class OccupancyGridView(QWidget):
             int(px + size * 0.5 * sin(a - 2.6)),
             int(py - size * 0.5 * cos(a - 2.6)),
         )
+        # White outline so the triangle reads against the map's red
+        # wall pixels and the dark grey 'unknown' fill on small panes.
+        # Without this the triangle disappears on the Perception card
+        # any time it sits over a wall.
         p.setBrush(QBrush(QColor("#c8102e")))
-        p.setPen(Qt.NoPen)
+        p.setPen(QPen(QColor("white"), max(1, size // 5)))
         p.drawPolygon(QPolygon([tip, left, right]))
 
     @staticmethod
