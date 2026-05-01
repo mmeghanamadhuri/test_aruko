@@ -99,10 +99,14 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=${REPO_ROOT}
+# Must exist at systemd parse time; PYTHONPATH + ExecStart pin the repo (avoid /opt vs home mismatches).
+WorkingDirectory=/
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
+Environment=NINA_LINK_WIFI_READY_TIMEOUT=120
+Environment=NINA_LINK_WIFI_READY_POLL=2
+Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
 ExecStart=${PY} -m nina.link_daemon.main

@@ -6,6 +6,7 @@ import logging
 import re
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -37,6 +38,9 @@ class NMBackend:
     mock: bool = False
     #: New profiles from add_wifi_connection get connection.autoconnect no when True.
     disable_wifi_autoconnect: bool = True
+    wifi_ready_timeout: float = 120.0
+    wifi_ready_poll: float = 2.0
+    hotspot_attempts: int = 5
     _mock_profiles: List[SavedNetwork] = field(default_factory=list)
     _mock_ap_active: bool = False
     _mock_sta_connected: bool = False
@@ -401,36 +405,44 @@ class NMBackend:
                 self._mock_current_ssid = ssid
             return
 
-        dev = ifname or self._wifi_device_name()
+        dev = self.wait_for_wifi_ready(ifname=ifname)
         if not dev:
             raise NMError("No Wi-Fi device found for hotspot")
 
-        # Drop any STA session so the radio can become an AP.
-        self.disconnect_device(timeout=min(timeout, 30.0))
+        attempts = max(1, int(self.hotspot_attempts))
+        last_details = ""
+        for attempt in range(attempts):
+            # Drop any STA session so the radio can become an AP.
+            self.disconnect_device(timeout=min(timeout, 30.0))
 
-        proc = subprocess.run(
-            [
-                "nmcli",
-                "device",
-                "wifi",
-                "hotspot",
-                "ifname",
-                dev,
-                "ssid",
-                ssid,
-                "password",
-                password,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise NMError(
-                "Hotspot failed (is NetworkManager managing Wi-Fi?)",
-                details=proc.stderr.strip() or proc.stdout.strip(),
+            proc = subprocess.run(
+                [
+                    "nmcli",
+                    "device",
+                    "wifi",
+                    "hotspot",
+                    "ifname",
+                    dev,
+                    "ssid",
+                    ssid,
+                    "password",
+                    password,
+                ],
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                check=False,
             )
+            if proc.returncode == 0:
+                return
+            last_details = proc.stderr.strip() or proc.stdout.strip()
+            if attempt < attempts - 1:
+                time.sleep(max(0.5, float(self.wifi_ready_poll)))
+
+        raise NMError(
+            "Hotspot failed (is NetworkManager managing Wi-Fi?)",
+            details=last_details,
+        )
 
     def disconnect_device(self, *, timeout: float = 30.0) -> None:
         if self.mock:
@@ -453,6 +465,48 @@ class NMBackend:
     def _wifi_device_name(self) -> str:
         st = self.device_status()
         return st.get("device") or ""
+
+    def _general_state(self, dev: str) -> str:
+        if not dev or self.mock:
+            return ""
+        r = subprocess.run(
+            ["nmcli", "-g", "GENERAL.STATE", "device", "show", dev],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return (r.stdout or "").strip()
+
+    @staticmethod
+    def _nm_state_ready_for_hotspot(state: str) -> bool:
+        """NM 10=unmanaged, 20=unavailable (supplicant not ready); need a later state."""
+        if not state:
+            return False
+        return not (state.startswith("10 ") or state.startswith("20 "))
+
+    def wait_for_wifi_ready(self, *, ifname: Optional[str] = None) -> str:
+        """Block until Wi-Fi is past unmanaged/unavailable or timeout."""
+        if self.mock:
+            return ifname or "wlan0"
+        deadline = time.monotonic() + max(5.0, float(self.wifi_ready_timeout))
+        interval = max(0.5, float(self.wifi_ready_poll))
+        last_state = ""
+        while True:
+            dev = (ifname or "").strip() or self._wifi_device_name()
+            if dev:
+                last_state = self._general_state(dev)
+                if self._nm_state_ready_for_hotspot(last_state):
+                    return dev
+            if time.monotonic() >= deadline:
+                hint = last_state or "no Wi-Fi device"
+                raise NMError(
+                    "Wi-Fi not ready for hotspot (supplicant still starting?)",
+                    details=hint,
+                )
+            time.sleep(interval)
 
     def get_ipv4_address(self, interface_hint: Optional[str] = None) -> Optional[str]:
         if self.mock:

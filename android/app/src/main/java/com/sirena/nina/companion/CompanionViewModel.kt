@@ -75,7 +75,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun ping(urlOverride: String? = null) {
         viewModelScope.launch {
             try {
-                val url = urlOverride?.trimEnd('/') ?: prefs.baseUrl.first()
+                val raw = urlOverride?.trim() ?: prefs.baseUrl.first()
+                val url = Prefs.normalizeBaseUrl(raw)
                 client.health(url)
                 prefs.setBaseUrl(url)
                 refreshStatus()

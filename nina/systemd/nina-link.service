@@ -5,15 +5,20 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/nvidia-jetson-platform
+# Always use a path that exists; repo location is defined by PYTHONPATH + ExecStart below.
+WorkingDirectory=/
 Environment=PYTHONPATH=/opt/nvidia-jetson-platform
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
+Environment=NINA_LINK_WIFI_READY_TIMEOUT=120
+Environment=NINA_LINK_WIFI_READY_POLL=2
+Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
 # Optional fleet-wide auth for remote mutation when off trusted AP:
 # Environment=NINA_LINK_TOKEN=your-secret-token
-ExecStart=/usr/bin/python3 -m nina.link_daemon.main
+# Match install-nina-link-jetson.sh: venv at ${REPO_ROOT}/.venv-link
+ExecStart=/opt/nvidia-jetson-platform/.venv-link/bin/python -m nina.link_daemon.main
 Restart=on-failure
 RestartSec=5
 

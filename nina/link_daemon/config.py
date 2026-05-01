@@ -42,6 +42,16 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
 @dataclass
 class LinkDaemonConfig:
     host: str = "0.0.0.0"
@@ -54,6 +64,11 @@ class LinkDaemonConfig:
     state_path: Path = field(default_factory=_default_state_path)
     #: Turn off NM autoconnect on saved Wi-Fi at startup and for new profiles (STA only via app).
     disable_wifi_autoconnect: bool = True
+    #: Max seconds to wait for Wi-Fi to leave NM "unavailable" (supplicant) before hotspot.
+    wifi_ready_timeout_sec: int = 120
+    wifi_ready_poll_sec: float = 2.0
+    #: Retries for `nmcli device wifi hotspot` after disconnect (transient NM races).
+    hotspot_attempts: int = 5
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -77,6 +92,15 @@ def load_config() -> LinkDaemonConfig:
         disable_wifi_autoconnect=_env_bool(
             "NINA_LINK_DISABLE_WIFI_AUTOCONNECT", True
         ),
+        wifi_ready_timeout_sec=max(
+            5,
+            _env_int("NINA_LINK_WIFI_READY_TIMEOUT", 120),
+        ),
+        wifi_ready_poll_sec=max(
+            0.5,
+            _env_float("NINA_LINK_WIFI_READY_POLL", 2.0),
+        ),
+        hotspot_attempts=max(1, _env_int("NINA_LINK_HOTSPOT_ATTEMPTS", 5)),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

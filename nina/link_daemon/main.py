@@ -57,7 +57,11 @@ def _maybe_boot_ap(coordinator: LinkCoordinator) -> None:
         log.info("Boot AP started SSID=%s", cfg.ap_ssid)
     except NMError as e:
         coordinator.set_error(str(e))
-        log.error("Boot AP failed: %s", e)
+        detail = (e.details or "").strip()
+        if detail:
+            log.error("Boot AP failed: %s — %s", e, detail)
+        else:
+            log.error("Boot AP failed: %s", e)
 
 
 def main() -> None:
@@ -69,7 +73,13 @@ def main() -> None:
     nm: NMBackend = (
         mock_backend()
         if cfg.mock_nm
-        else NMBackend(mock=False, disable_wifi_autoconnect=cfg.disable_wifi_autoconnect)
+        else NMBackend(
+            mock=False,
+            disable_wifi_autoconnect=cfg.disable_wifi_autoconnect,
+            wifi_ready_timeout=float(cfg.wifi_ready_timeout_sec),
+            wifi_ready_poll=float(cfg.wifi_ready_poll_sec),
+            hotspot_attempts=cfg.hotspot_attempts,
+        )
     )
     coordinator = LinkCoordinator(cfg, nm)
     _maybe_boot_ap(coordinator)

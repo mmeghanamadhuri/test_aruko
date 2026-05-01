@@ -55,6 +55,20 @@ Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/co
 
 Systemd example: [`nina/systemd/nina-link.service`](../nina/systemd/nina-link.service).
 
+### Systemd: service loops with `CHDIR` / `status=200/CHDIR`
+
+If **`journalctl -u nina-link`** shows **`Changing to the requested working directory failed`** or **`Failed at step CHDIR`**, systemd never starts Python — **no AP, no `/health`**. Typical causes:
+
+1. **`WorkingDirectory=` points at a path that does not exist** on this machine (for example **`/opt/nvidia-jetson-platform`** after copying the template while the repo actually lives under **`/home/...`**). **Fix:** set **`WorkingDirectory=/`** (repo location is defined only by **`PYTHONPATH`** and **`ExecStart`**).
+2. **`ExecStart`** must be the **venv** interpreter when dependencies are in **`.venv-link`**, e.g. **`.../.venv-link/bin/python`**, not **`/usr/bin/python3`** unless everything is installed system-wide.
+
+Re-register the unit from the real repo root so paths stay consistent:
+
+```bash
+cd /path/to/Nvidia-jetson-platform
+sudo ./scripts/install-nina-link-jetson.sh --systemd-only
+```
+
 ## Sirena UI on the robot
 
 Settings → **Network** talks to `http://127.0.0.1:8787` by default (override with `NINA_LINK_URL`). Status shows **saved profiles** (including ones added on the Jetson) and any **active STA** connection. Home Wi‑Fi is joined only when you use **Connect jetson** / **force_sta** from the app or this screen—not automatically after reboot.
@@ -66,6 +80,12 @@ Settings → **Network** talks to `http://127.0.0.1:8787` by default (override w
 3. **Save home Wi‑Fi** credentials on the Jetson (sends them to NetworkManager via the daemon).
 4. **Connect Jetson to home Wi‑Fi** (STA), then use **Open Android Wi‑Fi settings** to join the **same** SSID on the tablet. Android does not allow silent Wi‑Fi switching; this step is intentional.
 5. Change the app **Setup** URL to the Jetson’s new LAN address (or mDNS later) and **Save & test connection**.
+
+### Tablet cannot reach `http://192.168.4.1:8787` on the Nina AP
+
+1. **Use the gateway shown on the tablet** — Android **Wi‑Fi → Nina‑Setup → details**: **Router / Gateway** may differ from `192.168.4.1` on some NM builds. In **Setup**, set the daemon URL to `http://<that-gateway-ip>:8787` and **Save & test connection**.
+2. **URL must include `http://`** — The app normalizes common mistakes; avoid a leading **`/`** before the IP (that breaks OkHttp and shows errors like `failed to connect to /192.168…`).
+3. **On the Jetson** (SSH or console): `curl -s http://127.0.0.1:8787/health` should return JSON. If yes but the tablet still fails, check **`sudo ufw status`** and allow **`8787/tcp`**, or turn **Private DNS** off on the tablet for testing.
 
 ### Edge cases
 

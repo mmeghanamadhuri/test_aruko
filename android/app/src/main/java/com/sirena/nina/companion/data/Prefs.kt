@@ -19,7 +19,7 @@ class Prefs(private val context: Context) {
     }
 
     val baseUrl: Flow<String> = context.dataStore.data.map { prefs ->
-        prefs[Keys.BASE_URL] ?: DEFAULT_BASE_URL
+        normalizeBaseUrl(prefs[Keys.BASE_URL] ?: DEFAULT_BASE_URL)
     }
 
     val bearerToken: Flow<String?> = context.dataStore.data.map { prefs ->
@@ -27,7 +27,8 @@ class Prefs(private val context: Context) {
     }
 
     suspend fun setBaseUrl(url: String) {
-        context.dataStore.edit { it[Keys.BASE_URL] = url.trimEnd('/') }
+        val normalized = normalizeBaseUrl(url)
+        context.dataStore.edit { it[Keys.BASE_URL] = normalized }
     }
 
     suspend fun setBearerToken(token: String?) {
@@ -39,5 +40,20 @@ class Prefs(private val context: Context) {
 
     companion object {
         const val DEFAULT_BASE_URL = "http://192.168.4.1:8787"
+
+        /**
+         * Jetson URL must include a scheme and must not start with `/` (OkHttp treats that as a bad host).
+         */
+        fun normalizeBaseUrl(raw: String): String {
+            var s = raw.trim().trimEnd('/')
+            if (s.isEmpty()) return DEFAULT_BASE_URL
+            s = s.trimStart('/')
+            if (!s.startsWith("http://", ignoreCase = true) &&
+                !s.startsWith("https://", ignoreCase = true)
+            ) {
+                s = "http://$s"
+            }
+            return s.trimEnd('/')
+        }
     }
 }
