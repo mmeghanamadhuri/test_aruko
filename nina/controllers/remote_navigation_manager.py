@@ -117,6 +117,14 @@ class RemoteNavigationManager:
         # `_open_port` attempt. `_ensure_port` won't retry until at
         # least `reconnect_min_interval_sec` has elapsed since this.
         self._last_reconnect_failure_ts: float = 0.0
+        # Runtime polarity overrides. None = use the frozen config
+        # (which itself was seeded from NINA_NAV_INVERT_LEFT/RIGHT env
+        # vars). The Drive screen / DriveController calls
+        # set_invert_left/right() to flip a wheel without restarting
+        # the kiosk service - the override wins over the config so the
+        # change is effective on the next SET command.
+        self._invert_left_override: Optional[bool] = None
+        self._invert_right_override: Optional[bool] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -331,11 +339,42 @@ class RemoteNavigationManager:
 
     def _dir_letter(self, side: str, direction: str) -> str:
         forward = direction == self.DIR_FORWARD
-        if side == self.SIDE_LEFT and self.config.invert_left_dir:
+        if side == self.SIDE_LEFT and self._effective_invert_left():
             forward = not forward
-        elif side == self.SIDE_RIGHT and self.config.invert_right_dir:
+        elif side == self.SIDE_RIGHT and self._effective_invert_right():
             forward = not forward
         return "F" if forward else "B"
+
+    def _effective_invert_left(self) -> bool:
+        """Runtime override wins over the frozen config."""
+        if self._invert_left_override is not None:
+            return self._invert_left_override
+        return bool(self.config.invert_left_dir)
+
+    def _effective_invert_right(self) -> bool:
+        if self._invert_right_override is not None:
+            return self._invert_right_override
+        return bool(self.config.invert_right_dir)
+
+    # ------------------------------------------------------------------
+    # Runtime polarity controls (called from the GUI's Drive screen via
+    # DriveController.set_invert_left/right). Effective on the very next
+    # SET command - no restart, no re-init.
+    # ------------------------------------------------------------------
+
+    def set_invert_left(self, on: bool) -> None:
+        self._invert_left_override = bool(on)
+        log.info("invert_left set to %s (runtime override)", bool(on))
+
+    def set_invert_right(self, on: bool) -> None:
+        self._invert_right_override = bool(on)
+        log.info("invert_right set to %s (runtime override)", bool(on))
+
+    def get_invert_left(self) -> bool:
+        return self._effective_invert_left()
+
+    def get_invert_right(self) -> bool:
+        return self._effective_invert_right()
 
     def _open_port(self) -> None:
         assert self._serial_module is not None

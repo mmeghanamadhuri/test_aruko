@@ -319,6 +319,89 @@ def test_invert_left_flips_only_left_letter(fake_serial: _FakeSerialRegistry) ->
     assert _writes_as_strings(port)[-1] == "SET B 20 F 20"
 
 
+def test_set_invert_left_runtime_override_flips_next_set(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """The Drive screen's Flip L toggle calls set_invert_left() at
+    runtime - the very next SET must reflect the flip even though the
+    frozen RemoteNavigationConfig still says invert_left_dir=False."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            invert_left_dir=False,
+        )
+    )
+    nav.initialize()
+
+    fake_serial.queue("OK")
+    nav.set_wheels(left_dir="forward", left_speed=20, right_dir="forward", right_speed=20)
+    port = _last_open(fake_serial)
+    assert _writes_as_strings(port)[-1] == "SET F 20 F 20"
+
+    nav.set_invert_left(True)
+    assert nav.get_invert_left() is True
+
+    fake_serial.queue("OK")
+    nav.set_wheels(left_dir="forward", left_speed=20, right_dir="forward", right_speed=20)
+    assert _writes_as_strings(port)[-1] == "SET B 20 F 20"
+
+    nav.set_invert_left(False)
+    fake_serial.queue("OK")
+    nav.set_wheels(left_dir="forward", left_speed=20, right_dir="forward", right_speed=20)
+    assert _writes_as_strings(port)[-1] == "SET F 20 F 20"
+
+
+def test_set_invert_right_runtime_override_flips_next_set(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+        )
+    )
+    nav.initialize()
+
+    nav.set_invert_right(True)
+    assert nav.get_invert_right() is True
+
+    fake_serial.queue("OK")
+    nav.set_wheels(left_dir="forward", left_speed=10, right_dir="forward", right_speed=10)
+    port = _last_open(fake_serial)
+    assert _writes_as_strings(port)[-1] == "SET F 10 B 10"
+
+
+def test_runtime_invert_override_wins_over_frozen_config(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """A runtime False must override a config-time True. This matters
+    because the kiosk service still ships INVERT_LEFT=1, but if the
+    operator clicks Flip L OFF on the GUI we have to honour them."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            invert_left_dir=True,  # boot-time / env-var seeded
+        )
+    )
+    nav.initialize()
+
+    nav.set_invert_left(False)  # operator turns it off in the GUI
+
+    fake_serial.queue("OK")
+    nav.set_wheels(left_dir="forward", left_speed=20, right_dir="forward", right_speed=20)
+    port = _last_open(fake_serial)
+    # Override wins: no flip even though the config says True.
+    assert _writes_as_strings(port)[-1] == "SET F 20 F 20"
+
+
 def test_speed_is_clamped_to_0_100(fake_serial: _FakeSerialRegistry) -> None:
     fake_serial.queue("PONG")
     nav = RemoteNavigationManager(

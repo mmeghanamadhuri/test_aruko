@@ -239,6 +239,12 @@ class NavigationManager:
         self.config = config or NavigationConfig(pins=DEFAULT_PINS)
         self._backend: GpioBackend = backend or create_backend(self.config.backend_name)
         self._is_initialized = False
+        # Runtime polarity overrides. None = fall back to the frozen
+        # config (env-var seeded). The Drive screen calls
+        # set_invert_left/right() so the operator can flip a wheel
+        # without restarting - effective on the next set_wheels call.
+        self._invert_left_override: Optional[bool] = None
+        self._invert_right_override: Optional[bool] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -511,7 +517,7 @@ class NavigationManager:
 
         if side == self.SIDE_LEFT:
             level = 1 if forward else 0
-            if self.config.invert_left_dir:
+            if self._effective_invert_left():
                 level = 0 if level else 1
             self._backend.write(pins.l_en, 1 if enable else 0)
             self._backend.write(pins.l_dir, level)
@@ -519,11 +525,41 @@ class NavigationManager:
         else:
             # RPi reference: right wheel polarity is mirrored - forward = LOW.
             level = 0 if forward else 1
-            if self.config.invert_right_dir:
+            if self._effective_invert_right():
                 level = 0 if level else 1
             self._backend.write(pins.r_en, 1 if enable else 0)
             self._backend.write(pins.r_dir, level)
             self._backend.set_duty(pins.pwm_r, duty)
+
+    # ------------------------------------------------------------------
+    # Runtime polarity controls. Same surface as RemoteNavigationManager
+    # so DriveController can call them without caring which backend is
+    # active. Effective on the next per-wheel write.
+    # ------------------------------------------------------------------
+
+    def set_invert_left(self, on: bool) -> None:
+        self._invert_left_override = bool(on)
+        log.info("invert_left set to %s (runtime override)", bool(on))
+
+    def set_invert_right(self, on: bool) -> None:
+        self._invert_right_override = bool(on)
+        log.info("invert_right set to %s (runtime override)", bool(on))
+
+    def get_invert_left(self) -> bool:
+        return self._effective_invert_left()
+
+    def get_invert_right(self) -> bool:
+        return self._effective_invert_right()
+
+    def _effective_invert_left(self) -> bool:
+        if self._invert_left_override is not None:
+            return self._invert_left_override
+        return bool(self.config.invert_left_dir)
+
+    def _effective_invert_right(self) -> bool:
+        if self._invert_right_override is not None:
+            return self._invert_right_override
+        return bool(self.config.invert_right_dir)
 
     def _set_status_led(
         self,

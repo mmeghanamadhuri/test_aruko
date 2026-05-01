@@ -42,9 +42,12 @@ fine.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import queue
 import threading
+from pathlib import Path
 from typing import Callable, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -88,6 +91,94 @@ _HEARTBEAT_INTERVAL_SEC = 0.3
 # piling up. Prevents runaway growth if the bridge / serial link
 # stalls and SETs start taking longer than the heartbeat interval.
 _HEARTBEAT_MAX_QUEUED = 2
+
+
+# ---------------------------------------------------------------------
+# Wheel-polarity persistence
+#
+# The Nina hardware comes off the bench with one or both motors phase-
+# wired backward, depending on which JYQD got soldered to which hub
+# motor. The historical fix was an env var (NINA_NAV_INVERT_LEFT /
+# RIGHT) seeded into the kiosk systemd unit, which required SSHing in
+# and re-running the installer every time. The Drive screen now exposes
+# Flip L / Flip R toggles that can be flipped at runtime - the chosen
+# polarity is persisted here so it survives a reboot of the Jetson.
+#
+# Precedence on startup:
+#   1. ~/.config/sirena/drive_polarity.json if present
+#   2. NINA_NAV_INVERT_LEFT / NINA_NAV_INVERT_RIGHT env vars
+#   3. False (no flip)
+# ---------------------------------------------------------------------
+
+
+def _polarity_state_path() -> Path:
+    """Where we persist the chosen wheel polarity. XDG-friendly."""
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    return Path(base) / "sirena" / "drive_polarity.json"
+
+
+def _env_truthy(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "y", "on")
+
+
+def _load_persisted_polarity() -> Tuple[Optional[bool], Optional[bool]]:
+    """Return `(invert_left, invert_right)` if the JSON file is present
+    and well-formed; `(None, None)` otherwise (caller falls back to env
+    vars). Logs but never raises - a corrupted file should never stop
+    the GUI from booting."""
+    path = _polarity_state_path()
+    try:
+        if not path.exists():
+            return (None, None)
+        with path.open("r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        left = data.get("invert_left")
+        right = data.get("invert_right")
+        return (
+            bool(left) if left is not None else None,
+            bool(right) if right is not None else None,
+        )
+    except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+        log.warning("Could not read polarity state from %s: %s", path, exc)
+        return (None, None)
+
+
+def _save_persisted_polarity(invert_left: bool, invert_right: bool) -> None:
+    """Write the polarity to disk so the next boot picks it up. Best-
+    effort: a write failure logs a warning but does not raise, so the
+    operator can still flip the toggle and drive (just with a one-shot
+    setting that won't survive a restart)."""
+    path = _polarity_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Write to a sibling temp file then rename so we never leave
+        # half-written JSON on disk if the process is killed mid-write.
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        with tmp.open("w", encoding="utf-8") as fh:
+            json.dump(
+                {
+                    "invert_left": bool(invert_left),
+                    "invert_right": bool(invert_right),
+                },
+                fh,
+                indent=2,
+            )
+            fh.write("\n")
+        tmp.replace(path)
+    except Exception as exc:  # noqa: BLE001 - persistence is best-effort
+        log.warning("Could not save polarity state to %s: %s", path, exc)
+
+
+def _resolve_initial_polarity() -> Tuple[bool, bool]:
+    """Highest-precedence source wins: persisted JSON, then env vars,
+    then False. Centralised so DriveController and any future tools
+    derive the same boot-time defaults."""
+    left, right = _load_persisted_polarity()
+    if left is None:
+        left = _env_truthy("NINA_NAV_INVERT_LEFT")
+    if right is None:
+        right = _env_truthy("NINA_NAV_INVERT_RIGHT")
+    return (bool(left), bool(right))
 
 
 class DriveController(QObject):
@@ -135,6 +226,12 @@ class DriveController(QObject):
             initial_speed = int(self._config.default_speed_percent)
 
         self._lock = threading.RLock()
+        # Wheel polarity is resolved here (persisted JSON > env var >
+        # False) and re-applied to the nav manager from `_do_init`.
+        # That way the polarity survives a boot AND the operator can
+        # flip it at runtime from the Drive screen without touching
+        # the kiosk service or env vars.
+        initial_invert_left, initial_invert_right = _resolve_initial_polarity()
         self._state = {
             "connected": False,
             "speed_pct": initial_speed,
@@ -144,6 +241,8 @@ class DriveController(QObject):
             "heading_deg": 0,
             "distance_m": 0.0,
             "driver_message": "",
+            "invert_left": initial_invert_left,
+            "invert_right": initial_invert_right,
         }
 
         # Last (left_dir, left_speed, right_dir, right_speed) that was
@@ -238,6 +337,51 @@ class DriveController(QObject):
         with self._lock:
             self._state["reverse"] = bool(on)
         self._emit_state()
+
+    def set_invert_left(self, on: bool) -> None:
+        """Flip the left wheel's forward/backward polarity at runtime.
+
+        The setting is persisted to disk so it survives a reboot. If
+        the wheels are currently moving, the change applies on the
+        very next SET command - which the heartbeat will issue within
+        ~300 ms - so the operator sees the wheel direction flip
+        without releasing the D-pad.
+        """
+        on = bool(on)
+        with self._lock:
+            if self._state["invert_left"] == on:
+                return
+            self._state["invert_left"] = on
+        log.info("DriveController.set_invert_left(%s)", on)
+        self._enqueue(self._do_apply_polarity)
+        _save_persisted_polarity(*self._snapshot_polarity())
+        self._emit_state()
+
+    def set_invert_right(self, on: bool) -> None:
+        """Flip the right wheel's forward/backward polarity at runtime.
+        See set_invert_left for semantics."""
+        on = bool(on)
+        with self._lock:
+            if self._state["invert_right"] == on:
+                return
+            self._state["invert_right"] = on
+        log.info("DriveController.set_invert_right(%s)", on)
+        self._enqueue(self._do_apply_polarity)
+        _save_persisted_polarity(*self._snapshot_polarity())
+        self._emit_state()
+
+    def _snapshot_polarity(self) -> Tuple[bool, bool]:
+        with self._lock:
+            return (
+                bool(self._state["invert_left"]),
+                bool(self._state["invert_right"]),
+            )
+
+    def _do_apply_polarity(self) -> None:
+        """Worker-thread side of set_invert_*. Pushes the current
+        polarity into the nav manager. Safe to call multiple times -
+        it just re-applies whatever is in `state`."""
+        self._apply_polarity_to_nav()
 
     def set_brake(self, on: bool) -> None:
         with self._lock:
@@ -439,6 +583,13 @@ class DriveController(QObject):
             else:
                 self._nav = NavigationManager(self._config)
             self._nav.initialize()
+            # Push the persisted/env-seeded wheel polarity into the
+            # nav manager BEFORE we settle into engage_brake() so the
+            # very first SET issued from the GUI honours it. This is
+            # what makes the runtime Flip L / Flip R toggles 'just
+            # work' even on a fresh kiosk service that was never given
+            # NINA_NAV_INVERT_* env vars.
+            self._apply_polarity_to_nav()
             # JYQD_V7.3E2 has no software brake unless the BRK pin is
             # wired - the safest "armed but stationary" resting state
             # is brake engaged + PWM 0, which is what initialize()
@@ -458,6 +609,26 @@ class DriveController(QObject):
                 exc,
             )
         self._emit_state()
+
+    def _apply_polarity_to_nav(self) -> None:
+        """Push the current `state["invert_left/right"]` into the nav
+        manager. No-op if the nav backend doesn't expose runtime
+        polarity setters (older NavigationManager versions or a test
+        fake) - in that case the polarity from the frozen config is
+        already applied at construction time, so the user just doesn't
+        get the runtime override - which is fine."""
+        if self._nav is None:
+            return
+        with self._lock:
+            left = bool(self._state["invert_left"])
+            right = bool(self._state["invert_right"])
+        try:
+            if hasattr(self._nav, "set_invert_left"):
+                self._nav.set_invert_left(left)
+            if hasattr(self._nav, "set_invert_right"):
+                self._nav.set_invert_right(right)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Could not push polarity to nav: %s", exc)
 
     def _do_shutdown(self) -> None:
         if self._nav is None:

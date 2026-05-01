@@ -170,9 +170,33 @@ the working RPi build actually does):
 
 Override individual pins via `NINA_NAV_L_EN`, `NINA_NAV_L_DIR`,
 `NINA_NAV_L_PWM`, `NINA_NAV_R_EN`, `NINA_NAV_R_DIR`, `NINA_NAV_R_PWM`.
-Flip wheel polarity with `NINA_NAV_INVERT_LEFT=1` /
-`NINA_NAV_INVERT_RIGHT=1`. Default cruise speed is `NINA_NAV_SPEED=15`
-(matching the RPi reference build).
+
+**Wheel polarity** (which way is "forward" for each motor) is now
+adjustable from the Drive screen at runtime — see the **Flip L** /
+**Flip R** toggles in the manual control card. The choice is
+persisted to `~/.config/sirena/drive_polarity.json` and survives a
+reboot or kiosk-service restart. The legacy `NINA_NAV_INVERT_LEFT=1` /
+`NINA_NAV_INVERT_RIGHT=1` env vars still work as a **boot-time
+default** when no persisted file exists; once the operator clicks a
+toggle, the persisted value wins. Default cruise speed is
+`NINA_NAV_SPEED=15` (matching the RPi reference build).
+
+#### Calibrating wheel polarity (1-minute procedure)
+
+1. Mount the bot with the wheels free to spin (or set it on a low
+   table edge so the wheels can rotate without grabbing).
+2. Open the Drive screen, release the brake (`Brake: OFF`), set the
+   speed slider to ~25 %.
+3. Press and hold **W** (or the on-screen Forward button) for ~2
+   seconds. Watch the wheels.
+4. **Both wheels going forward** — done.
+5. **Both wheels going backward** — flip both `Flip L` and `Flip R`,
+   re-test.
+6. **Wheels going opposite directions** — flip whichever wheel is
+   going the wrong way (`Flip L` if the left wheel is reversed,
+   `Flip R` if the right wheel is reversed), re-test.
+
+The setting is saved automatically; the next boot will reuse it.
 
 ### Remote mode (Pi motor bridge)
 
@@ -295,8 +319,8 @@ the Pi.
 | `NINA_NAV_REMOTE_PORT`         | `/dev/ttyUSB0`     | Serial device on the Jetson                        |
 | `NINA_NAV_REMOTE_BAUD`         | `115200`           | Must match `motor_bridge.py --baud` on the Pi      |
 | `NINA_NAV_REMOTE_TIMEOUT_SEC`  | `0.4`              | Per-line response wait                             |
-| `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward (works in both modes) |
-| `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward (works in both modes) |
+| `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward — boot-time default; the Drive screen's **Flip L** toggle wins once clicked. Persisted to `~/.config/sirena/drive_polarity.json`. |
+| `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward — boot-time default; the Drive screen's **Flip R** toggle wins once clicked. Same persistence. |
 | `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi                            |
 | `NINA_BRIDGE_BAUD` (on the Pi) | `115200`           | Pi-side baud                                       |
 | `NINA_BRIDGE_WATCHDOG_SEC` (on the Pi) | `1.5`      | Stop wheels if Jetson goes silent while moving     |

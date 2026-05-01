@@ -251,6 +251,55 @@ class DriveScreen(QWidget):
         self._speed_pill = Pill("15%", Pill.KIND_ERROR)
         speed_row.addWidget(self._speed_pill)
 
+        # Wheel polarity calibration. The first time a Nina is built the
+        # JYQDs are commonly soldered to the hub motors with one wheel
+        # phase-wired backwards, so a "forward" command spins one wheel
+        # forward and one backward. Toggling these flips that wheel's
+        # polarity at the nav layer, and the choice is persisted to
+        # ~/.config/sirena/drive_polarity.json so the next boot picks
+        # it up. Replaces the older NINA_NAV_INVERT_LEFT / RIGHT env
+        # vars (those still work as a boot-time fallback if no
+        # persisted value exists yet).
+        polarity_row = QHBoxLayout()
+        polarity_row.setSpacing(6)
+        card.add_layout(polarity_row)
+        polarity_lbl = QLabel("Wheels")
+        polarity_lbl.setStyleSheet(
+            "color: #6e6e73; font-size: 12px; background-color: transparent;"
+        )
+        polarity_lbl.setToolTip(
+            "Per-wheel polarity flip. Use these when 'Forward' makes "
+            "the wheels spin in opposite directions."
+        )
+        polarity_row.addWidget(polarity_lbl)
+
+        self._invert_left_btn = QPushButton("Flip L: OFF")
+        self._invert_left_btn.setObjectName("togglePill")
+        self._invert_left_btn.setCheckable(True)
+        self._invert_left_btn.setFocusPolicy(Qt.NoFocus)
+        self._invert_left_btn.setMinimumHeight(28)
+        self._invert_left_btn.setMaximumHeight(28)
+        self._invert_left_btn.setToolTip(
+            "Flip the LEFT wheel's forward/backward polarity. Survives "
+            "reboot. Saved to ~/.config/sirena/drive_polarity.json."
+        )
+        self._invert_left_btn.clicked.connect(self._on_invert_left_toggle)
+        polarity_row.addWidget(self._invert_left_btn)
+
+        self._invert_right_btn = QPushButton("Flip R: OFF")
+        self._invert_right_btn.setObjectName("togglePill")
+        self._invert_right_btn.setCheckable(True)
+        self._invert_right_btn.setFocusPolicy(Qt.NoFocus)
+        self._invert_right_btn.setMinimumHeight(28)
+        self._invert_right_btn.setMaximumHeight(28)
+        self._invert_right_btn.setToolTip(
+            "Flip the RIGHT wheel's forward/backward polarity. Survives "
+            "reboot. Saved to ~/.config/sirena/drive_polarity.json."
+        )
+        self._invert_right_btn.clicked.connect(self._on_invert_right_toggle)
+        polarity_row.addWidget(self._invert_right_btn)
+        polarity_row.addStretch(1)
+
         # Brake / Reverse on the SAME row as ESTOP so the bottom of the
         # card collapses from three rows into one.
         bottom_row = QHBoxLayout()
@@ -315,6 +364,18 @@ class DriveScreen(QWidget):
     def _on_reverse_toggle(self, checked: bool) -> None:
         self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
+        self.setFocus()
+
+    def _on_invert_left_toggle(self, checked: bool) -> None:
+        self._invert_left_btn.setText(f"Flip L: {'ON' if checked else 'OFF'}")
+        self._drive.set_invert_left(checked)
+        # Return focus to the screen so WASD keeps reaching us instead
+        # of the button.
+        self.setFocus()
+
+    def _on_invert_right_toggle(self, checked: bool) -> None:
+        self._invert_right_btn.setText(f"Flip R: {'ON' if checked else 'OFF'}")
+        self._drive.set_invert_right(checked)
         self.setFocus()
 
     def _on_emergency_stop(self) -> None:
@@ -429,6 +490,22 @@ class DriveScreen(QWidget):
         # regardless of the manual brake state.
         if not self._autonomy.is_enabled():
             self._dpad.set_enabled(not state["brake"])
+
+        # Reflect persisted/runtime polarity in the toggle pills WITHOUT
+        # firing their `clicked` signal back into the controller (which
+        # would loop). blockSignals() is the cleanest way to do that
+        # since we don't have access to the underlying button's setter
+        # discrimination otherwise.
+        for btn, key, label_prefix in (
+            (self._invert_left_btn, "invert_left", "Flip L"),
+            (self._invert_right_btn, "invert_right", "Flip R"),
+        ):
+            on = bool(state.get(key, False))
+            if btn.isChecked() != on:
+                btn.blockSignals(True)
+                btn.setChecked(on)
+                btn.blockSignals(False)
+            btn.setText(f"{label_prefix}: {'ON' if on else 'OFF'}")
 
         message = state.get("driver_message", "")
         if state["connected"]:
