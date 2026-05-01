@@ -41,13 +41,58 @@ doc, see:
 | 8 | Serial link | 3× female-female dupont jumpers **OR** CP2102 / FT232 USB-to-TTL adapter | 1 | **Don't buy PL2303 or CH340** — neither chip's driver ships in JetPack's kernel. |
 | 9 | USB camera | UVC / V4L2 USB cam | 1 | Used by the Vision screen. Any 720p+ webcam is fine. |
 | 10 | Lidar (optional, for SLAM) | **SLAMTEC RPLIDAR A1M8** | 1 | USB serial, mounted on the head. |
-| 11 | Depth camera (optional, for SLAM) | **Intel RealSense D435** | 1 | USB 3, ~10° downtilt at front of chassis. |
+| 11 | Depth camera (optional, for autonomy) | **Intel RealSense D435** | 1 | USB 3, mounted **below** the RGB camera, tilted **10–15° down**. See §1.1 for the recommended sensor stack. |
 | 12 | IR cliff sensor (optional) | **Sharp GP2Y0E02B** | 1 | I²C bus 1, addr `0x40`, mounted under the front bumper. |
 | 13 | Ultrasonic ring (optional) | **HC-SR04** | 4 | Chassis FL / FR / RL / RR. |
 | 14 | Speaker (optional) | 3.5 mm or USB | 1 | Used by `gTTS` action audio + face-greet announcements. |
 
 Wiring is documented per-component in `pi_motor_bridge/PINMAP.md`
 (JYQDs ↔ Pi) and in `sirena_ui/docs/NINA_APP.md` (sensors ↔ Jetson).
+
+### 1.1 Sensor stack — recommended physical layout
+
+The three perception sensors have non-overlapping jobs and need to be
+mounted at non-overlapping heights so they don't shadow each other:
+
+```
+┌──────────┐  Top (head)        — RPLIDAR A1M8: 360° scan at one
+│  LiDAR   │                      horizontal plane. Used by SLAM
+├──────────┤                      for mapping/localisation and by
+│ RGB cam  │  Face height       — autonomy for static obstacles.
+├──────────┤                      USB camera: looks straight out for
+│ Depth    │  ~30–50 cm above   — face detection (YuNet) + object
+│ camera   │  the floor,          ID (YOLOv8). NOT used by autonomy
+│ ↘ 10–15° │  tilted 10–15°       directly today.
+├──────────┤  down              — RealSense D435: covers the volume
+│   bot    │                      LiDAR can't see (wheel-level
+└──────────┘                      obstacles, low furniture edges,
+                                  drop-offs). Tilt-down catches the
+                                  floor at ~1 m and gives drop-off
+                                  detection for free.
+```
+
+Why these specific positions:
+
+* **LiDAR on top, unobstructed.** Anything in front of the LiDAR's
+  scan plane (your own chassis, the depth camera, cables) creates a
+  blind cone in the SLAM map. Easiest to keep it clean by putting the
+  LiDAR above everything else.
+* **Depth camera below the RGB camera, not above it.** RealSense
+  D435 has an IR projector that can speckle the RGB frame if it sits
+  in the camera's line of sight. Below + tilted-down also means the
+  D435's ~28 cm minimum range hits the floor (where the dead zone
+  doesn't matter) instead of mid-room (where a person could walk
+  into the dead zone and become invisible).
+* **Forward-facing only.** None of the three sensors look behind the
+  bot. Reverse driving is "best effort" until you add a rear
+  ultrasonic or second depth camera; the autonomy stack today
+  reverses only as part of stuck-recovery (~1 s pulses), not for
+  free-form backwards travel.
+
+Three-sensor coverage is enough for indoor mapped autonomy. The four
+known classes of failure that IR / ultrasonic later (BoM rows 12 & 13)
+fix are spelled out in `sirena_ui/docs/NINA_APP.md` under "Autonomy
+sensor coverage" — read that before doing your first untethered run.
 
 ---
 
@@ -111,10 +156,20 @@ pip install --user -r sirena_ui/requirements.txt
 > rerun `pip install --user --no-deps ultralytics`.
 >
 > `pyrealsense2` is gated to non-aarch64 in `sirena_ui/requirements.txt`
-> because the pip wheel doesn't build for Jetson. On Jetson you must
-> build librealsense from source against your JetPack (see
-> librealsense's `doc/installation_jetson.md`). Skip if you don't have
-> a D435.
+> because Intel doesn't publish an aarch64 wheel. On Jetson, run the
+> ready-made installer:
+>
+> ```bash
+> ./scripts/install-realsense-jetson.sh
+> ```
+>
+> It clones librealsense, builds with `BUILD_PYTHON_BINDINGS=ON` +
+> `FORCE_RSUSB_BACKEND=ON` (skips the kernel-patch step), installs
+> the udev rules so non-root processes can open the camera, and
+> wires `/usr/local/lib/python*/dist-packages` into your Python
+> user site so `import pyrealsense2` works from the Nina venv.
+> Takes ~10–20 min on an Orin Nano. Skip entirely if you don't have
+> a D435 — the autonomy stack will run lidar-only.
 
 ### Pi — install order
 
@@ -286,6 +341,127 @@ reference if you hit anything weird.
     wheels should turn the same direction. *Back* reverses both.
     *Left* / *Right* turn in place. *E-STOP* (button or `Esc` key)
     cuts torque immediately.
+
+### 5.3 Bring-up: autonomous navigation (lidar + RGB + depth)
+
+This section assumes 5.1 + 5.2 already pass — operator can drive the
+bot manually from the GUI. Goal here is to get the **Autonomous mode**
+toggle on the Drive (or Map) screen working.
+
+The autonomy stack is reactive obstacle-avoiding wander, not goto-
+waypoint navigation. It runs `nina/navigation/autonomous_pilot.py`
+which fuses four sensor channels via `obstacle_field.fuse()`:
+
+| Sensor | Physical role | Software path |
+|---|---|---|
+| RPLIDAR A1M8 | 360° static-obstacle layer | `nina.sensors.rplidar_a1.RPLidarA1` → `SlamWorker` → `bundle.lidar` |
+| RealSense D435 | Forward volumetric layer (low obstacles, drop-offs) | `nina.sensors.realsense_d435.RealSenseD435` → `AutonomyController._depth` → `bundle.depth` |
+| HC-SR04 ring (later) | Sub-30 cm and glass/mirror coverage | `nina.sensors.hcsr04.HCSR04Array` |
+| GP2Y0E02B IR (later) | Cliff / table-edge detection | `nina.sensors.gp2y0e02b.GP2Y0E02B` |
+
+The RGB camera + face / object detection (YuNet + YOLOv8) is **not**
+fed into autonomy today — those run on the Vision tab for operator
+situational awareness only. Adding semantic obstacles ("don't drive
+toward a person", "approach the dog bowl") would mean wiring
+`VisionWorker.detections_changed` into `obstacle_field.fuse()` later.
+
+#### 5.3.1 Mount the sensors
+
+See §1.1 for the recommended height stack. Quick checklist:
+
+- [ ] LiDAR on top, USB cable routed clear of the scan plane
+      (otherwise the cable shows up as a phantom wall in the SLAM map)
+- [ ] RGB camera at face height, looking straight forward
+- [ ] D435 below the RGB camera, **30–50 cm above the floor**, tilted
+      **10–15° down** (use a small bracket — vertical-mount is fine)
+- [ ] D435 plugged into a **USB 3** port (blue inside) on the Jetson.
+      USB 2 limits depth to 480p @ 6 fps and the autonomy tick rate
+      starves.
+
+#### 5.3.2 Install pyrealsense2 on the Jetson
+
+```bash
+cd ~/Nvidia-jetson-platform
+./scripts/install-realsense-jetson.sh
+```
+
+Then verify:
+
+```bash
+python3 -c "import pyrealsense2 as rs; print(rs.__version__)"
+rs-enumerate-devices    # shipped by librealsense; lists the D435
+```
+
+If `rs-enumerate-devices` lists the camera but `python3 -c "import
+pyrealsense2"` fails, the installer's `.pth` step didn't pick the
+right Python. Re-run with `PYTHON_EXEC=/path/to/your/venv/python3
+./scripts/install-realsense-jetson.sh`.
+
+#### 5.3.3 Verify the lidar separately
+
+```bash
+ls -l /dev/ttyUSB0    # RPLIDAR A1 default port
+sudo usermod -aG dialout $USER && newgrp dialout    # if not already
+python3 -c "
+from nina.sensors.rplidar_a1 import RPLidarA1
+import time
+l = RPLidarA1()
+l.open()
+time.sleep(2)
+print(l.read())
+l.close()
+"
+```
+
+Should print a `LidarScan` object with several hundred returns.
+
+#### 5.3.4 Environment variables that gate the sensors
+
+All optional; defaults work for the recommended hardware. Set in
+`desktop/nina-ui-kiosk.service` if you need to override on the bot.
+
+| Var | Default | What it does |
+|---|---|---|
+| `NINA_DEPTH_DISABLE` | unset | `1` skips opening the D435 (autonomy runs lidar-only). Useful for debugging without the depth camera plugged in. |
+| `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
+| `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
+| `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
+| `NINA_LIDAR_DISABLE` | unset | `1` skips lidar; SLAM and autonomy both degrade gracefully. |
+
+#### 5.3.5 First autonomy run
+
+1. Place the bot in an open area with at least 1.5 m clearance on all sides.
+2. From the GUI, open **Drive** → **Settings** chip → confirm the
+   speed slider is at 15–20 % (the autonomy default and your manual-
+   drive cap).
+3. Tap **Map (SLAM)** so the lidar/SLAM worker starts and you can
+   see scans coming in. A coarse occupancy grid should fill in
+   within ~5 s of motion.
+4. Back to **Drive**. Tap **Autonomous mode**. The Map / Drive screen
+   sensor pills go live: green = sensor up, amber = sensor opened
+   but no readings yet, red = open failed.
+5. The bot should start wandering: forward when the path is clear,
+   turn-in-place when an obstacle is in the depth or lidar cone,
+   short reverse-and-rotate if it gets stuck.
+6. Hit the on-screen **E-STOP** (or the `Esc` key) any time. The
+   pilot stops the wheels and engages the brake within one tick
+   (`AutonomySettings.tick_hz`, default 5 Hz → ≤ 200 ms).
+
+#### 5.3.6 Health-screen cross-check
+
+Open **Health** while autonomy is running. The new perception rows
+should all show **OK** (or at minimum a useful detail string):
+
+* `Lidar (RPLIDAR A1)` — `RPLIDAR A1 @ /dev/ttyUSB0 / scanning`
+* `Depth camera (D435)` — `D435 640x480@15fps`
+* `IR cliff (GP2Y0E02B)` — `not detected` if you haven't installed
+  the IR yet (that's PENDING/WARN, not ERROR — known no-IR build)
+* `Ultrasonic (HC-SR04)` — `0/4 channels up` until you install them
+
+If any of those four shows ERROR with a Python traceback in the
+detail string, the message itself is the bug report — paste it and
+the relevant `.venv-ui/bin/python -m sirena_ui` console log into
+your issue.
 
 ---
 
