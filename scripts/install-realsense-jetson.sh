@@ -153,50 +153,105 @@ sudo ldconfig
 popd >/dev/null
 
 # --------------------------------------------------------------------
-# 5) pyrealsense2 visibility check
+# 4.5) Land the Python .so files where Python can actually find them
 # --------------------------------------------------------------------
 #
-# `make install` puts pyrealsense2 under /usr/local/lib/python*/dist-
-# packages/. Most JetPack Python venvs don't include that path, so we
-# add it via a .pth file in the user-site directory. This keeps the
-# install non-invasive while making `import pyrealsense2` work from
-# the Nina venv with no env-var gymnastics.
+# librealsense's `make install` is buggy in a specific way for the
+# Python bindings: it installs the C library (librealsense2.so) and
+# the cmake config files cleanly, but on the BUILD_PYTHON_BINDINGS=ON
+# path it leaves the actual Python .so files behind in the build
+# tree. Worse, on JetPack 6 / Ubuntu 22.04 the install AT THE SAME
+# TIME creates an empty `pyrealsense2/` directory on the Python
+# search path, which Python 3.10 then treats as a NAMESPACE PACKAGE
+# (PEP 420). `import pyrealsense2` succeeds, returns a package with
+# `__file__: None` and zero attributes, and our driver's
+# `_import_pyrealsense2()` correctly reports it as broken - but the
+# user has no idea why.
+#
+# This step closes the loop: find the .so files the build produced,
+# pick the directory where the (empty) pyrealsense2/ namespace
+# package lives, copy the .so files in, and drop a re-export
+# __init__.py so `from pyrealsense2 import pipeline` resolves
+# correctly. Idempotent: re-running just overwrites with the same
+# content.
 
-USER_SITE="$(${PYTHON_EXEC} -c 'import site; print(site.getusersitepackages())')"
-mkdir -p "${USER_SITE}"
-PTH_FILE="${USER_SITE}/pyrealsense2-system.pth"
+log "Locating the Python bindings the build produced"
+PY_BUILD_DIR="${build_dir}/Release"
+mapfile -t PY_SO_FILES < <(
+    find "${PY_BUILD_DIR}" -maxdepth 1 -type f \
+        \( -name 'pyrealsense2*.so' -o -name 'pyrsutils*.so' \) 2>/dev/null
+)
+if [[ "${#PY_SO_FILES[@]}" -eq 0 ]]; then
+    warn "No Python .so files found under ${PY_BUILD_DIR}.
+The cmake build produced no Python bindings - likely python3-dev
+headers were missing at configure time. Re-run with:
+    sudo apt install -y python3-dev
+    rm -rf ${BUILD_DIR}/build
+    bash $0"
+    # Don't `die` - let the smoke test surface the failure mode in
+    # the operator's own words.
+else
+    PY_DEST="$(${PYTHON_EXEC} -c '
+import sys, os
+# Prefer an existing pyrealsense2/ directory on sys.path - that is
+# where librealsense_make_install left a (probably empty) namespace
+# package; landing the .so there is the least invasive fix.
+for p in sys.path:
+    if not p:
+        continue
+    cand = os.path.join(p, "pyrealsense2")
+    if os.path.isdir(cand):
+        print(cand)
+        sys.exit(0)
+# No existing dir - create one in the canonical Debian / Ubuntu
+# system-Python dist-packages location so subsequent runs see it.
+print("/usr/lib/python3/dist-packages/pyrealsense2")
+')"
+    log "Landing Python bindings into ${PY_DEST}"
+    sudo mkdir -p "${PY_DEST}"
+    for so in "${PY_SO_FILES[@]}"; do
+        sudo cp "${so}" "${PY_DEST}/"
+        log "  installed $(basename "${so}")"
+    done
 
-# Resolve the dist-packages path that matches THIS Python interp's
-# major.minor. Earlier the script globbed `/usr/local/lib/python*/
-# dist-packages` and grabbed the first hit alphabetically, which on a
-# system with both python2.7 (legacy) and python3.10 (Nina venv)
-# yields the python2.7 directory - completely useless for a Python 3
-# .pth file. We now ask the running interp what its version is and
-# build the path explicitly.
-PY_VER_TAG="$(${PYTHON_EXEC} -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
-CANDIDATE="/usr/local/lib/${PY_VER_TAG}/dist-packages"
+    # Write a re-export __init__.py if the directory doesn't already
+    # have a non-empty one. We don't clobber an existing __init__.py
+    # because some librealsense packagings (Debian's python3-
+    # pyrealsense2, when that ever ships) might author a richer one;
+    # if the file is empty (the namespace-package case the user
+    # actually hit) we replace it.
+    INIT_FILE="${PY_DEST}/__init__.py"
+    if [[ ! -s "${INIT_FILE}" ]]; then
+        sudo tee "${INIT_FILE}" >/dev/null <<'INITPY'
+"""pyrealsense2 re-export shim.
 
-# Fallback: if cmake landed the bindings somewhere else (custom prefix,
-# different Python layout), find the directory that actually contains
-# pyrealsense2. `find -name pyrealsense2 -type d` returns the package
-# dir; we want its PARENT (the site-packages-like directory that needs
-# to go on sys.path).
-if [[ ! -d "${CANDIDATE}/pyrealsense2" ]]; then
-    DETECTED="$(find /usr/local/lib /usr/lib -maxdepth 6 -type d -name pyrealsense2 2>/dev/null | head -1)"
-    if [[ -n "${DETECTED}" ]]; then
-        CANDIDATE="$(dirname "${DETECTED}")"
+Auto-generated by scripts/install-realsense-jetson.sh because
+librealsense's `make install` doesn't ship a working __init__.py.
+Re-exports every public symbol from the C-extension submodule so
+`import pyrealsense2 as rs ; rs.pipeline()` works the way x86 wheel
+users expect.
+"""
+from .pyrealsense2 import *  # noqa: F401,F403
+INITPY
+        log "Wrote re-export __init__.py at ${INIT_FILE}"
+    else
+        log "Existing ${INIT_FILE} preserved (already populated)"
     fi
 fi
 
-if [[ -d "${CANDIDATE}" ]]; then
-    echo "${CANDIDATE}" > "${PTH_FILE}"
-    log "Wrote ${PTH_FILE} -> ${CANDIDATE}"
-else
-    warn "Could not locate the directory containing pyrealsense2.
-The smoke test below may still pass if cmake installed the bindings
-into a Python path that's already on sys.path; if it fails, set
-PYTHONPATH manually to wherever 'find / -name pyrealsense2 -type d'
-turns up."
+PY_VER_TAG="$(${PYTHON_EXEC} -c 'import sys; print(f"python{sys.version_info.major}.{sys.version_info.minor}")')"
+
+# Clean up the legacy .pth file an earlier version of this script may
+# have written. With the .so files landed directly into the package
+# dir above, the .pth shim is no longer needed - and the previous
+# version had a bug where it wrote a useless python2.7 path on
+# JetPack 6 systems that have both python2.7 (legacy) and python3.10
+# (Nina venv). Removing it removes a bit of noise from `python3 -v`
+# diagnostics later.
+LEGACY_PTH="$(${PYTHON_EXEC} -c 'import site, os; print(os.path.join(site.getusersitepackages(), "pyrealsense2-system.pth"))')"
+if [[ -f "${LEGACY_PTH}" ]]; then
+    rm -f "${LEGACY_PTH}"
+    log "Removed legacy .pth shim ${LEGACY_PTH} (no longer needed)"
 fi
 
 # --------------------------------------------------------------------
