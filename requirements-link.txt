@@ -1,0 +1,10 @@
+# Jetson companion link daemon (Wi-Fi AP/HN API). Install alongside Sirena UI:
+#   pip install -r requirements-link.txt
+#
+# Run:
+#   export PYTHONPATH=.
+#   python -m nina.link_daemon.main
+
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.0

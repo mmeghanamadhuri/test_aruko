@@ -7,9 +7,13 @@ General has working fields backed by `NinaSettings`.
 
 from __future__ import annotations
 
-from typing import Dict, List, Tuple
+import json
+import os
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Tuple
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
     QButtonGroup,
@@ -135,7 +139,234 @@ class SettingsScreen(QWidget):
     def _build_pane(self, key: str, label: str) -> QWidget:
         if key == "general":
             return self._build_general_pane()
+        if key == "network":
+            return self._build_network_pane()
         return self._build_placeholder_pane(label)
+
+    def _link_base_url(self) -> str:
+        return os.environ.get("NINA_LINK_URL", "http://127.0.0.1:8787").rstrip("/")
+
+    def _link_request(
+        self,
+        path: str,
+        *,
+        method: str = "GET",
+        body: Any = None,
+        timeout: float = 8.0,
+    ) -> Dict[str, Any]:
+        url = self._link_base_url() + path
+        data = None
+        headers = {"Accept": "application/json"}
+        if body is not None:
+            raw = json.dumps(body).encode("utf-8")
+            data = raw
+            headers["Content-Type"] = "application/json"
+        req = urllib.request.Request(url, data=data, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+        except urllib.error.HTTPError as e:
+            try:
+                detail = e.read().decode("utf-8")
+                parsed = json.loads(detail)
+            except Exception:
+                parsed = {"message": e.reason or str(e.code)}
+            raise RuntimeError(str(parsed)) from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(
+                f"Link daemon unreachable ({self._link_base_url()}). "
+                "Install requirements-link.txt and run: python -m nina.link_daemon.main"
+            ) from e
+
+    def _build_network_pane(self) -> QWidget:
+        container = QWidget()
+        v = QVBoxLayout(container)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(8)
+
+        v.addWidget(Breadcrumb("Nina", "Settings", "Network"))
+
+        card = Card(padding=12, spacing=8)
+        v.addWidget(card, stretch=1)
+
+        title = QLabel("Connectivity")
+        title.setStyleSheet(
+            "color: #1c1c1e; font-size: 15px; font-weight: 700;"
+            " background-color: transparent;"
+        )
+        card.add(title)
+        card.add(
+            MutedLabel(
+                "Controls the Jetson Wi-Fi role (access-point vs home network). "
+                "Requires the nina-link daemon on this machine "
+                f"({self._link_base_url()})."
+            )
+        )
+
+        self._net_status = QLabel("\u2014")
+        self._net_status.setWordWrap(True)
+        self._net_status.setStyleSheet(
+            "color: #1c1c1e; font-size: 12px; background-color: transparent;"
+        )
+        card.add(self._net_status)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        card.add_layout(row)
+        refresh = QPushButton("Refresh")
+        refresh.setObjectName("secondaryButton")
+        refresh.setCursor(Qt.PointingHandCursor)
+        refresh.clicked.connect(self._refresh_network_status)
+        row.addWidget(refresh)
+        ap_btn = QPushButton("Start AP")
+        ap_btn.setObjectName("secondaryButton")
+        ap_btn.setCursor(Qt.PointingHandCursor)
+        ap_btn.clicked.connect(self._net_start_ap)
+        row.addWidget(ap_btn)
+        sta_btn = QPushButton("Use home Wi-Fi")
+        sta_btn.setObjectName("primaryButton")
+        sta_btn.setCursor(Qt.PointingHandCursor)
+        sta_btn.clicked.connect(self._net_connect_home)
+        row.addWidget(sta_btn)
+        row.addStretch(1)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        form.setLabelAlignment(Qt.AlignRight)
+        card.add_layout(form)
+
+        self._net_mode = QComboBox()
+        self._net_mode.addItems(
+            ["boot_default", "force_ap", "force_sta"]
+        )
+        apply_mode = QPushButton("Apply mode")
+        apply_mode.setObjectName("secondaryButton")
+        apply_mode.setCursor(Qt.PointingHandCursor)
+        apply_mode.clicked.connect(self._net_apply_mode)
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(self._net_mode, stretch=1)
+        mode_row.addWidget(apply_mode)
+        mode_wrap = QWidget()
+        mode_wrap.setLayout(mode_row)
+        form.addRow("User mode", mode_wrap)
+
+        self._net_pin = QLineEdit()
+        self._net_pin.setPlaceholderText("Pairing PIN (tablet)")
+        form.addRow("Pair PIN", self._net_pin)
+
+        pair_btn = QPushButton("Pair session (copy token to tablet)")
+        pair_btn.setObjectName("secondaryButton")
+        pair_btn.setCursor(Qt.PointingHandCursor)
+        pair_btn.clicked.connect(self._net_pair)
+        form.addRow("", pair_btn)
+
+        self._net_home_ssid = QLineEdit()
+        self._net_home_ssid.setPlaceholderText("Home SSID")
+        form.addRow("Home SSID", self._net_home_ssid)
+
+        self._net_home_pw = QLineEdit()
+        self._net_home_pw.setEchoMode(QLineEdit.Password)
+        self._net_home_pw.setPlaceholderText("Home Wi-Fi password")
+        form.addRow("Home password", self._net_home_pw)
+
+        save_wifi = QPushButton("Save home credentials only")
+        save_wifi.setObjectName("secondaryButton")
+        save_wifi.setCursor(Qt.PointingHandCursor)
+        save_wifi.clicked.connect(self._net_save_home)
+        form.addRow("", save_wifi)
+
+        card.add(HRule())
+        card.add(MutedLabel("Saved profiles can be removed from the Android companion app."))
+        card.add_stretch()
+
+        self._refresh_network_status()
+
+        self._net_timer = QTimer(self)
+        self._net_timer.timeout.connect(self._refresh_network_status)
+        self._net_timer.start(4000)
+
+        return container
+
+    def _refresh_network_status(self) -> None:
+        try:
+            st = self._link_request("/v1/status")
+        except RuntimeError as e:
+            self._net_status.setText(str(e))
+            return
+        lines = [
+            f"Role: {st.get('wifi_role', '?')}",
+            f"IPv4: {st.get('ipv4') or '—'}",
+            f"AP SSID: {st.get('ap_ssid', '')}",
+            f"Boot window remaining: {st.get('boot_wait_remaining_sec', 0)} s",
+            f"Client seen: {st.get('client_seen')}",
+            f"User mode: {st.get('user_mode')}",
+        ]
+        pin = st.get("pairing_pin")
+        if pin:
+            lines.append(f"Pairing PIN: {pin}")
+        err = st.get("last_error") or ""
+        if err:
+            lines.append(f"Last error: {err}")
+        saved = st.get("saved_networks") or []
+        if saved:
+            lines.append("Saved: " + ", ".join(s["ssid"] for s in saved[:6]))
+        self._net_status.setText("\n".join(lines))
+
+    def _net_apply_mode(self) -> None:
+        mode = self._net_mode.currentText()
+        try:
+            self._link_request("/v1/mode", method="POST", body={"mode": mode})
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_start_ap(self) -> None:
+        try:
+            self._link_request("/v1/wifi/start-ap", method="POST", body={})
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_connect_home(self) -> None:
+        try:
+            self._link_request("/v1/wifi/connect-home", method="POST", body={})
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_save_home(self) -> None:
+        ssid = self._net_home_ssid.text().strip()
+        if not ssid:
+            QMessageBox.information(self, "Network", "Enter a home SSID.")
+            return
+        try:
+            self._link_request(
+                "/v1/wifi/home-credentials",
+                method="POST",
+                body={"ssid": ssid, "password": self._net_home_pw.text()},
+            )
+            QMessageBox.information(self, "Network", "Home Wi-Fi profile saved.")
+            self._refresh_network_status()
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
+
+    def _net_pair(self) -> None:
+        pin = self._net_pin.text().strip()
+        if len(pin) < 4:
+            QMessageBox.information(self, "Network", "Enter the pairing PIN.")
+            return
+        try:
+            out = self._link_request("/v1/pair", method="POST", body={"pin": pin})
+            tok = out.get("token", "")
+            QMessageBox.information(
+                self,
+                "Paired",
+                "Session token (paste into companion app / Authorization "
+                f"header):\n\n{tok}",
+            )
+        except RuntimeError as e:
+            QMessageBox.warning(self, "Network", str(e))
 
     # ---------- General ----------
 

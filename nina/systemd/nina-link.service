@@ -1,0 +1,20 @@
+[Unit]
+Description=Nina Link Daemon (Wi-Fi provisioning API for companion app)
+After=network-online.target NetworkManager.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/nvidia-jetson-platform
+Environment=PYTHONPATH=/opt/nvidia-jetson-platform
+Environment=NINA_LINK_BOOT_AP=1
+Environment=NINA_LINK_HOST=0.0.0.0
+Environment=NINA_LINK_PORT=8787
+# Optional fleet-wide auth for remote mutation when off trusted AP:
+# Environment=NINA_LINK_TOKEN=your-secret-token
+ExecStart=/usr/bin/python3 -m nina.link_daemon.main
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
