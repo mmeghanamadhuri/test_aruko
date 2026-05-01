@@ -108,6 +108,12 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
         wait_left = coordinator.boot_wait_remaining_sec()
         um = coordinator.user_mode_enum()
 
+        sta_info: Dict[str, Optional[str]] = {"ssid": None, "profile_name": None}
+        try:
+            sta_info = coordinator.nm.active_wifi_station_info()
+        except Exception:
+            log.exception("active_wifi_station_info")
+
         body: Dict[str, Any] = {
             "wifi_role": role,
             "ipv4": ipv4,
@@ -118,6 +124,8 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "last_error": coordinator.ps.last_error,
             "paired": bool(coordinator.ps.session_token),
             "ap_ssid": cfg.ap_ssid,
+            "active_sta_ssid": sta_info.get("ssid"),
+            "active_sta_profile": sta_info.get("profile_name"),
         }
         if loop and coordinator.ps.pairing_pin:
             body["pairing_pin"] = coordinator.ps.pairing_pin
@@ -214,6 +222,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                     break
         try:
             coordinator.nm.activate_connection(chosen.uuid)
+            coordinator.set_user_mode(UserMode.FORCE_STA)
             coordinator.clear_error()
             return {"ok": True, "connected_profile": chosen.ssid}
         except NMError as e:
@@ -233,6 +242,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             coordinator.nm.start_hotspot(cfg.ap_ssid, cfg.ap_password)
             coordinator.ps.ap_started = True
             coordinator.store.save(coordinator.ps)
+            coordinator.set_user_mode(UserMode.FORCE_AP)
             coordinator.clear_error()
             return {"ok": True, "ssid": cfg.ap_ssid}
         except NMError as e:

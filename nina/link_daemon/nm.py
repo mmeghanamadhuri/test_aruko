@@ -35,6 +35,8 @@ class NMBackend:
     """Real nmcli or in-memory mock."""
 
     mock: bool = False
+    #: New profiles from add_wifi_connection get connection.autoconnect no when True.
+    disable_wifi_autoconnect: bool = True
     _mock_profiles: List[SavedNetwork] = field(default_factory=list)
     _mock_ap_active: bool = False
     _mock_sta_connected: bool = False
@@ -182,6 +184,25 @@ class NMBackend:
             return ""
         return r.stdout.strip()
 
+    def _connection_wifi_mode(self, uuid: str) -> str:
+        r = subprocess.run(
+            [
+                "nmcli",
+                "-g",
+                "802-11-wireless.mode",
+                "connection",
+                "show",
+                uuid,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return (r.stdout.strip() or "infrastructure").lower()
+
     def add_wifi_connection(
         self,
         ssid: str,
@@ -194,7 +215,12 @@ class NMBackend:
             with self._lock:
                 cid = id_hint or f"wifi-{ssid}"
                 u = f"mock-uuid-{len(self._mock_profiles)}"
-                sn = SavedNetwork(id=cid, uuid=u, ssid=ssid)
+                sn = SavedNetwork(
+                    id=cid,
+                    uuid=u,
+                    ssid=ssid,
+                    autoconnect=not self.disable_wifi_autoconnect,
+                )
                 self._mock_profiles = [p for p in self._mock_profiles if p.ssid != ssid]
                 self._mock_profiles.append(sn)
                 return sn
@@ -214,6 +240,8 @@ class NMBackend:
             "wifi-sec.psk",
             password,
         ]
+        if self.disable_wifi_autoconnect:
+            args += ["connection.autoconnect", "no"]
         proc = subprocess.run(
             ["nmcli", *args],
             capture_output=True,
@@ -282,6 +310,78 @@ class NMBackend:
                 )
             raise NMError("Could not connect", details=err)
 
+    def disable_autoconnect_all_saved_wifi(self) -> None:
+        """Set connection.autoconnect no on every saved 802-11 profile (STAs won't auto-join on boot)."""
+        if self.mock:
+            return
+        for p in self.list_saved_wifi():
+            subprocess.run(
+                [
+                    "nmcli",
+                    "connection",
+                    "modify",
+                    p.uuid,
+                    "connection.autoconnect",
+                    "no",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+    def _connection_id(self, uuid: str) -> str:
+        r = subprocess.run(
+            ["nmcli", "-g", "connection.id", "connection", "show", uuid],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if r.returncode != 0:
+            return ""
+        return r.stdout.strip()
+
+    def active_wifi_station_info(self) -> Dict[str, Optional[str]]:
+        """Return SSID + NM profile name when connected as STA (not hotspot/AP profile)."""
+        if self.mock:
+            with self._lock:
+                if self._mock_sta_connected and self._mock_current_ssid:
+                    return {
+                        "ssid": self._mock_current_ssid,
+                        "profile_name": "mock-wifi",
+                    }
+                return {"ssid": None, "profile_name": None}
+
+        raw = subprocess.run(
+            ["nmcli", "-t", "-f", "UUID,TYPE", "connection", "show", "--active"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+        )
+        if raw.returncode != 0:
+            return {"ssid": None, "profile_name": None}
+
+        for ln in raw.stdout.splitlines():
+            if ":" not in ln:
+                continue
+            uuid, typ = ln.split(":", 1)
+            typ = typ.strip()
+            if typ != "802-11-wireless":
+                continue
+            mode = self._connection_wifi_mode(uuid)
+            if mode == "ap":
+                continue
+            ssid = self._connection_ssid(uuid).strip()
+            prof = self._connection_id(uuid).strip()
+            return {
+                "ssid": ssid or None,
+                "profile_name": prof or None,
+            }
+
+        return {"ssid": None, "profile_name": None}
+
     def start_hotspot(
         self,
         ssid: str,
@@ -301,6 +401,9 @@ class NMBackend:
         dev = ifname or self._wifi_device_name()
         if not dev:
             raise NMError("No Wi-Fi device found for hotspot")
+
+        # Drop any STA session so the radio can become an AP.
+        self.disconnect_device(timeout=min(timeout, 30.0))
 
         proc = subprocess.run(
             [

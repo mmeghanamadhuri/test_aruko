@@ -262,6 +262,10 @@ private fun StatusCard(st: StatusUi) {
             Text("Boot window: ${st.bootWaitRemainingSec}s")
             Text("Client seen: ${st.clientSeen}")
             st.apSsid?.let { Text("AP SSID: $it") }
+            if (!st.activeStaSsid.isNullOrBlank()) {
+                Text("Connected (STA): ${st.activeStaSsid}")
+                st.activeStaProfile?.let { Text("NM profile: $it") }
+            }
             st.lastError?.let {
                 Text("Last error: $it", color = MaterialTheme.colorScheme.error)
             }
@@ -298,6 +302,11 @@ private fun NetworksTab(state: CompanionUiState, vm: CompanionViewModel) {
                                     Text(net.ssid, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
                                     Text(
                                         net.uuid,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Text(
+                                        if (net.nmAutoconnect) "NM autoconnect: on" else "NM autoconnect: off",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )

@@ -23,9 +23,16 @@ data class StatusUi(
     val lastError: String?,
     val savedNetworks: List<SavedNetUi>,
     val apSsid: String?,
+    val activeStaSsid: String?,
+    val activeStaProfile: String?,
 )
 
-data class SavedNetUi(val id: String, val uuid: String, val ssid: String)
+data class SavedNetUi(
+    val id: String,
+    val uuid: String,
+    val ssid: String,
+    val nmAutoconnect: Boolean,
+)
 
 sealed interface CompanionUiState {
     data object Loading : CompanionUiState
@@ -188,6 +195,7 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         o.optString("id"),
                         o.optString("uuid"),
                         o.optString("ssid"),
+                        nmAutoconnect = o.optBoolean("autoconnect", false),
                     ),
                 )
             }
@@ -201,6 +209,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             lastError = j.optString("last_error").takeIf { it.isNotBlank() },
             savedNetworks = saved,
             apSsid = j.optString("ap_ssid").takeIf { it.isNotBlank() },
+            activeStaSsid = j.optString("active_sta_ssid").takeIf { it.isNotBlank() },
+            activeStaProfile = j.optString("active_sta_profile").takeIf { it.isNotBlank() },
         )
     }
 

@@ -102,6 +102,7 @@ Type=simple
 WorkingDirectory=${REPO_ROOT}
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1
+Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
 ExecStart=${PY} -m nina.link_daemon.main

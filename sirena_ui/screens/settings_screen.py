@@ -302,6 +302,12 @@ class SettingsScreen(QWidget):
             f"Client seen: {st.get('client_seen')}",
             f"User mode: {st.get('user_mode')}",
         ]
+        sta_ssid = st.get("active_sta_ssid")
+        if sta_ssid:
+            lines.append(f"STA connected: {sta_ssid}")
+            prof = st.get("active_sta_profile")
+            if prof:
+                lines.append(f"NM profile: {prof}")
         pin = st.get("pairing_pin")
         if pin:
             lines.append(f"Pairing PIN: {pin}")
@@ -310,7 +316,11 @@ class SettingsScreen(QWidget):
             lines.append(f"Last error: {err}")
         saved = st.get("saved_networks") or []
         if saved:
-            lines.append("Saved: " + ", ".join(s["ssid"] for s in saved[:6]))
+            brief = []
+            for s in saved[:8]:
+                ac = "on" if s.get("autoconnect") else "off"
+                brief.append(f"{s.get('ssid', '?')} (NM auto:{ac})")
+            lines.append("Saved: " + ", ".join(brief))
         self._net_status.setText("\n".join(lines))
 
     def _net_apply_mode(self) -> None:

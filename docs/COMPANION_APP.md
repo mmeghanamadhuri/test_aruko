@@ -48,7 +48,8 @@ Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/co
 | `NINA_LINK_PORT` | HTTP port (default `8787`) |
 | `NINA_LINK_AP_SSID` / `NINA_LINK_AP_PASSWORD` | Hotspot credentials when using `nmcli device wifi hotspot` |
 | `NINA_LINK_AP_WAIT_SEC` | Boot “window” indicator for status JSON (default 30) |
-| `NINA_LINK_BOOT_AP` | If `1` (default), start hotspot on boot unless `user_mode=force_sta` and saved profiles exist |
+| `NINA_LINK_BOOT_AP` | If `1` (default), bring up **Nina AP** on daemon start (STA home Wi‑Fi only via app **connect-home** / live actions, not automatically on reboot) |
+| `NINA_LINK_DISABLE_WIFI_AUTOCONNECT` | If `1` (default), saved Wi‑Fi profiles get **autoconnect=no** at boot and new profiles from the app don’t auto-join |
 | `NINA_LINK_TOKEN` | If set, remote clients must send `Authorization: Bearer <token>` for mutating calls (localhost always trusted) |
 | `NINA_LINK_MOCK` | If `1`, simulate Wi-Fi (for laptops without NetworkManager) |
 
@@ -56,7 +57,7 @@ Systemd example: [`nina/systemd/nina-link.service`](../nina/systemd/nina-link.se
 
 ## Sirena UI on the robot
 
-Settings → **Network** talks to `http://127.0.0.1:8787` by default (override with `NINA_LINK_URL`). Use **Apply mode** for AP vs home Wi-Fi behavior aligned with the tablet app.
+Settings → **Network** talks to `http://127.0.0.1:8787` by default (override with `NINA_LINK_URL`). Status shows **saved profiles** (including ones added on the Jetson) and any **active STA** connection. Home Wi‑Fi is joined only when you use **Connect jetson** / **force_sta** from the app or this screen—not automatically after reboot.
 
 ## Tablet: APK flow
 

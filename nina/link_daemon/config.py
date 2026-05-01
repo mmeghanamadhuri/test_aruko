@@ -52,6 +52,8 @@ class LinkDaemonConfig:
     ap_password: str = "ninsetup"
     ap_wait_sec: int = 30
     state_path: Path = field(default_factory=_default_state_path)
+    #: Turn off NM autoconnect on saved Wi-Fi at startup and for new profiles (STA only via app).
+    disable_wifi_autoconnect: bool = True
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -71,6 +73,9 @@ def load_config() -> LinkDaemonConfig:
         ap_wait_sec=max(5, _env_int("NINA_LINK_AP_WAIT_SEC", 30)),
         state_path=Path(
             os.environ.get("NINA_LINK_STATE_PATH", str(_default_state_path()))
+        ),
+        disable_wifi_autoconnect=_env_bool(
+            "NINA_LINK_DISABLE_WIFI_AUTOCONNECT", True
         ),
     )
     if _env_bool("NINA_LINK_MOCK", False):
