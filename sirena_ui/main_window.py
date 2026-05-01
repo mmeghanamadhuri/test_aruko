@@ -25,6 +25,7 @@ import socket
 from typing import Dict, Optional
 
 from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtGui import QGuiApplication
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QMainWindow,
@@ -53,19 +54,34 @@ class MainWindow(QMainWindow):
         self._service = service
         self.setWindowTitle("Sirena Control Center")
 
-        # Default geometry targets a 1024 x 600 panel (Nina's stock 10.1"
-        # touchscreen). The minimum is set to that exact size so the GUI
-        # doesn't crop off below it on the bot, while developers running
-        # on a 1280+ x 800+ desktop still get a roomy 1280 x 800 window.
-        self.resize(1280, 800)
-        self.setMinimumSize(1024, 600)
-
         # NINA_UI_FULLSCREEN=1 starts the GUI in frameless kiosk mode at
         # the panel's native resolution - what we want on the bot. Devs
         # leave the env var unset to keep their normal resizable window.
         self._kiosk = _env_truthy("NINA_UI_FULLSCREEN")
         if self._kiosk:
             self.setWindowFlag(Qt.FramelessWindowHint, True)
+
+        # Default geometry targets a 1024 x 600 panel (Nina's stock 10.1"
+        # touchscreen). The minimum is set to that exact size so the GUI
+        # doesn't crop off below it on the bot. In kiosk mode we size
+        # the window to the primary screen IMMEDIATELY (rather than
+        # the dev-friendly 1280x800 default) so the WM never sees a
+        # window bigger than the panel - on a 1024x600 panel a 1280x800
+        # initial size makes the WM smart-place the oversize window at
+        # a non-zero offset and our subsequent showEvent setGeometry
+        # then races against that placement, leaving the kiosk shifted
+        # right of the panel with the desktop visible underneath.
+        if self._kiosk:
+            primary = QGuiApplication.primaryScreen()
+            if primary is not None:
+                pg = primary.geometry()
+                self.resize(pg.width(), pg.height())
+            else:
+                self.resize(1024, 600)
+            self.setMinimumSize(640, 360)
+        else:
+            self.resize(1280, 800)
+            self.setMinimumSize(1024, 600)
 
         self._screens: Dict[str, QWidget] = {}
         self._titles: Dict[str, str] = {
@@ -114,25 +130,27 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:
         """Honour kiosk mode after the window's first show.
 
-        Default kiosk mode here is a frameless window explicitly
-        sized to the QScreen geometry - NOT showFullScreen() and
-        NOT showMaximized():
+        Default kiosk mode is a frameless window explicitly sized to
+        the primary QScreen geometry - NOT showFullScreen() and NOT
+        showMaximized():
 
-        - showFullScreen() claims X11 `_NET_WM_STATE_FULLSCREEN`,
-          which most window managers honour by stacking the kiosk
-          above every other window class - including ABOVE-state
-          windows like the on-screen keyboard. The keyboard then
-          renders correctly but stays buried.
-        - showMaximized() + FramelessWindowHint isn't reliable
-          either: many WMs don't know how to maximize a frameless
-          window and just leave it at its prior resize() (1280x800),
-          which on a 1024x600 panel produces a stretched/cropped UI.
-          That was the regression after the first attempt at this
-          fix.
+        - showFullScreen() claims X11 `_NET_WM_STATE_FULLSCREEN`
+          which most WMs stack above every other window class
+          including ABOVE-state windows (i.e. the OSK).
+        - showMaximized() + FramelessWindowHint is unreliable: many
+          WMs don't know how to maximize a frameless window and just
+          leave it at the prior resize, producing a stretched/cropped
+          UI on a 1024x600 panel.
 
-        Manual `setGeometry(screen_rect)` sidesteps both: we get
-        pixel-exact full-panel coverage AND no fullscreen state, so
-        the OSK can stack above us via its `force-to-top` flag.
+        Manual setGeometry(primary_screen) sidesteps both. The work
+        gets DEFERRED into a QTimer.singleShot(0, ...) call so the
+        WM has finished its initial placement of our frameless
+        window before we override - without that deferral the WM's
+        smart-place pass races our setGeometry and the kiosk often
+        ends up shifted right of the panel with the desktop visible
+        on the left. We also re-assert geometry once more 250 ms
+        later because some WMs do a second placement pass after the
+        first override.
 
         NINA_UI_FULLSCREEN_STRICT=1 opts back into showFullScreen()
         for deployments that don't use an on-screen keyboard and
@@ -143,46 +161,68 @@ class MainWindow(QMainWindow):
         if not self._kiosk:
             return
 
-        strict = _env_truthy("NINA_UI_FULLSCREEN_STRICT")
-        screen = self.windowHandle().screen() if self.windowHandle() else None
-
-        if strict:
+        if _env_truthy("NINA_UI_FULLSCREEN_STRICT"):
             if not self.isFullScreen():
                 self.showFullScreen()
-        elif screen is not None:
-            # Manual sizing path: leave any prior fullscreen/
-            # maximized state, then setGeometry to the screen rect.
-            # Calling showNormal first is what undoes a previous
-            # F11-toggled fullscreen state cleanly.
-            if self.isFullScreen() or self.isMaximized():
-                self.showNormal()
-            geom = screen.geometry()
-            self.move(geom.x(), geom.y())
-            self.resize(geom.width(), geom.height())
-        else:
-            # Defensive fallback - if we somehow can't query the
-            # screen, fullscreen is better than a 1280x800 window
-            # cropped on a 1024x600 panel.
+            QTimer.singleShot(50, self._log_kiosk_state)
+            return
+
+        # Defer to next event-loop tick so WM initial placement
+        # completes first, then re-assert after the WM's secondary
+        # placement pass would have run.
+        QTimer.singleShot(0, self._apply_kiosk_geometry)
+        QTimer.singleShot(250, self._apply_kiosk_geometry)
+
+    def _apply_kiosk_geometry(self) -> None:
+        """Force the kiosk window to fill the primary screen exactly.
+
+        Idempotent: calling this multiple times is safe and is in
+        fact how we counter WMs that perform a second placement
+        pass after our first override (we schedule a 250ms re-run
+        from showEvent for exactly that reason).
+        """
+        primary = QGuiApplication.primaryScreen()
+        if primary is None:
+            # No screens reported - last-resort fullscreen so the
+            # operator at least sees the GUI even if stacking is
+            # broken.
             if not self.isFullScreen():
                 self.showFullScreen()
+            return
 
-        # Log the actual surface Qt grabbed so launch.log shows
-        # whether xrandr-forced 1024x600 actually took. If you ever
-        # see a window size other than 1024x600 here on the bot, the
-        # panel is being driven at a virtual EDID resolution and the
-        # layouts will overflow - re-check launch-sirena.sh's
-        # `_force_panel_resolution_1024x600`.
+        # Drop any prior fullscreen/maximized state so setGeometry
+        # actually takes - Qt ignores geometry changes on a window
+        # in those states.
+        if self.isFullScreen() or self.isMaximized():
+            self.showNormal()
+
+        target = primary.geometry()
+        if (self.x(), self.y(), self.width(), self.height()) != (
+            target.x(), target.y(), target.width(), target.height()
+        ):
+            self.setGeometry(target)
+        self._log_kiosk_state()
+
+    def _log_kiosk_state(self) -> None:
+        """One log line per geometry application showing screen +
+        window rects, so launch.log makes it obvious if we're
+        misaligned. Operator pastes the latest [kiosk] line into a
+        bug report and we know exactly what setGeometry produced."""
         try:
-            if screen is not None:
-                geom = screen.geometry()
-                print(
-                    f"[kiosk] mode={'fullscreen' if strict else 'sized'} "
-                    f"screen={screen.name()!r} "
-                    f"geometry={geom.width()}x{geom.height()} "
-                    f"window={self.width()}x{self.height()} "
-                    f"devicePixelRatio={screen.devicePixelRatio()}",
-                    flush=True,
-                )
+            primary = QGuiApplication.primaryScreen()
+            if primary is None:
+                print("[kiosk] no primary screen reported", flush=True)
+                return
+            g = primary.geometry()
+            mode = "fullscreen" if _env_truthy("NINA_UI_FULLSCREEN_STRICT") else "sized"
+            print(
+                f"[kiosk] mode={mode} "
+                f"screen={primary.name()!r} "
+                f"screen_rect=({g.x()},{g.y()},{g.width()}x{g.height()}) "
+                f"window_rect=({self.x()},{self.y()},{self.width()}x{self.height()}) "
+                f"devicePixelRatio={primary.devicePixelRatio()}",
+                flush=True,
+            )
         except Exception:
             pass
 
