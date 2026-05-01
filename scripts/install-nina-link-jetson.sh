@@ -199,6 +199,8 @@ ok "Installed packages from requirements-link.txt"
 # ---------------------------------------------------------------------------
 say "4. Import / package verification"
 
+# Use a user-owned temp file (fixed paths under /tmp can be root-owned after sudo runs).
+IMPORT_ERR="$(mktemp "${TMPDIR:-/tmp}/nina-link-import.XXXXXX.err")"
 export PYTHONPATH="${REPO_ROOT}"
 if "${PY}" -c "
 from nina.link_daemon.config import load_config
@@ -209,11 +211,13 @@ c = load_config()
 co = LinkCoordinator(c, mock_backend())
 app = create_app(c, co)
 print('import_ok', app.title)
-" 2>/tmp/nina-link-import.err; then
+" 2>"${IMPORT_ERR}"; then
+    rm -f "${IMPORT_ERR}"
     ok "nina.link_daemon imports successfully"
 else
     bad "Import failed:"
-    sed 's/^/    /' /tmp/nina-link-import.err >&2
+    sed 's/^/    /' "${IMPORT_ERR}" >&2
+    rm -f "${IMPORT_ERR}"
     exit 1
 fi
 
@@ -229,13 +233,15 @@ if [[ "${SMOKE}" -eq 1 ]]; then
         export NINA_LINK_BOOT_AP=0
         export NINA_LINK_HOST=127.0.0.1
         export NINA_LINK_PORT=8788
-        "${PY}" -m nina.link_daemon.main >/tmp/nina-link-smoke.log 2>&1 &
+        SMOKE_LOG="$(mktemp "${TMPDIR:-/tmp}/nina-link-smoke.XXXXXX.log")"
+        "${PY}" -m nina.link_daemon.main >"${SMOKE_LOG}" 2>&1 &
         DAEMON_PID=$!
         sleep 3
         if curl -sf "http://127.0.0.1:8788/health" | grep -q '"ok"'; then
+            rm -f "${SMOKE_LOG}"
             ok "HTTP /health responded (mock NM)"
         else
-            bad "Smoke HTTP failed — log: /tmp/nina-link-smoke.log"
+            bad "Smoke HTTP failed — log: ${SMOKE_LOG}"
             EXIT=1
         fi
         kill "${DAEMON_PID}" 2>/dev/null || true
