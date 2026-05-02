@@ -399,9 +399,13 @@ right Python. Re-run with `PYTHON_EXEC=/path/to/your/venv/python3
 
 #### 5.3.3 Install breezyslam on the Jetson
 
-`breezyslam` ships as a source-only PyPI package with a small C
-extension. On a fresh Jetson without `python3-dev` the build fails
-silently and the Map / Perception pane shows
+`breezyslam` is **not** on PyPI — a bare `pip install breezyslam`
+fails with `No matching distribution found for breezyslam>=0.5.0`.
+The package lives only on GitHub
+([simondlevy/BreezySLAM](https://github.com/simondlevy/BreezySLAM))
+and ships a small C extension that won't compile on a fresh Jetson
+without `python3-dev`. When the GUI can't import it, the Map /
+Perception pane shows
 `breezyslam not installed - run scripts/install-breezyslam-jetson.sh …`
 in the SLAM pill. Run the installer once:
 
@@ -410,11 +414,19 @@ cd ~/Nvidia-jetson-platform
 ./scripts/install-breezyslam-jetson.sh
 ```
 
-The script installs the apt build deps (`python3-dev`,
-`build-essential`), pip-installs `breezyslam --user` (with the
-`--break-system-packages` PEP 668 escape hatch on JetPack 6 /
-Ubuntu 22.04), and smoke-tests an `RMHC_SLAM` constructor before
-declaring success. After it finishes:
+The script:
+
+1. apt-installs the C build deps (`python3-dev`, `build-essential`,
+   `git`),
+2. clones `simondlevy/BreezySLAM` into `/tmp/BreezySLAM`,
+3. runs `pip install --user .` from the `python/` subdir (with the
+   `--break-system-packages` PEP 668 escape hatch on JetPack 6 /
+   Ubuntu 22.04 as a fallback),
+4. smoke-tests an `RMHC_SLAM` constructor against the RPLIDAR A1
+   sensor model, so a half-broken C extension is caught immediately
+   instead of at first GUI launch.
+
+After it finishes:
 
 ```bash
 python3 -c "from breezyslam.algorithms import RMHC_SLAM; print('ok')"
@@ -423,6 +435,13 @@ python3 -c "from breezyslam.algorithms import RMHC_SLAM; print('ok')"
 Re-launch the Nina UI; the Map / Perception lidar pane will now
 build a real occupancy grid as the bot moves (was rendering single
 rasterised scans in fallback mode).
+
+> If you ever pip-install `sirena_ui/requirements.txt` directly
+> (rare on Jetson — usually preferred to use apt + this installer),
+> the requirements file now references the GitHub source
+> (`breezyslam @ git+https://…`) instead of the broken PyPI name,
+> so a plain `pip install -r` will resolve. You still need the
+> apt build deps from step 1 above for the C extension to compile.
 
 #### 5.3.4 Verify the lidar separately
 

@@ -45,8 +45,13 @@ ultralytics>=8.0.0
 #
 # Lidar (SLAMTEC RPLIDAR A1M8) - USB serial:
 rplidar>=0.9.1
-# 2D occupancy-grid SLAM (CoreSLAM port; no ROS dep, runs on Nano):
-breezyslam>=0.5.0
+# 2D occupancy-grid SLAM (CoreSLAM port; no ROS dep, runs on Nano).
+# BreezySLAM is GitHub-only (no PyPI release), so we install from the
+# upstream repo's python/ subdirectory. On Jetson aarch64 use
+# scripts/install-breezyslam-jetson.sh instead - it apt-installs the
+# C build deps (python3-dev, build-essential) first, which this bare
+# pip line assumes are already present.
+breezyslam @ git+https://github.com/simondlevy/BreezySLAM.git@master#subdirectory=python
 # I2C for the Sharp GP2Y0E02B IR cliff sensor:
 smbus2>=0.4.0
 # Intel RealSense D435 depth camera. On x86/Mac this wheel works
