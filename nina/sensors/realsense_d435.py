@@ -46,20 +46,28 @@ DEFAULT_MAX_RANGE_MM = int(os.environ.get("NINA_DEPTH_MAX_MM", "5000"))
 DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_DEPTH_MIN_MM", "200"))
 
 # Vertical band of the depth image used for the obstacle-cone summary.
-# Defaults skip the top 25% (sky / ceiling lights, which the lidar
-# can't see and which the autonomy doesn't care about) AND the bottom
-# 35% (the floor right in front of the bot, which a forward-tilted
-# D435 reads at ~480 mm and which would otherwise be fused as a
-# permanent forward obstacle - the bot would spin in place forever
-# while reading floor as 'wall ahead'). The middle band keeps
-# standing obstacles (people, walls, table edges) visible while
-# letting the bot actually drive forward in an open room.
+# Defaults skip the top 10% (sky / ceiling) AND the bottom 35% (the
+# floor right in front of the bot).
+#
+# The bottom mask is the one that prevents "spin forever" - a D435
+# mounted ~30 cm up tilted ~10 deg down reads the floor at the
+# bottom of every frame at ~480 mm and the autonomy treats that as a
+# permanent forward obstacle without this mask.
+#
+# The top mask used to default to 25% but that was too aggressive:
+# table-tops at chest height (70 cm) sit in the upper third of the
+# image at typical room distances - at 1.5 m a 70 cm tabletop is at
+# image angle +14.9 deg camera-relative, which falls inside a 25%
+# skip and *outside* a 10% skip. With the old default the bot would
+# see a table at 3 m, lose it at 1.5 m, then drive into it. 10% is
+# enough to drop direct-overhead ceiling-light glare while still
+# letting the camera see anything chest-high or below.
 #
 # Operators with a different mount geometry (camera lower / tilted
 # more or less) can override these. A camera mounted at face height
 # tilted 0 deg should set NINA_DEPTH_BOT_SKIP_PCT=10 (let the bottom
 # rows back in - they no longer see the floor right in front).
-DEFAULT_TOP_SKIP_PCT = int(os.environ.get("NINA_DEPTH_TOP_SKIP_PCT", "25"))
+DEFAULT_TOP_SKIP_PCT = int(os.environ.get("NINA_DEPTH_TOP_SKIP_PCT", "10"))
 DEFAULT_BOT_SKIP_PCT = int(os.environ.get("NINA_DEPTH_BOT_SKIP_PCT", "35"))
 
 

@@ -118,16 +118,36 @@ def load_settings(repo_root: Path) -> NinaSettings:
     )
 
     autonomy = AutonomySettings(
-        tick_hz=float(os.environ.get("NINA_AUTO_TICK_HZ", "5")),
+        # 8 Hz (was 5 Hz) so the pilot reacts every 125 ms instead of
+        # every 200 ms. At 15% PWM (~0.3-0.5 m/s) the bot still
+        # coasts a few cm during one tick, but the extra ticks per
+        # second cut the worst-case "saw obstacle / decided to turn /
+        # actually started turning" latency by ~75 ms.
+        tick_hz=float(os.environ.get("NINA_AUTO_TICK_HZ", "8")),
         # 15% matches the GUI manual-mode floor (MIN_SPEED_PCT) so an
         # operator dropping out of autonomy doesn't see the wheels
         # change pace mid-handoff. Bump via NINA_AUTO_CRUISE_PCT for
         # tests that want a faster wander.
         cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "15")),
         turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "16")),
-        forward_clear_mm=int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "700")),
-        side_clear_mm=int(os.environ.get("NINA_AUTO_SIDE_CLEAR_MM", "350")),
-        emergency_stop_mm=int(os.environ.get("NINA_AUTO_ESTOP_MM", "300")),
+        # 1200 mm (was 700 mm) is the new commit-to-forward
+        # threshold. The previous 700 mm gave the BLDCs no room to
+        # decelerate before reaching the obstacle: at ~0.4 m/s with
+        # ~200 ms tick + ~200 ms wheel coast the bot would stop
+        # 50-60 cm from a person -> "almost hitting" was the user
+        # report. 1200 mm leaves the bot a clean ~1 m of buffer at
+        # the moment it commits to a turn, so the actual stopping
+        # distance lands closer to personal-space (~1 m) than
+        # arm's-length.
+        forward_clear_mm=int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "1200")),
+        side_clear_mm=int(os.environ.get("NINA_AUTO_SIDE_CLEAR_MM", "450")),
+        # 600 mm (was 300 mm). Anything closer than 60 cm trips the
+        # emergency reverse, which actively decelerates the bot's
+        # forward momentum (drives BACK at cruise for backoff_ms).
+        # The old 300 mm only kicked in once the bot was already
+        # 30 cm away - too late to back out of a collision in
+        # progress at floor-walking speed.
+        emergency_stop_mm=int(os.environ.get("NINA_AUTO_ESTOP_MM", "600")),
         cliff_min_mm=int(os.environ.get("NINA_AUTO_CLIFF_MIN_MM", "60")),
         turn_duration_ms=int(os.environ.get("NINA_AUTO_TURN_MS", "350")),
         backoff_duration_ms=int(os.environ.get("NINA_AUTO_BACKOFF_MS", "500")),
@@ -135,7 +155,15 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     slam = SlamSettings(
         map_size_pixels=int(os.environ.get("NINA_SLAM_PIXELS", "800")),
-        map_size_meters=float(os.environ.get("NINA_SLAM_METERS", "20")),
+        # 8 m world (was 20 m) at 800 px = 10 mm/px. The RPLIDAR A1
+        # only ranges ~6 m reliably indoors, so a 20 m world meant a
+        # typical 4-5 m room mapped to a tiny ~200x200 patch in the
+        # centre of an 800x800 grid - 6% of the rendered view, with
+        # the other 94% painted unknown-grey. Operators reported the
+        # Map / Perception lidar pane as "almost nothing showing".
+        # Tightening to 8 m / 10 mm-per-px makes the same room fill
+        # half the view AND doubles the wall-pixel resolution.
+        map_size_meters=float(os.environ.get("NINA_SLAM_METERS", "8")),
         update_hz=float(os.environ.get("NINA_SLAM_HZ", "5")),
         hole_width_mm=int(os.environ.get("NINA_SLAM_HOLE_MM", "600")),
         random_seed=int(os.environ.get("NINA_SLAM_SEED", "0xdeadbeef"), 0),

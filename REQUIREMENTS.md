@@ -425,22 +425,26 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_DEPTH_DISABLE` | unset | `1` skips opening the D435 (autonomy runs lidar-only). Useful for debugging without the depth camera plugged in. |
 | `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
 | `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
-| `NINA_DEPTH_TOP_SKIP_PCT` | 25 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip ceiling lights / sky. |
+| `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip direct overhead glare. (Was 25% — too aggressive: chest-high tabletops at 1–2 m were masked out, so the bot drove into them.) |
 | `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.5). |
 | `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
 | `NINA_LIDAR_DISABLE` | unset | `1` skips lidar; SLAM and autonomy both degrade gracefully. |
+| `NINA_SLAM_METERS` | 8 | Side length (m) of the square SLAM world. The RPLIDAR A1 only reliably ranges ~6 m indoors, so a tighter world means typical rooms fill more of the rendered map. (Was 20 m — most of the Map / Perception lidar pane painted unknown-grey because rooms only filled a tiny central patch.) |
+| `NINA_SLAM_PIXELS` | 800 | Square map resolution. With the 8 m default world this is 10 mm/px. |
+| `NINA_AUTO_TICK_HZ` | 8 | Autonomy decision rate. (Was 5 Hz — at 15% PWM the bot coasts a few cm per 200 ms tick, enough to overshoot a turn decision; 8 Hz halves that.) |
 | `NINA_AUTO_CRUISE_PCT` | 15 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
 | `NINA_AUTO_TURN_PCT` | 16 | Turn-in-place speed % during obstacle avoidance. |
-| `NINA_AUTO_FWD_CLEAR_MM` | 700 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. |
-| `NINA_AUTO_SIDE_CLEAR_MM` | 350 | Per-side clearance for forward to be allowed. |
-| `NINA_AUTO_ESTOP_MM` | 300 | Anything closer than this in front triggers an immediate reverse. |
+| `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. (Was 700 mm — at walking speed the BLDCs coasted to within 50–60 cm of people before stopping; 1200 mm leaves the bot ~1 m of buffer for braking.) |
+| `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Per-side clearance for forward to be allowed. |
+| `NINA_AUTO_ESTOP_MM` | 600 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; reverse only engaged once the bot was already 30 cm away.) |
 
 #### 5.3.5 First autonomy run
 
 1. Place the bot in an open area with at least 1.5 m clearance on all sides.
 2. From the GUI, open **Drive** → **Settings** chip → confirm the
-   speed slider is at 15–20 % (the autonomy default and your manual-
-   drive cap).
+   speed slider is at 15 % (the autonomy cruise default and the
+   BLDC manual-mode floor; the slider is also capped at 25 % to
+   keep the BLDCs in their stable PWM band).
 3. Tap **Map (SLAM)** so the lidar/SLAM worker starts and you can
    see scans coming in. A coarse occupancy grid should fill in
    within ~5 s of motion.
@@ -479,6 +483,44 @@ itself is reading something close in its forward sector — most
 commonly the lidar is mounted with 0° pointing **at the bot's body**
 instead of away from it. Rotate the RPLIDAR until the cable comes
 out the side opposite the bot's "front".
+
+**Troubleshooting: "the bot got too close to people / banged into a table"**
+
+The defaults are tuned for indoor walking-speed wandering at 15 % PWM
+(~0.4 m/s) on the BLDC drivetrain:
+
+| Symptom | Knob | Default | Try |
+|---|---|---|---|
+| Stops too close to people / dogs | `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Bump to `1500` for an extra arm's length of buffer |
+| Bumps tabletops / desks (but lidar is fine) | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Lower to `5` — lets more of the upper image through; only do this if your room has no overhead halogens (those return as bright shorts) |
+| Reverses too rarely / cuts a corner | `NINA_AUTO_ESTOP_MM` | 600 | Bump to `800` so reverse fires earlier |
+| Reaction looks sluggish | `NINA_AUTO_TICK_HZ` | 8 | Push to `10` (more CPU; rarely needed on Orin NX) |
+
+If lidar reports the table fine but the bot still hits it, check
+**lidar height vs the obstacle**. The RPLIDAR A1 only sees its scan
+plane (typically the top of the bot stack). A 70 cm-high tabletop is
+INVISIBLE to a lidar mounted at 80 cm — the lidar sweeps over the
+top of the table. Move the lidar lower, or rely on the depth camera
+to catch chest-height obstacles (which is exactly what
+`NINA_DEPTH_TOP_SKIP_PCT=10` is now set up for).
+
+**Troubleshooting: "the LiDAR map view is mostly empty / a small patch"**
+
+The default world size is now 8 m (10 mm/px on an 800 px grid). A
+4–5 m room should fill ~50% of the rendered view with walls. If
+you still see mostly grey:
+
+1. Check the lidar pill on the Map / Perception screen — if it says
+   `sim - …` the lidar isn't connected and the engine is rendering
+   placeholder data. Fix the USB / serial wiring first.
+2. Open Health and read `scans_processed` for the SLAM row. If it's
+   stuck at 0, the lidar is connected but nothing is reaching the
+   engine; confirm with `journalctl --user -u nina-ui-kiosk -f
+   | grep -i 'rplidar\|slam'`.
+3. If `scans_processed` is climbing but the map still looks empty,
+   the bot is in an oversized room or outdoors (RPLIDAR A1 is only
+   reliable to ~6 m). Bump `NINA_SLAM_METERS` to `12`–`16` to fit
+   the larger space, accepting that mm/px gets coarser.
 
 #### 5.3.6 Live perception view (LiDAR + RGB + Depth, side-by-side)
 

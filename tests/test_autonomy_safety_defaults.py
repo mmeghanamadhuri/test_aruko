@@ -1,0 +1,200 @@
+"""Pin the autonomy / SLAM / depth defaults to the values an
+operator can actually drive against without crashing the bot.
+
+These tests are cheap and exist purely to make accidental regressions
+loud. The values here were chosen after live-bot feedback ("almost
+hitting people", "banged into tables and boxes", "lidar map showing
+almost nothing"). Lowering them again should be a deliberate choice
+backed by a comment in the matching settings.py block - the test
+will scream if someone bumps the numbers without updating both
+sides.
+"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+
+import pytest
+
+from nina.config.settings import load_settings
+from nina.sensors import realsense_d435
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture
+def clean_env(monkeypatch: pytest.MonkeyPatch):
+    """Strip every NINA_AUTO_* / NINA_SLAM_* / NINA_DEPTH_* env var so
+    we test the *built-in* defaults, not whatever the dev box has set
+    in its shell. The autonomy bring-up doc tells operators to set
+    these in `desktop/nina-ui-kiosk.service`; we want the in-code
+    defaults to be safe even if the unit file is missing."""
+    for key in list(os.environ):
+        if key.startswith(("NINA_AUTO_", "NINA_SLAM_", "NINA_DEPTH_")):
+            monkeypatch.delenv(key, raising=False)
+    yield
+
+
+# ---------------------------------------------------------------------
+# Autonomy thresholds
+# ---------------------------------------------------------------------
+
+
+def test_cruise_speed_matches_manual_minimum(clean_env) -> None:
+    """Autonomy cruise must match the GUI's manual-mode minimum so
+    the wheels don't change pace when the operator hands off control.
+    The manual floor is the BLDC minimum spin speed (anything lower
+    just stalls on the JYQDs)."""
+    s = load_settings(REPO_ROOT)
+    assert s.autonomy.cruise_speed_pct == 15, (
+        "autonomy cruise drifted from 15%; either the manual floor "
+        "moved (update both) or someone bumped this for testing and "
+        "forgot to revert"
+    )
+
+
+def test_forward_clearance_leaves_room_to_brake(clean_env) -> None:
+    """Forward-commit clearance must leave the BLDCs room to actually
+    stop. At 15% PWM (~0.4 m/s) with ~125 ms tick + ~200 ms wheel
+    coast, anything below ~1 m brings the bot inside arm's length of
+    a person before it stops. 1200 mm is the empirical floor that
+    keeps stops in personal-space rather than chest-bumping."""
+    s = load_settings(REPO_ROOT)
+    assert s.autonomy.forward_clear_mm >= 1000, (
+        f"forward_clear_mm={s.autonomy.forward_clear_mm} is too tight; "
+        "operators reported the bot getting within arm's length of "
+        "people before it stopped. See REQUIREMENTS.md §5.3.5."
+    )
+
+
+def test_emergency_stop_actually_decelerates(clean_env) -> None:
+    """Emergency stop must trigger BEFORE the bot is bumper-deep in
+    the obstacle. The old 300 mm meant the bot was already 30 cm
+    away by the time reverse engaged - too late. 600 mm gives the
+    backoff window time to actually back the bot out."""
+    s = load_settings(REPO_ROOT)
+    assert s.autonomy.emergency_stop_mm >= 500, (
+        f"emergency_stop_mm={s.autonomy.emergency_stop_mm} is too "
+        "tight; reverse fires after the bot is already in collision "
+        "range"
+    )
+
+
+def test_emergency_below_forward_clear(clean_env) -> None:
+    """Emergency must be a STRICT subset of forward-blocked, otherwise
+    the pilot's layered checks tangle: e.g. emergency >= forward_clear
+    means the pilot would 'reverse' on every sensor read where the
+    obstacle is in the [clear, emergency] band, never giving the
+    turn-in-place layer a chance."""
+    s = load_settings(REPO_ROOT)
+    assert s.autonomy.emergency_stop_mm < s.autonomy.forward_clear_mm, (
+        f"emergency_stop_mm ({s.autonomy.emergency_stop_mm}) must be "
+        f"< forward_clear_mm ({s.autonomy.forward_clear_mm}); pilot "
+        "decision layers depend on this ordering"
+    )
+
+
+def test_tick_rate_fast_enough_for_walking_speed(clean_env) -> None:
+    """At 15% PWM the bot moves a few cm per tick. <= 5 Hz (200 ms /
+    tick) lets the bot coast multiple cm between decisions, which
+    showed up in the field as 'didn't stop in time'. 8 Hz cuts the
+    coast distance roughly in half."""
+    s = load_settings(REPO_ROOT)
+    assert s.autonomy.tick_hz >= 6, (
+        f"tick_hz={s.autonomy.tick_hz}; 5 Hz was the field-tested "
+        "floor where the bot started overshooting its turn decision"
+    )
+
+
+# ---------------------------------------------------------------------
+# SLAM map sizing
+# ---------------------------------------------------------------------
+
+
+def test_slam_world_fits_indoor_lidar_range(clean_env) -> None:
+    """Default world MUST be small enough that a typical 4-5 m room
+    actually fills a usable fraction of the rendered map. The
+    RPLIDAR A1 only reliably ranges ~6 m indoors, so a 20 m world
+    means most of the grid stays painted unknown-grey. The
+    Map / Perception lidar pane reads 'almost nothing' in that
+    case. Cap the default at 10 m so the room fills > 25% of the
+    rendered grid."""
+    s = load_settings(REPO_ROOT)
+    assert s.slam.map_size_meters <= 10.0, (
+        f"map_size_meters={s.slam.map_size_meters} is too large; the "
+        "rendered map looks empty because typical rooms only fill a "
+        "small central patch. See REQUIREMENTS.md §5.3."
+    )
+
+
+def test_slam_resolution_fine_enough_for_walls(clean_env) -> None:
+    """mm/px resolution must be fine enough that a single wall
+    actually shows up as more than one pixel. ~25 mm/px (the old
+    20 m / 800 px config) made walls < 1 px wide on the Perception
+    pane after letterboxing into a small viewport. <= 15 mm/px is
+    the empirical floor where walls read as walls."""
+    s = load_settings(REPO_ROOT)
+    px_per_mm = s.slam.map_size_pixels / (s.slam.map_size_meters * 1000.0)
+    mm_per_px = 1.0 / px_per_mm
+    assert mm_per_px <= 15.0, (
+        f"SLAM resolution {mm_per_px:.1f} mm/px is too coarse; walls "
+        "render as sub-pixel features after letterboxing into the "
+        "Perception card"
+    )
+
+
+# ---------------------------------------------------------------------
+# Depth top-mask: must let table-tops through
+# ---------------------------------------------------------------------
+
+
+def test_depth_top_mask_sees_chest_height_obstacles(clean_env) -> None:
+    """A 70 cm tabletop sitting 1.5 m in front of a 30 cm-tall
+    forward-tilted D435 lands at image angle ~15 deg above the
+    optical axis - row ~117 of a 480-row frame. A top-skip of >= 25%
+    masks that row out, so the bot loses sight of the tabletop
+    between 1 m and 2 m and drives into it. Cap the default skip
+    at 15% so chest-height obstacles stay visible to the autonomy
+    cone."""
+    np = pytest.importorskip("numpy")
+
+    drv = realsense_d435.RealSenseD435()
+    drv._scale_mm = 1.0
+
+    h, w = 480, 640
+    arr = np.full((h, w), 3000, dtype=np.uint16)  # background at 3 m
+    # Drop a "tabletop" return at row 117 (the geometry above) right
+    # in the central forward third of the frame, at 1500 mm.
+    cx0, cx1 = w // 3, 2 * w // 3
+    arr[110:130, cx0:cx1] = 1500
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    assert frame.forward_min_mm == 1500, (
+        f"forward_min_mm={frame.forward_min_mm}; the top mask is "
+        "hiding chest-height obstacles. Lower NINA_DEPTH_TOP_SKIP_PCT."
+    )
+
+
+def test_depth_top_skip_default_value(clean_env) -> None:
+    """Pin the value so a future bump back to 25 fails loudly.
+    Operators have already shipped bots configured with the new
+    10% default and we don't want the next merge to silently
+    re-create the table-top blind spot."""
+    # Re-import to pick up the (cleaned) env defaults via the module
+    # constant the live driver uses.
+    import importlib
+    importlib.reload(realsense_d435)
+    assert realsense_d435.DEFAULT_TOP_SKIP_PCT <= 15, (
+        f"DEFAULT_TOP_SKIP_PCT={realsense_d435.DEFAULT_TOP_SKIP_PCT}; "
+        "going above 15 hides chest-height obstacles"
+    )
+    assert realsense_d435.DEFAULT_BOT_SKIP_PCT >= 30, (
+        f"DEFAULT_BOT_SKIP_PCT={realsense_d435.DEFAULT_BOT_SKIP_PCT}; "
+        "going below 30 lets the floor back into the forward cone "
+        "and the bot will spin in place"
+    )

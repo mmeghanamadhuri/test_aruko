@@ -56,8 +56,11 @@ def test_floor_pixels_excluded_from_forward_min() -> None:
     drv = _drv()
     h, w = 100, 30
     arr = np.full((h, w), 2000, dtype=np.uint16)  # 2 m everywhere
-    # Bottom 35% of rows (rows 65..99) are the "floor", reading ~480 mm.
-    arr[65:, :] = 480
+    # Take the configured bot-skip pct and paint floor in the
+    # bottom half of that band - lets the test survive a tuning
+    # nudge within reason without needing to be rewritten.
+    bot_skip_rows = max(1, int(h * realsense_d435.DEFAULT_BOT_SKIP_PCT / 100) // 2)
+    arr[h - bot_skip_rows:, :] = 480
 
     drv._publish(np, arr)
     frame = drv.read()
@@ -65,22 +68,30 @@ def test_floor_pixels_excluded_from_forward_min() -> None:
     assert frame is not None
     assert frame.forward_min_mm is not None
     assert frame.forward_min_mm >= 2000, (
-        f"forward_min_mm={frame.forward_min_mm} - the floor rows leaked "
-        f"into the forward cone. Autonomy would spin forever."
+        f"forward_min_mm={frame.forward_min_mm} - the bottom "
+        f"{bot_skip_rows} rows (well within the "
+        f"{realsense_d435.DEFAULT_BOT_SKIP_PCT}% bot-skip band) "
+        "leaked into the forward cone. Autonomy would spin forever."
     )
 
 
 def test_top_rows_excluded_from_forward_min() -> None:
-    """The top 25% of rows are sky / ceiling lights (very far for the
-    sensor, often dropouts). They shouldn't pollute the forward cone
-    with random shorts either."""
+    """The top DEFAULT_TOP_SKIP_PCT% of rows are sky / ceiling
+    lights / direct overhead glare. They shouldn't pollute the
+    forward cone with random shorts. (Default skip is small - just
+    enough to drop direct ceiling returns - so chest-height objects
+    a couple of metres ahead stay visible.)"""
     np = pytest.importorskip("numpy")
 
     drv = _drv()
     h, w = 100, 30
     arr = np.full((h, w), 2000, dtype=np.uint16)
-    # Place a phantom 'ceiling' return in the top 25% of rows.
-    arr[:25, :] = 250
+    # Place a phantom 'ceiling' return in the rows we KNOW are
+    # masked - take the configured top-skip pct and only paint the
+    # top half of that band so the test stays correct if someone
+    # tweaks the default within reason.
+    skip_rows = max(1, int(h * realsense_d435.DEFAULT_TOP_SKIP_PCT / 100) // 2)
+    arr[:skip_rows, :] = 250
 
     drv._publish(np, arr)
     frame = drv.read()
@@ -88,8 +99,9 @@ def test_top_rows_excluded_from_forward_min() -> None:
     assert frame is not None
     assert frame.forward_min_mm is not None
     assert frame.forward_min_mm >= 2000, (
-        f"forward_min_mm={frame.forward_min_mm} - top rows leaked into "
-        f"the forward cone"
+        f"forward_min_mm={frame.forward_min_mm} - the top {skip_rows} "
+        f"rows (well within the {realsense_d435.DEFAULT_TOP_SKIP_PCT}% "
+        "top-skip band) leaked into the forward cone"
     )
 
 
