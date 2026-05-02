@@ -180,10 +180,16 @@ build a real occupancy grid as the bot moves (was rendering
 placeholder rasterised scans before).
 
 If the Map screen still says "breezyslam not installed", confirm
-the install landed where the GUI's Python looks:
+the install landed where the GUI's Python looks. Run this WITHOUT
+sudo (sudo switches the user to root and root cannot see the
+user-site install we just made):
 
-  ${PYTHON_EXEC} -c "import breezyslam, os; print(breezyslam.__file__)"
+  ${PYTHON_EXEC} -c "import breezyslam; print(breezyslam.__file__)"
 
-The path should be under ~/.local/lib/python${PY_VERSION}/site-packages/
-(or /usr/lib/python3/dist-packages/ if you ran this script as root).
+Expected path: ~/.local/lib/python${PY_VERSION}/site-packages/breezyslam/...
+(or /usr/lib/python3/dist-packages/breezyslam/... if you ran
+this script as root in the first place).
+
+The Nina kiosk systemd service runs as the regular user (nina),
+not root, so this user-site install is exactly what it needs.
 EOF
