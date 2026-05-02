@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -45,7 +44,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.Surface
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,7 +64,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sirena.nina.companion.JetsonLinkState
 import com.sirena.nina.companion.R
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
@@ -187,12 +184,27 @@ private fun HomeTab(
         Modifier
             .fillMaxSize()
             .padding(horizontal = 24.dp, vertical = 20.dp),
-        contentAlignment = Alignment.Center,
     ) {
+        val jetsonOnline = jetsonLink.isOnline
+        Text(
+            text = if (jetsonOnline) "Jetson online" else "Jetson offline",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Medium,
+            color =
+                if (jetsonOnline) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+            modifier = Modifier.align(Alignment.TopEnd),
+        )
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(16.dp),
-            modifier = Modifier.fillMaxWidth(),
+            modifier =
+                Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.Center),
         ) {
             Image(
                 painter = painterResource(R.drawable.sirena_technologies_logo_color),
@@ -214,8 +226,6 @@ private fun HomeTab(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 16.dp),
             )
-            JetsonLinkStatusStrip(jetsonLink, Modifier.fillMaxWidth(0.92f))
-            Spacer(Modifier.height(8.dp))
             Button(
                 onClick = {
                     NinaLog.tap("Home", "open_robot_ui")
@@ -248,49 +258,6 @@ private fun HomeTab(
                     Text("System")
                 }
             }
-        }
-    }
-}
-
-@Composable
-private fun JetsonLinkStatusStrip(link: JetsonLinkState, modifier: Modifier = Modifier) {
-    val online = link.isOnline
-    val detail =
-        when {
-            online -> "HTTP /health OK"
-            link.lastError.isNullOrBlank() -> "Cannot reach saved daemon URL"
-            else -> link.lastError!!
-        }
-    val titleColor =
-        if (online) {
-            MaterialTheme.colorScheme.onPrimaryContainer
-        } else {
-            MaterialTheme.colorScheme.onErrorContainer
-        }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color =
-            if (online) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-            } else {
-                MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.45f)
-            },
-    ) {
-        Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(
-                if (online) "Jetson link: online" else "Jetson link: offline",
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = titleColor,
-            )
-            Text(
-                detail,
-                style = MaterialTheme.typography.labelSmall,
-                color = titleColor.copy(alpha = 0.88f),
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
         }
     }
 }
