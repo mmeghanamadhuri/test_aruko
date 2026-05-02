@@ -397,7 +397,34 @@ pyrealsense2"` fails, the installer's `.pth` step didn't pick the
 right Python. Re-run with `PYTHON_EXEC=/path/to/your/venv/python3
 ./scripts/install-realsense-jetson.sh`.
 
-#### 5.3.3 Verify the lidar separately
+#### 5.3.3 Install breezyslam on the Jetson
+
+`breezyslam` ships as a source-only PyPI package with a small C
+extension. On a fresh Jetson without `python3-dev` the build fails
+silently and the Map / Perception pane shows
+`breezyslam not installed - run scripts/install-breezyslam-jetson.sh …`
+in the SLAM pill. Run the installer once:
+
+```bash
+cd ~/Nvidia-jetson-platform
+./scripts/install-breezyslam-jetson.sh
+```
+
+The script installs the apt build deps (`python3-dev`,
+`build-essential`), pip-installs `breezyslam --user` (with the
+`--break-system-packages` PEP 668 escape hatch on JetPack 6 /
+Ubuntu 22.04), and smoke-tests an `RMHC_SLAM` constructor before
+declaring success. After it finishes:
+
+```bash
+python3 -c "from breezyslam.algorithms import RMHC_SLAM; print('ok')"
+```
+
+Re-launch the Nina UI; the Map / Perception lidar pane will now
+build a real occupancy grid as the bot moves (was rendering single
+rasterised scans in fallback mode).
+
+#### 5.3.4 Verify the lidar separately
 
 ```bash
 ls -l /dev/ttyUSB0    # RPLIDAR A1 default port
@@ -415,7 +442,7 @@ l.close()
 
 Should print a `LidarScan` object with several hundred returns.
 
-#### 5.3.4 Environment variables that gate the sensors
+#### 5.3.5 Environment variables that gate the sensors
 
 All optional; defaults work for the recommended hardware. Set in
 `desktop/nina-ui-kiosk.service` if you need to override on the bot.
@@ -429,7 +456,7 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
 | `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
 | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip direct overhead glare. (Was 25% — too aggressive: chest-high tabletops at 1–2 m were masked out, so the bot drove into them.) |
-| `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.5). |
+| `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.6). |
 | `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
 | `NINA_LIDAR_DISABLE` | unset | `1` skips lidar; SLAM and autonomy both degrade gracefully. |
 | `NINA_SLAM_METERS` | 8 | Side length (m) of the square SLAM world. The RPLIDAR A1 only reliably ranges ~6 m indoors, so a tighter world means typical rooms fill more of the rendered map. (Was 20 m — most of the Map / Perception lidar pane painted unknown-grey because rooms only filled a tiny central patch.) |
@@ -441,7 +468,7 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Per-side clearance for forward to be allowed. |
 | `NINA_AUTO_ESTOP_MM` | 600 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; reverse only engaged once the bot was already 30 cm away.) |
 
-#### 5.3.5 First autonomy run
+#### 5.3.6 First autonomy run
 
 1. Place the bot in an open area with at least 1.5 m clearance on all sides.
 2. From the GUI, open **Drive** → **Settings** chip → confirm the
@@ -557,7 +584,7 @@ v4l2-ctl -d /dev/video3 --all | head   # confirm the node accepts ioctls
 ffplay /dev/video3                     # full-screen live preview (Ctrl-C to quit)
 ```
 
-#### 5.3.6 Live perception view (LiDAR + RGB + Depth, side-by-side)
+#### 5.3.7 Live perception view (LiDAR + RGB + Depth, side-by-side)
 
 The Nina app ships a dedicated **Perception** screen (sidebar:
 `⊙ Perception`, between Vision and Map) that shows what every
@@ -587,7 +614,7 @@ and a later autonomy-enable doesn't try to re-open the busy device.
 Visualization (cv2 colorize, ~5–10 ms / frame on Jetson Nano) is
 toggled on only while the Perception screen is the visible screen.
 
-#### 5.3.7 Health-screen cross-check
+#### 5.3.8 Health-screen cross-check
 
 Open **Health** while autonomy is running. The new perception rows
 should all show **OK** (or at minimum a useful detail string):

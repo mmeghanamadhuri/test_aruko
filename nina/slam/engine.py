@@ -116,8 +116,27 @@ class SlamEngine:
             from breezyslam.algorithms import RMHC_SLAM  # type: ignore
             from breezyslam.sensors import RPLidarA1  # type: ignore
         except Exception as exc:
+            # Surface a fix-it command in the pill / tooltip itself,
+            # not just in the launch log. Operators were seeing
+            # "breezyslam not installed" with no idea what to do; on
+            # Jetson the install needs apt build deps + a PEP 668
+            # escape hatch, so we ship a script for it. On non-Jetson
+            # hosts plain `pip install breezyslam` is enough.
+            import platform
+            if platform.machine() == "aarch64":
+                hint = (
+                    "run scripts/install-breezyslam-jetson.sh "
+                    "(installs build deps + handles PEP 668)"
+                )
+            else:
+                hint = (
+                    "pip install breezyslam (or use the project's "
+                    "sirena_ui/requirements.txt)"
+                )
             self._fallback = True
-            self._fallback_reason = f"breezyslam not installed ({exc})"
+            self._fallback_reason = (
+                f"breezyslam not installed - {hint}. Original error: {exc}"
+            )
             log.warning(
                 "SLAM running in fallback mode: %s", self._fallback_reason
             )
