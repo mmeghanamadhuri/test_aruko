@@ -604,19 +604,169 @@ class VisionPipeline:
                     message="OpenCV not installed - pip install opencv-python-headless",
                 )
                 return self._status
-            if self._cap is None:
-                cap = cv2.VideoCapture(self._camera_index)
-                if not cap.isOpened():
-                    self._status = VisionStatus(
-                        message=f"Camera /dev/video{self._camera_index} not found",
-                    )
-                    cap.release()
-                    return self._status
-                cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))
-                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))
-                self._cap = cap
-            self._status = VisionStatus(camera_open=True, message="Camera ready")
+            if self._cap is not None:
+                self._status = VisionStatus(camera_open=True, message="Camera ready")
+                return self._status
+
+            # Try the configured index first, then fall back to probing
+            # the rest of /dev/video*. Jetson Orin enumerates ISP /
+            # encoder nodes as low-numbered video devices even when no
+            # real camera is plugged in, so the actual USB webcam often
+            # lands at video1, video3, video5 etc. Operators previously
+            # had to guess and set NINA_VISION_CAMERA by hand; now the
+            # pipeline finds it.
+            self._camera_index_initial = int(self._camera_index)
+            tried: List[Tuple[int, str]] = []
+            cap, picked, msg = self._try_open_index(self._camera_index, tried)
+
+            if cap is None and self._auto_probe:
+                for idx in self._candidate_indices():
+                    if idx == self._camera_index:
+                        continue
+                    cap, picked, msg = self._try_open_index(idx, tried)
+                    if cap is not None:
+                        break
+
+            if cap is None:
+                self._status = VisionStatus(
+                    message=self._format_open_failure(tried),
+                )
+                return self._status
+
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))
+            self._cap = cap
+            initial = int(self._camera_index_initial)
+            self._camera_index = int(picked)
+            if picked != initial:
+                # Auto-probe found a different device than the operator
+                # asked for - say so in the pill so the next-best
+                # diagnostic step (set NINA_VISION_CAMERA={picked}
+                # explicitly so we don't re-probe every launch) is
+                # obvious.
+                ready_msg = (
+                    f"Camera ready on /dev/video{picked} "
+                    f"(auto-probed; configured was video{initial})"
+                )
+            else:
+                ready_msg = "Camera ready"
+            self._status = VisionStatus(camera_open=True, message=ready_msg)
             return self._status
+
+    # Auto-probe controls. Tests / one-off bringup may want to disable
+    # the fallback to make a configured-index failure deterministic.
+    @property
+    def _auto_probe(self) -> bool:
+        return self._env_bool("NINA_VISION_AUTO_PROBE", True)
+
+    def _candidate_indices(self) -> List[int]:
+        """Return candidate /dev/video* indices to probe, in priority
+        order. Honours `NINA_VISION_CANDIDATES` (comma-separated) when
+        set; otherwise falls back to the indices that actually exist
+        as /dev/video* device files (so we don't waste 100 ms per
+        bogus index on hosts where the camera is really at video8)."""
+        raw = os.environ.get("NINA_VISION_CANDIDATES", "").strip()
+        if raw:
+            try:
+                return [int(p) for p in raw.split(",") if p.strip()]
+            except ValueError:
+                log.warning("NINA_VISION_CANDIDATES not parseable: %r", raw)
+        # Enumerate /dev/video* and sort numerically so the lowest
+        # index wins ties (matches how V4L2 / cv2 traditionally
+        # enumerate cameras).
+        out: List[int] = []
+        try:
+            for name in os.listdir("/dev"):
+                if not name.startswith("video"):
+                    continue
+                tail = name[len("video"):]
+                if tail.isdigit():
+                    out.append(int(tail))
+        except OSError:
+            pass
+        out.sort()
+        return out or list(range(0, 10))
+
+    def _try_open_index(
+        self, idx: int, tried: List[Tuple[int, str]]
+    ) -> Tuple[Optional[object], int, str]:
+        """Attempt to open `/dev/video{idx}` and grab one frame.
+
+        Records the outcome in `tried` (a per-call audit trail used by
+        the failure message). Returns the cv2 capture handle on
+        success, None on failure.
+        """
+        path = f"/dev/video{idx}"
+        if not os.path.exists(path):
+            tried.append((idx, "no device"))
+            return None, idx, "no device"
+        if not os.access(path, os.R_OK | os.W_OK):
+            # Most common cause: user not in the `video` group. Surface
+            # the fix verbatim so the operator doesn't need to guess.
+            tried.append(
+                (idx, "no permission (try: sudo usermod -aG video $USER)")
+            )
+            return None, idx, "no permission"
+
+        try:
+            cap = cv2.VideoCapture(idx)
+        except Exception as exc:  # pragma: no cover - cv2 rarely raises
+            tried.append((idx, f"VideoCapture raised: {exc}"))
+            return None, idx, str(exc)
+
+        if not cap.isOpened():
+            tried.append((idx, "isOpened()=False (driver rejected open)"))
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return None, idx, "not opened"
+
+        # Open succeeded but on Jetson the ISP / encoder nodes
+        # (video10..video13 typically) DO open via V4L2 and then fail
+        # to deliver frames. Confirm the device actually streams a
+        # frame before we accept this index, otherwise the GUI would
+        # show "Camera ready" forever and serve a black viewport.
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            tried.append((idx, "opened but no frame (ISP / encoder node?)"))
+            try:
+                cap.release()
+            except Exception:
+                pass
+            return None, idx, "no frame"
+
+        return cap, idx, "ok"
+
+    @staticmethod
+    def _format_open_failure(tried: List[Tuple[int, str]]) -> str:
+        """Compose the operator-facing pill text from the audit trail.
+
+        Prioritises the most-actionable hint. Permission errors win
+        over 'no device' because they're easy to fix; 'opened but no
+        frame' wins over 'no device' because it tells the operator
+        the bot saw a camera-shaped thing and rejected it."""
+        if not tried:
+            return "Camera not connected (no /dev/video* probed)"
+        # Promote permission errors to the front - they're the single
+        # most common cause of "the camera was just working".
+        perm = [(i, m) for (i, m) in tried if "permission" in m]
+        if perm:
+            return (
+                f"Camera /dev/video{perm[0][0]} not readable: "
+                f"{perm[0][1]}"
+            )
+        no_frame = [(i, m) for (i, m) in tried if "no frame" in m]
+        if no_frame:
+            indices = ", ".join(f"video{i}" for i, _ in no_frame)
+            return (
+                f"Camera nodes opened but delivered no frames "
+                f"({indices}); USB webcam not plugged in, or "
+                f"another process is holding it"
+            )
+        # Default: show what we tried.
+        attempted = ", ".join(f"video{i}({m})" for i, m in tried[:5])
+        return f"Camera not connected. Tried: {attempted}"
 
     def close(self) -> None:
         with self._lock:

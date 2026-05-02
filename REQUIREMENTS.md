@@ -422,6 +422,9 @@ All optional; defaults work for the recommended hardware. Set in
 
 | Var | Default | What it does |
 |---|---|---|
+| `NINA_VISION_CAMERA` | 0 | `/dev/videoN` index for the USB RGB camera the Vision / Drive / Perception screens consume. The pipeline auto-probes other indices when this one fails (Jetson Orin's `video0..video2` are usually ISP / encoder nodes, not cameras), but pinning the right one here skips the probe and shaves a few seconds off startup. |
+| `NINA_VISION_AUTO_PROBE` | `1` | When the configured index doesn't deliver a frame, fall through to probing the rest of `/dev/video*`. Set to `0` to fail fast (useful for test rigs with multiple cameras where wrong-index = wrong-camera = silent bug). |
+| `NINA_VISION_CANDIDATES` | (auto) | Comma-separated list of indices to probe in order, e.g. `3,8,2`. Defaults to enumerating real `/dev/video*` device files. |
 | `NINA_DEPTH_DISABLE` | unset | `1` skips opening the D435 (autonomy runs lidar-only). Useful for debugging without the depth camera plugged in. |
 | `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
 | `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
@@ -521,6 +524,38 @@ you still see mostly grey:
    the bot is in an oversized room or outdoors (RPLIDAR A1 is only
    reliable to ~6 m). Bump `NINA_SLAM_METERS` to `12`–`16` to fit
    the larger space, accepting that mm/px gets coarser.
+
+**Troubleshooting: "RGB camera not connecting / error 3 / black viewport"**
+
+The Vision pipeline auto-probes `/dev/video*` on first open, so a
+plug-and-play USB webcam usually just works. When it doesn't, the
+pill on the Vision / Drive screen will tell you exactly which
+indices were tried and why each one was rejected. Common shapes:
+
+| Pill text | Meaning | Fix |
+|---|---|---|
+| `Camera /dev/video0 not readable: no permission …` | The user is not in the `video` group | `sudo usermod -aG video $USER` then log out / back in |
+| `Camera nodes opened but delivered no frames (video0, video1, video2)` | Only Jetson ISP / encoder nodes were probed; no real USB webcam responded | Plug in (or re-plug) the webcam, then `ls -la /dev/video*` should show a NEW node appear (typically `video3`+) |
+| `Camera not connected. Tried: video0(wont open), …` | Driver rejected every index | `dmesg \| tail -30` after re-plugging the webcam; look for a `uvcvideo` line. Missing UVC firmware / blacklisted module is the usual culprit |
+| `Camera ready on /dev/video3 (auto-probed; configured was video0)` | Working, but probing every launch wastes ~1 s and ISP nodes still get touched. Pin it permanently. | Set `NINA_VISION_CAMERA=3` in `desktop/nina-ui-kiosk.service` |
+
+If you see a numeric Argus / GStreamer error (e.g. `Argus error: 3
+(INVALID_PARAMS)`) in `journalctl --user -u nina-ui-kiosk -f` or in
+`~/.cache/sirena/launch.log`, that's the **Jetson CSI camera stack**
+(`nvarguscamerasrc`) — not the USB pipeline. The Vision stack uses
+`cv2.VideoCapture(/dev/videoN)`, not Argus. The Argus error usually
+means a CSI / MIPI ribbon cable is loose or the camera isn't bound
+to the right ISP. Reseat the ribbon and reboot; the USB Vision
+stack is unaffected.
+
+To enumerate what the bot actually sees on its USB ports:
+
+```bash
+ls -la /dev/video*                     # which V4L2 nodes exist
+v4l2-ctl --list-devices                # which device a USB cam is bound to
+v4l2-ctl -d /dev/video3 --all | head   # confirm the node accepts ioctls
+ffplay /dev/video3                     # full-screen live preview (Ctrl-C to quit)
+```
 
 #### 5.3.6 Live perception view (LiDAR + RGB + Depth, side-by-side)
 
