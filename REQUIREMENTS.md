@@ -471,9 +471,11 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_VISION_CAMERA` | 0 | `/dev/videoN` index for the USB RGB camera the Vision / Drive / Perception screens consume. The pipeline auto-probes other indices when this one fails (Jetson Orin's `video0..video2` are usually ISP / encoder nodes, not cameras), but pinning the right one here skips the probe and shaves a few seconds off startup. |
 | `NINA_VISION_AUTO_PROBE` | `1` | When the configured index doesn't deliver a frame, fall through to probing the rest of `/dev/video*`. Set to `0` to fail fast (useful for test rigs with multiple cameras where wrong-index = wrong-camera = silent bug). |
 | `NINA_VISION_CANDIDATES` | (auto) | Comma-separated list of indices to probe in order, e.g. `3,8,2`. Defaults to enumerating real `/dev/video*` device files. |
+| `NINA_VISION_ALLOW_REALSENSE` | `0` | The auto-probe **skips** any `/dev/video*` whose V4L2 card name mentions "RealSense" because the D435's color UVC stream would otherwise be picked up as the "RGB camera" pane (depth-camera frames showed in the Drive / Perception RGB view, real USB webcam never opened). Set to `1` only on rigs with no separate webcam where you want one camera doing double duty. |
 | `NINA_DEPTH_DISABLE` | unset | `1` skips opening the D435 (autonomy runs lidar-only). Useful for debugging without the depth camera plugged in. |
 | `NINA_DEPTH_WIDTH` / `_HEIGHT` / `_FPS` | 640 / 480 / 15 | D435 stream config. Lower these on USB 2. |
-| `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 200 | Depth values outside this range are dropped (sky / sub-min noise). |
+| `NINA_DEPTH_MAX_MM` / `_MIN_MM` | 5000 / 300 | Depth values outside this range are dropped. The lower bound is set to 300 mm (D435's published reliable minimum is ~280 mm); below that the sensor mostly returns IR projector saturation and floor reflections, which on glossy / polished floors look like phantom forward obstacles to the autonomy. |
+| `NINA_DEPTH_MIN_CLUSTER_PX` | 50 | The forward / left / right region "min" requires at least this many pixels at-or-closer than the reported distance before the autonomy treats it as a real obstacle. Single-pixel IR splash from a reflective floor used to hijack `forward_min_mm` (bot spun in place even on an empty hallway); 50 px ≈ 5×10 cluster, comfortably above the noise floor and small enough to still catch a chair leg at typical cruise distance. |
 | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip direct overhead glare. (Was 25% — too aggressive: chest-high tabletops at 1–2 m were masked out, so the bot drove into them.) |
 | `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.6). |
 | `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
@@ -526,6 +528,22 @@ D435 frame. The fix is the floor-mask defaults
 tilted further down, raise it (e.g. `=45`). If your D435 sits at face
 height with no tilt, you can lower it (`=10`) to let the bottom rows
 back in.
+
+**Reflective floors specifically.** Polished concrete, vinyl, and
+glossy tile bounce the D435's IR projector light back as
+single-pixel hot returns at 100–300 mm scattered through the *middle*
+of the depth image — well above the bottom-mask line. The cluster
+filter (`NINA_DEPTH_MIN_CLUSTER_PX=50`) is the real defence here:
+single-pixel splash can't pass it. If the bot is still spinning on a
+particularly mirror-finish floor, raise the floor:
+
+* `NINA_DEPTH_MIN_CLUSTER_PX=100` — require a 10×10 cluster instead
+  of 5×10; better tolerance to scattered IR splash, slightly less
+  sensitivity to thin objects (chair legs at >2 m).
+* `NINA_DEPTH_MIN_MM=400` — drop the lower depth bound further; the
+  RealSense already publishes nothing useful in 280–400 mm anyway,
+  this just makes the autonomy ignore those bins. Lidar / ultrasonic
+  still cover the sub-400 mm zone.
 
 If the breakdown shows `lidar=120` (or similar low value) the lidar
 itself is reading something close in its forward sector — most
@@ -584,6 +602,7 @@ indices were tried and why each one was rejected. Common shapes:
 | `Camera nodes opened but delivered no frames (video0, video1, video2)` | Only Jetson ISP / encoder nodes were probed; no real USB webcam responded | Plug in (or re-plug) the webcam, then `ls -la /dev/video*` should show a NEW node appear (typically `video3`+) |
 | `Camera not connected. Tried: video0(wont open), …` | Driver rejected every index | `dmesg \| tail -30` after re-plugging the webcam; look for a `uvcvideo` line. Missing UVC firmware / blacklisted module is the usual culprit |
 | `Camera ready on /dev/video3 (auto-probed; configured was video0)` | Working, but probing every launch wastes ~1 s and ISP nodes still get touched. Pin it permanently. | Set `NINA_VISION_CAMERA=3` in `desktop/nina-ui-kiosk.service` |
+| `RGB webcam not connected. The only camera I found (videoN, video(N+1)) is the Intel RealSense depth camera …` | The actual USB webcam isn't powered / plugged in. The probe deliberately skips the RealSense's UVC color stream (otherwise depth-camera frames would show in the "RGB camera" pane on the Drive / Perception screens — exactly the regression bot operators reported). | Re-plug the USB webcam (separate from the RealSense). If you genuinely want the RealSense color stream as the RGB feed (no separate webcam), set `NINA_VISION_ALLOW_REALSENSE=1`. |
 
 If you see a numeric Argus / GStreamer error (e.g. `Argus error: 3
 (INVALID_PARAMS)`) in `journalctl --user -u nina-ui-kiosk -f` or in

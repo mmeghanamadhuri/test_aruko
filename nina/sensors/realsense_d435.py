@@ -43,7 +43,32 @@ DEFAULT_WIDTH = int(os.environ.get("NINA_DEPTH_WIDTH", "640"))
 DEFAULT_HEIGHT = int(os.environ.get("NINA_DEPTH_HEIGHT", "480"))
 DEFAULT_FPS = int(os.environ.get("NINA_DEPTH_FPS", "15"))
 DEFAULT_MAX_RANGE_MM = int(os.environ.get("NINA_DEPTH_MAX_MM", "5000"))
-DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_DEPTH_MIN_MM", "200"))
+# Floor of acceptable depth readings. Bumped from 200 -> 300 mm
+# because the D435's reliable minimum (per the Intel datasheet) is
+# ~280 mm; readings closer than that are dominated by IR projector
+# saturation, sensor noise, and - critically for us - glints off
+# reflective floors (polished concrete, vinyl, glossy tile). Without
+# this floor the bot would see single-pixel "300 mm" hot spots in
+# the middle of the depth image and spin forever even on an
+# obstacle-free reflective hallway. Operators with a different
+# camera / floor combo can still override via NINA_DEPTH_MIN_MM.
+DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_DEPTH_MIN_MM", "300"))
+
+# Minimum pixel cluster size for the per-region forward/left/right
+# obstacle min. The naive `region.min()` is fooled by a single hot
+# pixel - that's the failure mode we hit on reflective floors,
+# where IR projector light bounces and produces single-pixel "very
+# close" splash inside the middle band of the depth image. Instead
+# we sort the in-range pixels by distance and take the N-th closest
+# one as the region's "min" - so an obstacle has to occupy at least
+# N pixels of the region before the autonomy treats it as real.
+#
+# 50 px is small enough to catch a chair leg at 1.5 m (a 1 cm wide
+# leg projects to ~6 pixels at 640x480 / 65 deg HFOV at 1.5 m, so
+# 50 covers ~8 vertical rows of leg) but large enough that
+# single-pixel glints are filtered out (a 5x5 spec of saturated
+# pixels gives 25, half the threshold).
+DEFAULT_MIN_CLUSTER_PX = int(os.environ.get("NINA_DEPTH_MIN_CLUSTER_PX", "50"))
 
 # Vertical band of the depth image used for the obstacle-cone summary.
 # Defaults skip the top 10% (sky / ceiling) AND the bottom 35% (the
@@ -408,11 +433,43 @@ class RealSenseD435:
             return None
 
     def _region_min(self, np, region) -> Optional[int]:
-        valid = region[(region > 0)]
+        # First reject the per-pixel "no return" sentinel (0) AND
+        # everything below MIN_RANGE_MM in raw depth-units. The min-mm
+        # filter is critical for reflective floors: without it, IR
+        # glints land at ~50-200 mm and a naive min() picks them up
+        # as the closest "obstacle" before they can be filtered out
+        # by the cluster check below.
+        valid = region[region > 0]
         if valid.size == 0:
             return None
-        units = int(valid.min())
-        mm = int(units * self._scale_mm)
+        scale = float(self._scale_mm)
+        if scale <= 0:
+            return None
+        # Convert MIN_RANGE_MM (mm) into raw-depth units once so we
+        # can filter in-place without mm-converting every pixel.
+        min_units = max(1, int(round(DEFAULT_MIN_RANGE_MM / scale)))
+        max_units = max(min_units + 1, int(round(DEFAULT_MAX_RANGE_MM / scale)))
+        valid = valid[(valid >= min_units) & (valid <= max_units)]
+        if valid.size == 0:
+            return None
+
+        # Cluster filter: require at least DEFAULT_MIN_CLUSTER_PX
+        # pixels at-or-closer than the reported min. We do this by
+        # taking the N-th smallest pixel via np.partition (O(n), no
+        # full sort). On a reflective floor a single saturated pixel
+        # at 320 mm would otherwise drive the autonomy to "blocked"
+        # forever; with N=50 the bot needs a real obstacle that
+        # actually occupies ground in the depth frame.
+        cluster_n = max(1, int(DEFAULT_MIN_CLUSTER_PX))
+        if valid.size < cluster_n:
+            # Not enough close pixels in the region to be an
+            # obstacle - either there's nothing in the cone, or what
+            # IS in the cone is being mis-read by reflections /
+            # IR-projector saturation. Either way we should not
+            # report a forward block.
+            return None
+        nth = int(np.partition(valid, cluster_n - 1)[cluster_n - 1])
+        mm = int(nth * scale)
         if mm < DEFAULT_MIN_RANGE_MM or mm > DEFAULT_MAX_RANGE_MM:
             return None
         return mm

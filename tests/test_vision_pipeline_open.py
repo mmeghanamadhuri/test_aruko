@@ -294,6 +294,129 @@ def test_auto_probe_can_be_disabled(patched, monkeypatch):
     assert fake.opened == [0]
 
 
+def _fake_v4l2_name(monkeypatch: pytest.MonkeyPatch, mapping: dict) -> None:
+    """Make VisionPipeline._v4l2_card_name(idx) return the requested
+    string for each /dev/videoN. mapping is {idx: name_str}; absent
+    indices return ""."""
+    from sirena_ui.workers import vision_pipeline as vp
+
+    def fake_name(idx: int) -> str:
+        return mapping.get(int(idx), "")
+
+    monkeypatch.setattr(
+        vp.VisionPipeline, "_v4l2_card_name", staticmethod(fake_name)
+    )
+
+
+def test_realsense_uvc_node_is_skipped(patched, monkeypatch):
+    """The Intel RealSense D435 enumerates as a UVC device, so the
+    auto-probe used to happily pick its color stream as the 'RGB
+    camera' when the actual USB webcam wasn't powered up. The
+    operator-visible regression: the RGB camera view in both Drive
+    and Perception screens showed the depth-camera image instead.
+
+    Pin the contract: any /dev/videoN whose V4L2 card name contains
+    'RealSense' is rejected during the probe with a depth-camera
+    annotation, so the autonomy / vision pipelines never bind it."""
+    fake, vp = patched
+    _patch_listdir(monkeypatch, [0, 1, 2, 3])
+    # video0 = the (unpowered) USB webcam slot - won't even open.
+    # video1, video2 = RealSense's depth + color UVC nodes; video2
+    #                  WOULD deliver a frame but must be skipped
+    #                  because of its name.
+    # video3 = nothing.
+    fake.outcomes = {
+        0: ("wont_open",),
+        1: ("ok", "DEPTH_FRAME"),
+        2: ("ok", "COLOR_FRAME"),
+        3: ("wont_open",),
+    }
+    _fake_v4l2_name(
+        monkeypatch,
+        {
+            1: "Intel(R) RealSense(TM) Depth Ca",
+            2: "Intel(R) RealSense(TM) Depth Ca",
+        },
+    )
+
+    pipe = vp.VisionPipeline()
+    status = pipe.open()
+
+    assert status.camera_open is False, (
+        f"RealSense color stream was bound as the RGB camera: "
+        f"{status.message!r}"
+    )
+    # Confirm we DID NOT call VideoCapture on the RealSense indices.
+    assert 1 not in fake.opened, (
+        "VideoCapture(1) called even though video1 is RealSense - "
+        "the skip must happen BEFORE we open the device, otherwise "
+        "we briefly take the depth camera away from librealsense"
+    )
+    assert 2 not in fake.opened, (
+        "VideoCapture(2) called even though video2 is RealSense"
+    )
+    msg = status.message.lower()
+    assert "realsense" in msg or "depth camera" in msg, (
+        f"failure message must call out the depth-camera collision "
+        f"so the operator knows where their RGB webcam went: "
+        f"{status.message!r}"
+    )
+
+
+def test_realsense_skip_can_be_overridden(patched, monkeypatch):
+    """An operator with NO separate USB webcam can still opt back
+    into using the RealSense color stream as their 'RGB' camera by
+    setting NINA_VISION_ALLOW_REALSENSE=1. This is for headless rigs
+    where one camera does double duty."""
+    fake, vp = patched
+    _patch_listdir(monkeypatch, [0])
+    fake.outcomes = {0: ("ok", "COLOR_FRAME")}
+    _fake_v4l2_name(monkeypatch, {0: "Intel(R) RealSense(TM) Depth Ca"})
+    monkeypatch.setenv("NINA_VISION_ALLOW_REALSENSE", "1")
+
+    pipe = vp.VisionPipeline()
+    status = pipe.open()
+
+    assert status.camera_open is True, (
+        f"opt-in did not unlock the RealSense color stream: "
+        f"{status.message!r}"
+    )
+    assert 0 in fake.opened
+
+
+def test_real_webcam_wins_when_realsense_is_also_present(patched, monkeypatch):
+    """When BOTH a real USB webcam and a RealSense are connected, the
+    probe must pick the real webcam and skip the RealSense - no
+    matter which one enumerates first."""
+    fake, vp = patched
+    _patch_listdir(monkeypatch, [0, 1, 2])
+    fake.outcomes = {
+        0: ("ok", "REALSENSE_COLOR"),  # RealSense lands at video0
+        1: ("ok", "REALSENSE_DEPTH"),
+        2: ("ok", "WEBCAM_FRAME"),     # the real USB webcam
+    }
+    _fake_v4l2_name(
+        monkeypatch,
+        {
+            0: "Intel(R) RealSense(TM) Depth Ca",
+            1: "Intel(R) RealSense(TM) Depth Ca",
+            2: "HD Pro Webcam C920",
+        },
+    )
+
+    pipe = vp.VisionPipeline()
+    status = pipe.open()
+
+    assert status.camera_open is True
+    # video2 (the C920) was picked, video0/video1 (RealSense) were
+    # never opened.
+    assert fake.opened == [2], (
+        f"opened {fake.opened}; expected only the C920 at video2 to "
+        "be opened, RealSense indices must be skipped without ever "
+        "calling VideoCapture on them"
+    )
+
+
 def test_explicit_candidates_env_overrides_dev_scan(patched, monkeypatch):
     """`NINA_VISION_CANDIDATES=8,3` lets the operator pin the probe
     order without enumerating /dev (useful in containers / CI where

@@ -687,6 +687,59 @@ class VisionPipeline:
         out.sort()
         return out or list(range(0, 10))
 
+    @staticmethod
+    def _v4l2_card_name(idx: int) -> str:
+        """Return the V4L2 'card name' string for /dev/video{idx} or "".
+
+        On Linux this comes from /sys/class/video4linux/videoN/name and
+        looks like 'HD Pro Webcam C920' or
+        'Intel(R) RealSense(TM) Depth Ca'. We use it to match-and-skip
+        depth-camera UVC nodes during auto-probe; see
+        `_is_depth_camera_node()` for why."""
+        try:
+            with open(
+                f"/sys/class/video4linux/video{idx}/name",
+                "r",
+                encoding="utf-8",
+                errors="replace",
+            ) as fh:
+                return fh.read().strip()
+        except OSError:
+            return ""
+
+    @classmethod
+    def _is_depth_camera_node(cls, idx: int) -> Tuple[bool, str]:
+        """Return (is_depth, card_name) for /dev/video{idx}.
+
+        Intel RealSense depth cameras (D435/D435i/D455) enumerate as
+        UVC devices, so a naive auto-probe will happily pick up the
+        RealSense's COLOR stream as if it were the regular USB
+        webcam, then push depth-camera frames into the GUI's "RGB
+        camera" pane. That's exactly the regression the operator
+        reported: 'in the RGB camera view in both the screens, it is
+        showing the image of what the RealSense camera is seeing'.
+
+        We solve it the cheap way: read the V4L2 card name from
+        sysfs and skip anything that mentions RealSense / Intel(R)
+        RealSense. The depth camera is owned by the dedicated
+        RealSense driver (nina/sensors/realsense_d435.py via
+        librealsense), not by cv2.VideoCapture, so we should never
+        bind it through this path.
+
+        Operators who genuinely want to use the RealSense color
+        stream as the main webcam (no separate RGB camera) can opt
+        back in with NINA_VISION_ALLOW_REALSENSE=1.
+        """
+        if cls._env_bool("NINA_VISION_ALLOW_REALSENSE", False):
+            return False, ""
+        name = cls._v4l2_card_name(idx)
+        if not name:
+            return False, ""
+        lname = name.lower()
+        if "realsense" in lname or "intel(r) realsense" in lname:
+            return True, name
+        return False, name
+
     def _try_open_index(
         self, idx: int, tried: List[Tuple[int, str]]
     ) -> Tuple[Optional[object], int, str]:
@@ -707,6 +760,20 @@ class VisionPipeline:
                 (idx, "no permission (try: sudo usermod -aG video $USER)")
             )
             return None, idx, "no permission"
+
+        # Skip RealSense UVC nodes - they belong to the depth-camera
+        # driver, not the RGB webcam pipeline. See
+        # `_is_depth_camera_node()` for the full reasoning.
+        is_depth, card_name = self._is_depth_camera_node(idx)
+        if is_depth:
+            tried.append(
+                (
+                    idx,
+                    f"depth camera ({card_name}) - skipped, "
+                    "owned by the RealSense driver",
+                )
+            )
+            return None, idx, "depth camera"
 
         try:
             cap = cv2.VideoCapture(idx)
@@ -763,6 +830,21 @@ class VisionPipeline:
                 f"Camera nodes opened but delivered no frames "
                 f"({indices}); USB webcam not plugged in, or "
                 f"another process is holding it"
+            )
+        # If the only thing we found was the RealSense depth camera,
+        # say so explicitly - the operator's USB webcam is missing /
+        # unpowered and we DELIBERATELY did not bind the RealSense
+        # color stream as the RGB camera.
+        depth = [(i, m) for (i, m) in tried if "depth camera" in m]
+        if depth and len(depth) == len(tried):
+            indices = ", ".join(f"video{i}" for i, _ in depth)
+            return (
+                f"RGB webcam not connected. The only camera I found "
+                f"({indices}) is the Intel RealSense depth camera, "
+                f"which the depth-camera driver owns; check the USB "
+                f"webcam's cable / power, or set "
+                f"NINA_VISION_ALLOW_REALSENSE=1 to use the RealSense "
+                f"color stream as the RGB camera"
             )
         # Default: show what we tried.
         attempted = ", ".join(f"video{i}({m})" for i, m in tried[:5])

@@ -198,3 +198,38 @@ def test_depth_top_skip_default_value(clean_env) -> None:
         "going below 30 lets the floor back into the forward cone "
         "and the bot will spin in place"
     )
+
+
+# ---------------------------------------------------------------------
+# Reflective-floor / IR-glint defaults
+# ---------------------------------------------------------------------
+
+
+def test_depth_min_range_above_d435_floor(clean_env) -> None:
+    """The D435's reliable minimum (per Intel's datasheet) is ~280 mm.
+    Below that the sensor mostly returns IR projector saturation and
+    floor reflections, which on a polished/glossy floor look like
+    real obstacles to the autonomy. Pin the floor at 300 mm so this
+    can't drift back down to 200 (the original default that caused
+    'bot spins forever even when surrounded by open space')."""
+    import importlib
+    importlib.reload(realsense_d435)
+    assert realsense_d435.DEFAULT_MIN_RANGE_MM >= 280, (
+        f"DEFAULT_MIN_RANGE_MM={realsense_d435.DEFAULT_MIN_RANGE_MM} "
+        "is inside the D435's noise floor; reflective-floor glints "
+        "will be reported as forward obstacles"
+    )
+
+
+def test_depth_min_cluster_px_filters_single_pixel_glints(clean_env) -> None:
+    """Pin DEFAULT_MIN_CLUSTER_PX above 1 so a single-pixel reading
+    can never drive the autonomy decision. The empirical threshold
+    is ~25 (a 5x5 IR splash) -> 50 gives 2x headroom and still
+    catches a chair leg cluster at typical cruise distance."""
+    import importlib
+    importlib.reload(realsense_d435)
+    assert realsense_d435.DEFAULT_MIN_CLUSTER_PX >= 25, (
+        f"DEFAULT_MIN_CLUSTER_PX={realsense_d435.DEFAULT_MIN_CLUSTER_PX}; "
+        "below 25 a single-pixel IR-projector splash on a reflective "
+        "floor can hijack forward_min_mm and the bot spins in place"
+    )

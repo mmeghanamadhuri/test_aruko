@@ -129,23 +129,158 @@ def test_real_obstacle_in_middle_band_is_seen() -> None:
     )
 
 
-def test_skip_pcts_are_clamped_safely() -> None:
+def test_skip_pcts_are_clamped_safely(monkeypatch) -> None:
     """Operators may set bogus skip values via env (e.g. 90/90 = no
     rows left). The slicing math must still produce a non-empty
     region instead of crashing or silently passing an empty array
     to numpy.min()."""
     np = pytest.importorskip("numpy")
 
+    # Pin cluster size to 1 for this test - we're exercising the
+    # row-slicing math on a deliberately tiny (4x6) frame, not the
+    # glint cluster filter (which would otherwise reject the
+    # forward cone for being too small).
+    monkeypatch.setattr(realsense_d435, "DEFAULT_MIN_CLUSTER_PX", 1)
+
     drv = _drv()
     h, w = 4, 6
     arr = np.full((h, w), 1500, dtype=np.uint16)
 
-    # Should not raise even on a tiny (4-row) frame where both skip
-    # pcts could otherwise round to overlapping rows.
     drv._publish(np, arr)
     frame = drv.read()
     assert frame is not None
     assert frame.forward_min_mm == 1500
+
+
+# ---------------------------------------------------------------------
+# Glint / cluster filter tests
+# ---------------------------------------------------------------------
+#
+# These cover the second-half fix for "bot spins in place even when
+# nothing's in front of it": on a reflective floor (polished concrete,
+# vinyl, glossy tile) the D435's IR projector splashes single-pixel
+# hot returns into the middle band of the depth image. A naive
+# region.min() picks one up at ~300 mm and the autonomy reads the
+# forward cone as permanently blocked. The cluster filter requires
+# at least DEFAULT_MIN_CLUSTER_PX (50) pixels to agree before treating
+# a reading as a real obstacle.
+
+
+def test_single_pixel_glint_does_not_trigger_forward_block() -> None:
+    """A single saturated 320 mm pixel in an otherwise-clear forward
+    cone is the reflective-floor failure mode. With the cluster
+    filter it must be ignored - the bot must report ~2000 mm clear,
+    not ~320 mm blocked."""
+    np = pytest.importorskip("numpy")
+
+    drv = _drv()
+    h, w = 100, 90  # forward cone = 30 cols x ~55 rows = 1650 px
+    arr = np.full((h, w), 2000, dtype=np.uint16)
+    # Plant ONE glint pixel at 320 mm in the middle of the forward cone.
+    arr[50, w // 2] = 320
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    assert frame.forward_min_mm is not None
+    assert frame.forward_min_mm >= 1900, (
+        f"forward_min_mm={frame.forward_min_mm} - a single 320 mm "
+        f"glint pixel hijacked the forward cone. The cluster filter "
+        f"(DEFAULT_MIN_CLUSTER_PX={realsense_d435.DEFAULT_MIN_CLUSTER_PX}) "
+        f"is not catching reflective-floor IR splash; on the real bot "
+        f"this is 'spin in place even when surrounded by open space'."
+    )
+
+
+def test_real_obstacle_cluster_still_passes_filter() -> None:
+    """A genuine obstacle that occupies more than DEFAULT_MIN_CLUSTER_PX
+    pixels at the same range MUST still be reported - we'd rather a
+    bot that occasionally over-reacts to a real obstacle than one
+    that drives through a chair leg because the glint filter was too
+    aggressive."""
+    np = pytest.importorskip("numpy")
+
+    drv = _drv()
+    h, w = 100, 90
+    arr = np.full((h, w), 2000, dtype=np.uint16)
+    # 10x10 = 100 pixel obstacle at 700 mm in the middle band - 2x
+    # the cluster threshold, comfortably above the noise floor.
+    arr[45:55, w // 2 - 5:w // 2 + 5] = 700
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    assert frame.forward_min_mm == 700, (
+        f"100-px real obstacle at 700 mm not reported "
+        f"(got {frame.forward_min_mm}); cluster filter is dropping "
+        f"obstacles it should be passing through"
+    )
+
+
+def test_min_range_floor_rejects_below_threshold() -> None:
+    """DEFAULT_MIN_RANGE_MM was bumped from 200 -> 300 to drop the
+    range where the D435 mostly returns IR-projector saturation /
+    floor reflections rather than real distance. Even a real
+    cluster of pixels at 250 mm should NOT contribute to forward_min_mm
+    - if something is really inside the camera's reliable minimum,
+    the depth sensor can't measure it accurately anyway."""
+    np = pytest.importorskip("numpy")
+
+    drv = _drv()
+    h, w = 100, 90
+    arr = np.full((h, w), 2000, dtype=np.uint16)
+    # Cluster of 200 pixels at 250 mm in the middle band - well
+    # above the cluster threshold but BELOW the new MIN_MM=300.
+    arr[40:60, w // 2 - 5:w // 2 + 5] = 250
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    # The cluster filter sees 200 pixels at 250 mm (below MIN_MM)
+    # and skips them; everything else is at 2000 mm so that's what
+    # gets reported. The autonomy uses other sensors (lidar /
+    # ultrasonic) for the sub-300mm regime where the D435 isn't
+    # reliable.
+    assert frame.forward_min_mm is not None
+    assert frame.forward_min_mm >= 1900, (
+        f"forward_min_mm={frame.forward_min_mm} - a 200-pixel cluster "
+        f"at 250 mm (below DEFAULT_MIN_RANGE_MM="
+        f"{realsense_d435.DEFAULT_MIN_RANGE_MM}) was reported as the "
+        f"forward distance. The MIN_MM floor is meant to drop the "
+        f"unreliable near-field range where the D435 mostly returns "
+        f"floor reflections / IR splash."
+    )
+
+
+def test_min_cluster_px_env_override_is_honoured(monkeypatch) -> None:
+    """An operator with an unusual sensor / floor combo can re-tune
+    the cluster size via NINA_DEPTH_MIN_CLUSTER_PX. The driver must
+    actually re-read the constant at publish time (or be patched
+    cleanly) - we expose the constant and test that monkeypatching
+    it changes the threshold."""
+    np = pytest.importorskip("numpy")
+
+    monkeypatch.setattr(realsense_d435, "DEFAULT_MIN_CLUSTER_PX", 1)
+
+    drv = _drv()
+    h, w = 100, 90
+    arr = np.full((h, w), 2000, dtype=np.uint16)
+    # ONE pixel at 700 mm. With CLUSTER=1 it should be reported (the
+    # operator explicitly opted out of cluster filtering for their
+    # known-good environment).
+    arr[50, w // 2] = 700
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    assert frame.forward_min_mm == 700, (
+        f"With DEFAULT_MIN_CLUSTER_PX=1 the single-pixel min should "
+        f"win (got {frame.forward_min_mm})"
+    )
 
 
 # ---------------------------------------------------------------------
