@@ -21,7 +21,7 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
     NINA_NAV_DIR_SETTLE_SEC    # default 0.03; delay after DIR+EL before PWM; 0 = off
     NINA_NAV_PWM_REASSERT_SEC  # default 0.02; 2nd PWM write from rest; 0 = off
-    NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.08; straight crawl only; 0 = off
+    NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.5; straight crawl only; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT # default 20 (% of cmd speed for opposite jog)
     NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC   # default 0.04; pause at PWM 0 after jog
     NINA_NAV_SETTLE_SEC        # default 0.1; soft-stop pause / drive_continuous gap

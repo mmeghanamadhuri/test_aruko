@@ -154,7 +154,7 @@ _DEFAULT_DIR_PWM_GAP_SEC = float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03
 _DEFAULT_PWM_REASSERT_SEC = float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02"))
 # Brief straight-line jog opposite to the crawl (anti-backlash). 0 sec disables.
 _DEFAULT_STRAIGHT_OPP_NUDGE_SEC = float(
-    os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.08")
+    os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.5")
 )
 _DEFAULT_STRAIGHT_OPP_NUDGE_PCT = int(
     os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT", "20")
@@ -607,7 +607,7 @@ class NavigationManager:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
 
         cfg = self.config
-        ns = max(0.0, min(0.5, float(cfg.straight_opposite_nudge_sec)))
+        ns = max(0.0, min(2.0, float(cfg.straight_opposite_nudge_sec)))
         pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
         want_nudge = (
             straight_crawl

@@ -65,7 +65,7 @@ class NavigationSettings:
     dir_pwm_gap_sec: float = 0.03
     pwm_reassert_sec: float = 0.02
     # Straight-line only: brief opposite jog before crawling (0 sec = off).
-    straight_opposite_nudge_sec: float = 0.08
+    straight_opposite_nudge_sec: float = 0.5
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.04
     # Pause after soft stop / between stop and fresh motion (`stop()`,
@@ -223,7 +223,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         dir_pwm_gap_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03")),
         pwm_reassert_sec=float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02")),
         straight_opposite_nudge_sec=float(
-            os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.08")
+            os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.5")
         ),
         straight_opposite_nudge_pct=int(
             os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT", "20")

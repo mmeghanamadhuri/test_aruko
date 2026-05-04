@@ -324,7 +324,7 @@ class RemoteNavigationManager:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
 
         cfg = self.config
-        ns = max(0.0, min(0.5, float(cfg.straight_opposite_nudge_sec)))
+        ns = max(0.0, min(2.0, float(cfg.straight_opposite_nudge_sec)))
         pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
         want_nudge = (
             straight_crawl
