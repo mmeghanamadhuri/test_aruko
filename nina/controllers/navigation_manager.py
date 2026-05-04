@@ -369,7 +369,8 @@ class NavigationManager:
         Used by the GUI's held D-pad buttons so left/right last as long
         as the operator holds the key down. Mirrors the RPi
         forward_forever/backward_forever pattern: stop, settle, then
-        write each wheel's direction + speed.
+        arm both drivers (DIR + EL, PWM 0) and apply both duties in
+        quick succession so neither wheel leads the other at start.
         """
         if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid left_dir '{left_dir}'")
@@ -378,8 +379,12 @@ class NavigationManager:
         speed = self._resolve_speed(speed_percent)
         self.stop()
         time.sleep(self.config.settle_delay_sec)
-        self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
-        self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
+        self._start_both_wheels(
+            left_dir=left_dir,
+            left_speed=speed,
+            right_dir=right_dir,
+            right_speed=speed,
+        )
         log.info(
             "drive_continuous L=%s R=%s speed=%s%%",
             left_dir, right_dir, speed,
@@ -398,14 +403,20 @@ class NavigationManager:
         Returns immediately. Used by the autonomy hot path (5-20 Hz)
         where each tick wants to nudge the duty cycle without re-running
         the stop/settle sequence. Direction is sampled level-sensitive
-        by the JYQD, so changing DIR mid-spin is safe.
+        by the JYQD, so changing DIR mid-spin is safe. Both wheels are
+        armed at PWM 0 before duties are applied back-to-back (local GPIO
+        only — remote mode sends one SET frame).
         """
         if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
-        self._control_speed(self.SIDE_LEFT, True, left_speed, left_dir)
-        self._control_speed(self.SIDE_RIGHT, True, right_speed, right_dir)
+        self._start_both_wheels(
+            left_dir=left_dir,
+            left_speed=left_speed,
+            right_dir=right_dir,
+            right_speed=right_speed,
+        )
 
     def stop(self) -> None:
         """Soft stop matching the RPi reference: PWM=0, EL stays HIGH.
@@ -414,8 +425,12 @@ class NavigationManager:
         without dropping EL. `emergency_stop()` is the variant that
         drops EL=LOW for a true chip-disabled state.
         """
-        self._control_speed(self.SIDE_LEFT, True, 0, self.DIR_FORWARD)
-        self._control_speed(self.SIDE_RIGHT, True, 0, self.DIR_FORWARD)
+        self._start_both_wheels(
+            left_dir=self.DIR_FORWARD,
+            left_speed=0,
+            right_dir=self.DIR_FORWARD,
+            right_speed=0,
+        )
         time.sleep(self.config.settle_delay_sec)
         log.info("stop (EL=HIGH, PWM=0)")
 
@@ -466,13 +481,80 @@ class NavigationManager:
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _prepare_side_motion(self, side: str, direction: str) -> None:
+        """Arm one driver: EL HIGH, DIR set, PWM 0.
+
+        Used together with `_apply_side_pwm`: program both sides to
+        their directions with zero torque first, then raise both duties
+        in quick succession. That avoids the old left-then-right
+        `_control_speed` ordering where the first wheel could spin up
+        while the second was still at PWM 0 (instant yaw)."""
+        self._require_initialized()
+        if side not in (self.SIDE_LEFT, self.SIDE_RIGHT):
+            raise ValueError(f"Invalid side '{side}'")
+        if direction not in (self.DIR_FORWARD, self.DIR_BACKWARD):
+            raise ValueError(f"Invalid direction '{direction}'")
+
+        pins = self.config.pins
+        forward = direction == self.DIR_FORWARD
+
+        if side == self.SIDE_LEFT:
+            level = 1 if forward else 0
+            if self._effective_invert_left():
+                level = 0 if level else 1
+            self._backend.write(pins.l_en, 1)
+            self._backend.write(pins.l_dir, level)
+            self._backend.set_duty(pins.pwm_l, 0.0)
+        else:
+            level = 0 if forward else 1
+            if self._effective_invert_right():
+                level = 0 if level else 1
+            self._backend.write(pins.r_en, 1)
+            self._backend.write(pins.r_dir, level)
+            self._backend.set_duty(pins.pwm_r, 0.0)
+
+    def _apply_side_pwm(self, side: str, speed_percent: int) -> None:
+        """Set PWM duty only; EL and DIR must already match `_prepare_side_motion`."""
+        self._require_initialized()
+        if side not in (self.SIDE_LEFT, self.SIDE_RIGHT):
+            raise ValueError(f"Invalid side '{side}'")
+        speed = max(0, min(100, int(speed_percent)))
+        duty = float(speed)
+        pins = self.config.pins
+        if side == self.SIDE_LEFT:
+            self._backend.set_duty(pins.pwm_l, duty)
+        else:
+            self._backend.set_duty(pins.pwm_r, duty)
+
+    def _start_both_wheels(
+        self,
+        *,
+        left_dir: str,
+        left_speed: int,
+        right_dir: str,
+        right_speed: int,
+    ) -> None:
+        """Start or retarget both wheels with minimal inter-wheel delay."""
+        if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
+            raise ValueError(f"Invalid left_dir '{left_dir}'")
+        if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
+            raise ValueError(f"Invalid right_dir '{right_dir}'")
+        self._prepare_side_motion(self.SIDE_LEFT, left_dir)
+        self._prepare_side_motion(self.SIDE_RIGHT, right_dir)
+        self._apply_side_pwm(self.SIDE_LEFT, left_speed)
+        self._apply_side_pwm(self.SIDE_RIGHT, right_speed)
+
     def _command_both(self, direction: str, speed: int) -> None:
         """Mirrors the RPi forward_forever / backward_forever sequence:
         stop, sleep settle, then set both wheels to the new direction."""
         self.stop()
         time.sleep(self.config.settle_delay_sec)
-        self._control_speed(self.SIDE_LEFT, True, speed, direction)
-        self._control_speed(self.SIDE_RIGHT, True, speed, direction)
+        self._start_both_wheels(
+            left_dir=direction,
+            left_speed=speed,
+            right_dir=direction,
+            right_speed=speed,
+        )
 
     def _timed_turn(
         self,
@@ -485,8 +567,12 @@ class NavigationManager:
         """Mirrors the RPi turn_left / turn_right sequence."""
         self.stop()
         time.sleep(self.config.settle_delay_sec)
-        self._control_speed(self.SIDE_LEFT, True, speed, left_dir)
-        self._control_speed(self.SIDE_RIGHT, True, speed, right_dir)
+        self._start_both_wheels(
+            left_dir=left_dir,
+            left_speed=speed,
+            right_dir=right_dir,
+            right_speed=speed,
+        )
         time.sleep(duration if duration is not None else self.config.turn_duration_sec)
         self.stop()
 
