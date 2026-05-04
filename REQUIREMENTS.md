@@ -557,7 +557,8 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Per-side clearance for forward to be allowed. |
 | `NINA_AUTO_ESTOP_MM` | 600 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; reverse only engaged once the bot was already 30 cm away.) |
 | `NINA_GOTO_ARRIVAL_MM` | 250 | Distance from the goal under which `GotoPilot` reports `arrived` and stops. Set to roughly half the chassis width so the bot doesn't pursue the exact tap pixel forever. |
-| `NINA_GOTO_INFLATE_MM` | 250 | Footprint inflation in mm. The A* planner dilates every wall pixel by this radius so the resulting path leaves a Nina-shaped buffer. Bump for narrower bots, lower for tight rooms only after rehearsal. |
+| `NINA_GOTO_INFLATE_MM` | 250 | Footprint inflation in mm — the bot's body half-width. The A* planner dilates every wall pixel by *at least* this radius so the resulting path leaves a Nina-shaped buffer. Bump for wider bots; for tighter safety margins use `NINA_GOTO_MIN_PASSAGE_MM` instead. |
+| `NINA_GOTO_MIN_PASSAGE_MM` | 610 | Minimum corridor width (between facing walls) the planner is allowed to route through, in mm. Default = **2 ft / 24 in / 610 mm**, the smallest passage Nina is supposed to thread in lab + corridor environments. The effective dilation is `max(NINA_GOTO_INFLATE_MM, ⌈min_passage / 2⌉)`, so this knob is the right place to express **operator policy** ("I want 3 ft of buffer in the showroom" → set to 914) rather than bot geometry. Set to 0 to disable the floor and fall back to footprint-only inflation. |
 | `NINA_GOTO_CRUISE_PCT` | 15 | Goto forward speed (matches `NINA_AUTO_CRUISE_PCT` so a wander → goto handoff doesn't change pace). |
 | `NINA_GOTO_TURN_PCT` | 16 | Goto in-place spin speed. |
 | `NINA_GOTO_HEAD_DEG` | 18.0 | Heading-error deadband. Inside this window the pilot drives forward (still steering), outside it turns in place. Wider than the wander pilot's implicit binary so noisy SLAM headings don't flip the pilot into spin during normal driving. |
@@ -603,8 +604,11 @@ All optional; defaults work for the recommended hardware. Set in
    "Tap a point to start".
 3. Tap a free-ish (light-coloured) cell on the occupancy grid.
    Nina:
-   1. Plans an A* path with the bot's footprint dilated as wall
-      buffer (`NINA_GOTO_INFLATE_MM`).
+   1. Plans an A* path with walls dilated by
+      `max(NINA_GOTO_INFLATE_MM, ⌈NINA_GOTO_MIN_PASSAGE_MM / 2⌉)`.
+      The default 610 mm passage floor means the planner refuses
+      any corridor narrower than 2 ft, regardless of how thin you
+      claim the bot is.
    2. Renders the planned waypoints as a dashed red polyline plus
       a flag pin at the goal.
    3. Turns in place to align with the path lookahead, then drives

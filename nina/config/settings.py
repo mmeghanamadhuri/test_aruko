@@ -114,12 +114,21 @@ class GotoSettings:
     vetoes a path step. All distances are millimetres, speeds are
     percent (0..100).
 
-    `footprint_radius_mm` is dilated into the planner's "occupied"
-    layer so paths leave a Nina-shaped buffer to walls. Set this
-    larger than half the bot's body width to be safe.
+    The planner inflates walls by an effective radius of:
+
+        max(footprint_radius_mm, ceil(min_passage_width_mm / 2))
+
+    so paths leave a Nina-shaped buffer to walls AND any corridor
+    the planner routes through is at least `min_passage_width_mm`
+    wide between walls. The two knobs are intentionally separate:
+    `footprint_radius_mm` is "this is how big my body is" (geometry)
+    while `min_passage_width_mm` is "this is the tightest gap I'm
+    willing to send the bot through" (safety policy). Default
+    passage width is 2 ft / 610 mm.
     """
     arrival_radius_mm: int                 # within this -> 'arrived'
-    footprint_radius_mm: int               # planner inflation around walls
+    footprint_radius_mm: int               # bot body half-width (geometry)
+    min_passage_width_mm: int              # smallest corridor width the planner is allowed to use
     cruise_speed_pct: int                  # straight-line speed
     turn_speed_pct: int                    # in-place spin speed
     heading_deadband_deg: float            # |heading_err| <= this -> drive forward
@@ -281,9 +290,19 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # Footprint inflation: A* treats every wall pixel as
         # "wall + this many mm of buffer" so the planner never
         # picks a route the bot physically can't take. Default
-        # 250 mm = ~half-body width. Bump for wider bots / tighter
-        # safety margins.
+        # 250 mm = ~half-body width. Bump for wider bots; tighter
+        # safety margins are better expressed via
+        # `min_passage_width_mm` below.
         footprint_radius_mm=int(os.environ.get("NINA_GOTO_INFLATE_MM", "250")),
+        # Minimum corridor width (between facing walls) the planner
+        # is allowed to route through. Default 610 mm = 24 in / 2 ft,
+        # which is the smallest gap Nina is supposed to fit through
+        # in the lab + corridor environments she's used in. Drive
+        # this from operator policy ("I want 3 ft of buffer in the
+        # showroom") rather than from the bot's geometry.
+        min_passage_width_mm=int(
+            os.environ.get("NINA_GOTO_MIN_PASSAGE_MM", "610")
+        ),
         # Match the wander pilot's 15 % cruise so a goto handoff
         # doesn't change the bot's perceived "speed" mid-run.
         cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "15")),

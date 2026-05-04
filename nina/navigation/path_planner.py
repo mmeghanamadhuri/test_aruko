@@ -15,8 +15,15 @@ BreezySLAM convention for a byte:
 
 We treat anything <= `occupancy_threshold` as a wall (configurable so
 operators can crank the strictness), then **dilate** the wall set by
-`ceil(footprint_radius_mm / scale_mm_per_px)` pixels so paths leave a
-bot-sized buffer between Nina and the geometry.
+the larger of:
+
+    ceil(footprint_radius_mm / scale_mm_per_px)
+    ceil(min_passage_width_mm / 2 / scale_mm_per_px)
+
+pixels so the resulting paths simultaneously (a) leave a bot-sized
+buffer to walls AND (b) only ever traverse corridors that are at
+least `min_passage_width_mm` wide between the facing walls. Default
+passage width is 2 ft (610 mm), matching Nina's operating envelope.
 
 Cost model:
 
@@ -398,6 +405,7 @@ def plan_path(
     goal_mm: Tuple[float, float],
     *,
     footprint_radius_mm: int = 250,
+    min_passage_width_mm: int = 610,
     unknown_pixel_cost: float = 1.5,
     occupancy_threshold: int = OCCUPIED_THRESHOLD,
     snap_radius_mm: int = 1500,
@@ -410,6 +418,12 @@ def plan_path(
     The first waypoint is the bot's current cell centre and the last
     is the (possibly snapped) goal cell centre.
 
+    The wall set is dilated by ``max(footprint_radius_mm,
+    ceil(min_passage_width_mm / 2))`` so the planner refuses any
+    corridor narrower than `min_passage_width_mm` AND leaves at
+    least `footprint_radius_mm` of buffer on either side of the
+    chosen path. Default passage width is 2 ft (610 mm).
+
     `snap_radius_mm` controls how far we'll search for a free cell
     when the operator clicks on a wall. Set to 0 to disable snapping
     (then a wall-click returns `goal_in_wall`).
@@ -420,7 +434,30 @@ def plan_path(
     occ_raw = _build_occupied_mask(grid_bytes, width, height, occupancy_threshold)
     unknown = _unknown_mask(grid_bytes, width, height)
 
-    radius_px = max(0, int(math.ceil(footprint_radius_mm / max(scale_mm_per_px, 1e-6))))
+    # Effective dilation = larger of footprint half-width and the
+    # passage-width-derived radius. The latter comes from the
+    # planner's discretisation: with dilation `r`, the smallest gap
+    # the planner will route through is `2r + 1` pixels wide. We
+    # want that smallest gap to be at least `min_passage_width_mm`
+    # in world mm:
+    #
+    #     (2r + 1) * scale_mm_per_px  >=  min_passage_width_mm
+    #     => r >= (min_passage_mm / scale - 1) / 2
+    #
+    # so we use `ceil` of that expression. Using `min_passage_mm/2`
+    # directly (the obvious half-width) over-shoots by ~one pixel
+    # of margin, which compounds at tight passages. The form below
+    # is the smallest dilation that still respects the policy.
+    body_radius_px = int(math.ceil(
+        footprint_radius_mm / max(scale_mm_per_px, 1e-6)
+    ))
+    if min_passage_width_mm > 0:
+        passage_radius_px = int(math.ceil(
+            (min_passage_width_mm / max(scale_mm_per_px, 1e-6) - 1.0) / 2.0
+        ))
+    else:
+        passage_radius_px = 0
+    radius_px = max(0, body_radius_px, passage_radius_px)
     occ = _dilate(occ_raw, width, height, radius_px)
 
     sx, sy = world_to_pixel(start_mm[0], start_mm[1], width, height, scale_mm_per_px)
@@ -498,12 +535,20 @@ def plan_path(
 def _debug_dilated_mask(
     grid_bytes: bytes, width: int, height: int,
     scale_mm_per_px: float, footprint_radius_mm: int,
+    min_passage_width_mm: int = 610,
     occupancy_threshold: int = OCCUPIED_THRESHOLD,
 ) -> bytes:
     occ_raw = _build_occupied_mask(grid_bytes, width, height, occupancy_threshold)
-    radius_px = max(
-        0, int(math.ceil(footprint_radius_mm / max(scale_mm_per_px, 1e-6)))
-    )
+    body_px = int(math.ceil(
+        footprint_radius_mm / max(scale_mm_per_px, 1e-6)
+    ))
+    if min_passage_width_mm > 0:
+        passage_px = int(math.ceil(
+            (min_passage_width_mm / max(scale_mm_per_px, 1e-6) - 1.0) / 2.0
+        ))
+    else:
+        passage_px = 0
+    radius_px = max(0, body_px, passage_px)
     return bytes(_dilate(occ_raw, width, height, radius_px))
 
 

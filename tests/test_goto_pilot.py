@@ -54,6 +54,11 @@ def _goto_settings(**over) -> GotoSettings:
     base = dict(
         arrival_radius_mm=200,
         footprint_radius_mm=0,
+        # Tests build tiny synthetic 80x80 grids at 50 mm/px - a 610
+        # mm passage requirement (default) would refuse most of
+        # them. We disable passage enforcement here and let
+        # individual tests opt in via the override mechanism.
+        min_passage_width_mm=0,
         cruise_speed_pct=20,
         turn_speed_pct=20,
         heading_deadband_deg=15.0,

@@ -276,7 +276,15 @@ class GotoPilot:
                 return
             self._state.state = STATE_CANCELLED
             self._state.reason = "operator cancelled"
-        self._teardown()
+        # `_teardown` joins the worker thread before notifying. We
+        # pass `terminal_state=STATE_CANCELLED` so any state
+        # mutations the worker performs in its in-flight tick are
+        # overwritten back to CANCELLED before the listener sees
+        # the final state. Without this, a tick that observed
+        # state=DRIVING/TURNING while cancel() was waiting on the
+        # lock would clobber the cancel signal, and the UI would
+        # see "running=False, state=driving" - confusing.
+        self._teardown(terminal_state=STATE_CANCELLED)
 
     def stop(self) -> None:
         with self._lock:
@@ -289,7 +297,7 @@ class GotoPilot:
     # Worker
     # ------------------------------------------------------------------
 
-    def _teardown(self) -> None:
+    def _teardown(self, *, terminal_state: Optional[str] = None) -> None:
         self._stop_evt.set()
         thread = self._thread
         self._thread = None
@@ -302,6 +310,8 @@ class GotoPilot:
         with self._lock:
             self._state.running = False
             self._state.last_action = "stop"
+            if terminal_state is not None:
+                self._state.state = terminal_state
         self._notify()
 
     def _run(self) -> None:
@@ -339,6 +349,14 @@ class GotoPilot:
         """One control iteration. Returns True if the pilot should
         terminate after this tick (arrived / unreachable / stuck / etc).
         """
+        # Cancel race: `cancel()` sets state=CANCELLED then signals
+        # `_stop_evt`. If we entered _tick before that signal but
+        # observe it now, return immediately *without* mutating
+        # state - otherwise we'd clobber the operator-set
+        # CANCELLED back to DRIVING / TURNING.
+        if self._stop_evt.is_set():
+            return True
+
         sensors = self._sensors
         pose = sensors.pose()
         snap = sensors.snapshot()
@@ -438,6 +456,7 @@ class GotoPilot:
                 start_mm=(pose.x_mm, pose.y_mm),
                 goal_mm=goal,
                 footprint_radius_mm=self._goto.footprint_radius_mm,
+                min_passage_width_mm=self._goto.min_passage_width_mm,
                 unknown_pixel_cost=self._goto.unknown_pixel_cost,
             )
             if not result.ok:

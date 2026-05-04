@@ -121,6 +121,7 @@ class AutonomyController(QObject):
                 goto_settings = GotoSettings(
                     arrival_radius_mm=250,
                     footprint_radius_mm=250,
+                    min_passage_width_mm=610,
                     cruise_speed_pct=15,
                     turn_speed_pct=16,
                     heading_deadband_deg=18.0,

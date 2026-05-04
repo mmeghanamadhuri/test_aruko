@@ -182,6 +182,7 @@ def _settings():
 def _goto_settings():
     return GotoSettings(
         arrival_radius_mm=200, footprint_radius_mm=200,
+        min_passage_width_mm=610,
         cruise_speed_pct=15, turn_speed_pct=16,
         heading_deadband_deg=15.0, lookahead_mm=400,
         replan_period_sec=3.0, stuck_window_sec=5.0,

@@ -523,8 +523,12 @@ screen.
   `OccupancyGridView` widget translates the click to world mm,
   `AutonomyController.set_goal()` swaps the active pilot to
   `GotoPilot`, and the pilot:
-  1. Plans an A* path on the BreezySLAM bytemap with the bot's
-     footprint dilated as wall buffer (`NINA_GOTO_INFLATE_MM`).
+  1. Plans an A* path on the BreezySLAM bytemap. Walls are dilated
+     by `max(NINA_GOTO_INFLATE_MM, ⌈NINA_GOTO_MIN_PASSAGE_MM / 2⌉)`
+     so paths simultaneously (a) leave a Nina-shaped buffer around
+     the body and (b) refuse any corridor narrower than the
+     `NINA_GOTO_MIN_PASSAGE_MM` floor (default 2 ft / 610 mm — the
+     smallest gap Nina is approved to thread).
   2. Follows the path with a pure-pursuit lookahead
      (`NINA_GOTO_LOOKAHEAD_MM`), turning in place when the
      heading error exceeds `NINA_GOTO_HEAD_DEG` and driving

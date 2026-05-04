@@ -105,6 +105,7 @@ def test_open_room_plans_decreasing_distance():
         start_mm=(-1000.0, 0.0),
         goal_mm=(1000.0, 0.0),
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
     )
     assert result.ok, result.reason
     assert len(result.waypoints_mm) >= 2
@@ -132,6 +133,7 @@ def test_corridor_path_crosses_gap_row():
         start_mm=(-1000.0, 0.0),     # left of wall, near map centre
         goal_mm=(1000.0, 0.0),       # right of wall, near map centre
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
     )
     assert result.ok, result.reason
     pixel_path = [
@@ -168,6 +170,7 @@ def test_u_shape_not_reported_unreachable():
         start_mm=(-1500.0, 0.0),
         goal_mm=(0.0, -1300.0),   # inside the U (y_mm < 0)
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
     )
     assert result.ok, result.reason
     # Length must exceed the geometric chord (sqrt(1.5^2 + 1.3^2) m)
@@ -196,6 +199,7 @@ def test_goal_in_wall_snaps_to_nearest_free():
         start_mm=(-1000.0, 0.0),
         goal_mm=(1000.0, 0.0),       # px=60, py=40 -> wall
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
         snap_radius_mm=500,
     )
     assert result.ok, result.reason
@@ -216,6 +220,7 @@ def test_goal_in_wall_without_snap_returns_goal_in_wall():
         start_mm=(-1000.0, 0.0),
         goal_mm=(1000.0, 0.0),
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
         snap_radius_mm=0,
     )
     assert not result.ok
@@ -243,6 +248,7 @@ def test_footprint_inflation_blocks_narrow_corridor():
         start_mm=(-1000.0, 0.0),
         goal_mm=(1000.0, 0.0),
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
     )
     assert slim.ok, slim.reason
 
@@ -251,12 +257,109 @@ def test_footprint_inflation_blocks_narrow_corridor():
         start_mm=(-1000.0, 0.0),
         goal_mm=(1000.0, 0.0),
         footprint_radius_mm=200,    # 4 px dilation
+        min_passage_width_mm=0,
         snap_radius_mm=0,
     )
     assert not fat.ok
     # Either no_path (gap too narrow after dilation) or the goal/
     # start ended up dilated into a wall - both are correct refusals.
     assert fat.reason in {"no_path", "start_in_wall", "goal_in_wall"}
+
+
+# ----------------------------------------------------------------------
+# Minimum passage width (2 ft / 610 mm default)
+# ----------------------------------------------------------------------
+
+
+def test_passage_width_default_blocks_one_foot_corridor():
+    """At scale=50 mm/px, a 6-px-wide gap is ~300 mm of corridor -
+    less than the default 2-ft / 610 mm passage. The planner must
+    refuse it even with `footprint_radius_mm=0`, because the passage
+    width policy is independent of the body geometry.
+    """
+    w = h = 80
+    scale = 50.0
+    grid = _open_grid(w, h)
+    # 6-px-wide horizontal gap (rows 38..43) in an otherwise solid
+    # vertical wall at x=40. That's 300 mm of corridor.
+    _draw_vline(grid, w, 40, 0, 37)
+    _draw_vline(grid, w, 40, 44, h - 1)
+
+    refused = plan_path(
+        bytes(grid), w, h, scale,
+        start_mm=(-1000.0, 0.0),
+        goal_mm=(1000.0, 0.0),
+        footprint_radius_mm=0,
+        min_passage_width_mm=610,    # default 2 ft
+        snap_radius_mm=0,
+    )
+    assert not refused.ok, "1-foot gap should be refused by 2-ft policy"
+    assert refused.reason in {"no_path", "start_in_wall", "goal_in_wall"}
+
+
+def test_passage_width_default_allows_two_foot_corridor():
+    """A 14-px gap = 700 mm = 2 ft 3.5 in of corridor must pass the
+    default 2-ft policy with footprint_radius_mm=0.
+    """
+    w = h = 80
+    scale = 50.0
+    grid = _open_grid(w, h)
+    # 14-px-wide gap centred around y=40 (rows 33..46).
+    _draw_vline(grid, w, 40, 0, 32)
+    _draw_vline(grid, w, 40, 47, h - 1)
+
+    ok = plan_path(
+        bytes(grid), w, h, scale,
+        start_mm=(-1000.0, 0.0),
+        goal_mm=(1000.0, 0.0),
+        footprint_radius_mm=0,
+        min_passage_width_mm=610,
+    )
+    assert ok.ok, ok.reason
+
+
+def test_passage_width_overrides_smaller_footprint():
+    """Even if the operator sets a tiny footprint, the passage-width
+    floor still bites. This is the safety-policy use case: the
+    policy is wider than the bot, by intent.
+    """
+    w = h = 80
+    scale = 50.0
+    grid = _open_grid(w, h)
+    _draw_vline(grid, w, 40, 0, 37)
+    _draw_vline(grid, w, 40, 44, h - 1)   # 300 mm gap
+
+    refused = plan_path(
+        bytes(grid), w, h, scale,
+        start_mm=(-1000.0, 0.0),
+        goal_mm=(1000.0, 0.0),
+        footprint_radius_mm=50,   # tiny "1 px" body
+        min_passage_width_mm=610,
+        snap_radius_mm=0,
+    )
+    assert not refused.ok
+    assert refused.reason in {"no_path", "start_in_wall", "goal_in_wall"}
+
+
+def test_passage_width_zero_disables_policy():
+    """Setting `min_passage_width_mm=0` falls back to footprint-only
+    behaviour - useful for tests + for the rare deployment where
+    operator policy says "thread anything you fit through".
+    """
+    w = h = 80
+    scale = 50.0
+    grid = _open_grid(w, h)
+    _draw_vline(grid, w, 40, 0, 37)
+    _draw_vline(grid, w, 40, 44, h - 1)   # 300 mm gap
+
+    ok = plan_path(
+        bytes(grid), w, h, scale,
+        start_mm=(-1000.0, 0.0),
+        goal_mm=(1000.0, 0.0),
+        footprint_radius_mm=0,
+        min_passage_width_mm=0,
+    )
+    assert ok.ok, ok.reason
 
 
 # ----------------------------------------------------------------------
@@ -282,6 +385,7 @@ def test_unknown_grid_can_still_route():
         start_mm=(-500.0, 0.0),
         goal_mm=(500.0, 0.0),
         footprint_radius_mm=0,
+        min_passage_width_mm=0,
     )
     assert result.ok, result.reason
     assert len(result.waypoints_mm) >= 2
