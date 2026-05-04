@@ -66,6 +66,7 @@ fun SirenaDriveScreen(
     var actionErr by remember { mutableStateOf<String?>(null) }
     val bridgeOn = caps?.optBoolean("robot_bridge_enabled") == true
     val visionOn = caps?.optBoolean("vision_bridge_enabled") == true
+    val autonomyApi = caps?.optBoolean("autonomy_bridge_enabled") == true
     val defaultMs = caps?.optInt("default_duration_ms")?.takeIf { it > 0 } ?: 280
     val speedMin = caps?.optInt("drive_speed_min_percent")?.takeIf { it in 1..99 } ?: 15
     val speedMax = caps?.optInt("drive_speed_max_percent")?.takeIf { it > speedMin } ?: 25
@@ -110,6 +111,17 @@ fun SirenaDriveScreen(
                 bldcDetail = j.optString("message").takeIf { it.isNotBlank() }
             }
             delay(2500)
+        }
+    }
+
+    LaunchedEffect(autonomyApi, jetsonOnline) {
+        if (!autonomyApi || !jetsonOnline) return@LaunchedEffect
+        while (true) {
+            val st = vm.fetchAutonomyStatus()
+            if (st?.optBoolean("bridge_enabled") == true) {
+                autonomyOn = st.optBoolean("enabled")
+            }
+            delay(2000)
         }
     }
 
@@ -179,12 +191,37 @@ fun SirenaDriveScreen(
             Column(Modifier.weight(1f)) {
                 Text("Autonomous", style = MaterialTheme.typography.bodyMedium)
                 Text(
-                    "UI only until the Jetson exposes an autonomy API.",
+                    when {
+                        !autonomyApi ->
+                            "Set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1 on the Jetson (same stack as Sirena UI Map)."
+                        autonomyOn ->
+                            "Autonomy on — HTTP momentary drive may be refused until you turn this off."
+                        else ->
+                            "Wander / goto on Jetson via POST /v1/autonomy/enabled (mirrors desktop)."
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            SirenaSwitch(checked = autonomyOn, onCheckedChange = { autonomyOn = it }, enabled = bridgeOn)
+            SirenaSwitch(
+                checked = autonomyOn,
+                onCheckedChange = { want ->
+                    if (!autonomyApi) return@SirenaSwitch
+                    scope.launch {
+                        val r = vm.postAutonomyEnabled(want)
+                        if (r?.optBoolean("ok") == true) {
+                            autonomyOn = r.optBoolean("enabled", want)
+                            actionErr = null
+                        } else {
+                            actionErr =
+                                r?.optString("error").orEmpty().ifBlank {
+                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
+                                }
+                        }
+                    }
+                },
+                enabled = autonomyApi,
+            )
         }
 
         if (!bridgeOn) {

@@ -11,7 +11,7 @@ The companion talks to `nina-link` only (see [`nina/link_daemon/api.py`](../nina
 | Desktop (`sirena_ui`) | Android (Nina console) | Notes |
 |----------------------|-------------------------|--------|
 | Home | `SirenaHomeScreen` | Quick actions, live-ish overview from `/v1/status` + capabilities. |
-| Drive | `SirenaDriveScreen` | Momentary drive + E-stop + MJPEG preview via `/v1/vision/stream`. HTTP drive is refused while autonomy is active (`POST /v1/autonomy/enabled`). |
+| Drive | `SirenaDriveScreen` | Momentary drive + E-stop + MJPEG preview via `/v1/vision/stream`. **Autonomous** toggle calls `POST /v1/autonomy/enabled` and polls `/v1/autonomy/status` (same as Map/desktop). HTTP drive is refused while autonomy holds the wheels. |
 | Vision | `SirenaVisionScreen` | Stream, face/object toggles, confidence + **Apply**, enrollment, announce; polling `/v1/vision/detections` for a short detection list. |
 | Perception | `SirenaPerceptionScreen` | Three-pane layout: SLAM occupancy (`/v1/slam/occupancy`), RGB MJPEG, depth MJPEG when bridges are enabled on the Jetson. |
 | Map | `SirenaMapScreen` | Occupancy bitmap + pose from `/v1/slam/snapshot` / occupancy bytes; autonomy toggle calls `/v1/autonomy/enabled`. **Tap-to-go**: pressing **Go to point** arms click-to-set-goal, taps on the bitmap fire `POST /v1/autonomy/goal` with the world-mm coordinates derived from the snapshot's `scale_mm_per_px`, and the screen overlays the dashed planner path + flag pin. **Cancel goto** clears via `DELETE /v1/autonomy/goal`. Same Jetson-side stack as the desktop Map screen — the Android UI is just a thin client. |

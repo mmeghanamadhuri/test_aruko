@@ -59,6 +59,9 @@ fun SirenaPerceptionScreen(
     var statusLine by remember { mutableStateOf("") }
     var lidarBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var autonomyHint by remember { mutableStateOf("") }
+    var autoPill by remember { mutableStateOf("Autonomous: …") }
+    var lidarPill by remember { mutableStateOf("Lidar: …") }
+    var depthPill by remember { mutableStateOf("Depth: …") }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(cameraOn, visionOn) {
@@ -96,13 +99,35 @@ fun SirenaPerceptionScreen(
     }
 
     LaunchedEffect(autonomyApi, streamRoot) {
-        if (!autonomyApi || streamRoot.isBlank()) return@LaunchedEffect
+        if (!autonomyApi || streamRoot.isBlank()) {
+            autoPill = "Autonomous: n/a"
+            return@LaunchedEffect
+        }
         while (true) {
             val st = vm.fetchAutonomyStatus()
             if (st?.optBoolean("bridge_enabled") == true) {
                 autonomyOn = st.optBoolean("enabled")
+                autoPill = if (autonomyOn) "Autonomous: ON" else "Autonomous: OFF"
+                st.optJSONObject("health")?.let { h ->
+                    lidarPill = perceptionHealthLine("Lidar", h.optJSONObject("lidar"), slamOn)
+                    depthPill = perceptionHealthLine("Depth", h.optJSONObject("depth"), depthOn)
+                }
             }
             delay(2000)
+        }
+    }
+
+    LaunchedEffect(depthOn, streamRoot) {
+        if (!depthOn || streamRoot.isBlank()) return@LaunchedEffect
+        while (true) {
+            val ds = vm.fetchDepthStatus()
+            if (ds?.optBoolean("camera_open") == true) {
+                depthPill = "Depth: stream"
+            } else if (depthOn) {
+                val m = ds?.optString("message").orEmpty().ifBlank { "off" }
+                depthPill = "Depth: ${m.take(20)}"
+            }
+            delay(3000)
         }
     }
 
@@ -119,14 +144,25 @@ fun SirenaPerceptionScreen(
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Pill(autoPill)
                 Pill(
-                    if (slamOn) "Lidar: live" else "Lidar: off",
+                    if (slamOn) {
+                        if (lidarPill != "Lidar: …") lidarPill else if (lidarBitmap != null) "Lidar: map" else "Lidar: …"
+                    } else {
+                        "Lidar: bridge off"
+                    },
                 )
                 Pill(
-                    if (depthOn) "Depth: live" else "Depth: off",
+                    if (depthOn) depthPill else "Depth: bridge off",
                 )
-                Pill(if (cameraOn) "Cam: live" else "Cam: off")
+                Pill(
+                    when {
+                        !visionOn -> "Cam: bridge off"
+                        cameraOn -> "Cam: live"
+                        else -> "Cam: off"
+                    },
+                )
             }
         }
 
@@ -138,11 +174,14 @@ fun SirenaPerceptionScreen(
                     if (!autonomyApi) return@SirenaSwitch
                     scope.launch {
                         val r = vm.postAutonomyEnabled(want)
-                        autonomyHint = if (r?.optBoolean("ok") == true) {
-                            ""
-                        } else {
-                            r?.optString("error").orEmpty().ifBlank { "autonomy request failed" }
-                        }
+                        autonomyHint =
+                            if (r?.optBoolean("ok") == true) {
+                                ""
+                            } else {
+                                r?.optString("error").orEmpty().ifBlank {
+                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
+                                }
+                            }
                     }
                 },
                 enabled = autonomyApi,
@@ -295,6 +334,15 @@ private fun CameraPane(
             }
         }
     }
+}
+
+private fun perceptionHealthLine(title: String, o: JSONObject?, bridgeEnabled: Boolean): String {
+    if (o != null) {
+        val ok = o.optBoolean("connected")
+        val msg = o.optString("message").trim()
+        return if (ok) "$title OK" else "$title: ${msg.take(18)}"
+    }
+    return if (bridgeEnabled) "$title …" else "$title: off"
 }
 
 private fun SlamOccupancyGrid.toOccBitmap(): Bitmap? {

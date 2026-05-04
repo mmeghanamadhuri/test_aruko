@@ -8,10 +8,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -77,6 +80,12 @@ fun SirenaMapScreen(
     var goalMm by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var snappedMm by remember { mutableStateOf<Pair<Double, Double>?>(null) }
     var pathMm by remember { mutableStateOf<List<Pair<Double, Double>>>(emptyList()) }
+    var navMode by remember { mutableStateOf("—") }
+    var pilotSummary by remember { mutableStateOf("") }
+    var lidarHl by remember { mutableStateOf("") }
+    var depthHl by remember { mutableStateOf("") }
+    var irHl by remember { mutableStateOf("") }
+    var ultraHl by remember { mutableStateOf("") }
     val visionEnabled = caps?.optBoolean("vision_bridge_enabled") == true
     val scope = rememberCoroutineScope()
 
@@ -111,6 +120,31 @@ fun SirenaMapScreen(
             val st = vm.fetchAutonomyStatus()
             if (st?.optBoolean("bridge_enabled") == true) {
                 autonomyOn = st.optBoolean("enabled")
+                navMode = st.optString("mode").ifBlank { "—" }
+                st.optJSONObject("health")?.let { h ->
+                    lidarHl = healthOneLine("Lidar", h.optJSONObject("lidar"))
+                    depthHl = healthOneLine("Depth", h.optJSONObject("depth"))
+                    irHl = healthOneLine("IR", h.optJSONObject("ir"))
+                    val arr = h.optJSONArray("ultrasonic")
+                    if (arr != null && arr.length() > 0) {
+                        var ok = 0
+                        for (i in 0 until arr.length()) {
+                            val u = arr.optJSONObject(i) ?: continue
+                            if (u.optBoolean("connected")) ok++
+                        }
+                        ultraHl = "Ultra $ok/${arr.length()}"
+                    } else {
+                        ultraHl = "Ultra —"
+                    }
+                }
+                val p = st.optJSONObject("pilot")
+                if (p != null) {
+                    val act = p.optString("last_action")
+                    val rea = p.optString("last_reason")
+                    pilotSummary = listOf(act, rea).filter { it.isNotBlank() }.joinToString(" · ")
+                } else {
+                    pilotSummary = ""
+                }
                 val goto = st.optJSONObject("goto")
                 if (goto != null) {
                     gotoState = goto.optString("state", gotoState)
@@ -177,11 +211,31 @@ fun SirenaMapScreen(
                 }
                 Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
+                        "Mode: $navMode",
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text(
                         "Goto: $gotoState",
                         Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
                     )
                 }
+            }
+        }
+
+        if (slamOn) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                MapLegendDot(Color(0xFFC8102E), "Nina")
+                MapLegendDot(Color(0xFF1C1C1E), "Wall")
+                MapLegendDot(Color(0xFFD1D1D6), "Free")
+                MapLegendDot(Color(0xFF8E8E93), "Unknown")
             }
         }
 
@@ -359,6 +413,27 @@ fun SirenaMapScreen(
                         )
                     }
                 }
+                if (autonomyApi) {
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Sensor health", fontWeight = FontWeight.Bold)
+                            Text(
+                                listOf(lidarHl, depthHl, irHl, ultraHl).joinToString("  ·  "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text("Pilot (wander)", fontWeight = FontWeight.Bold)
+                            Text(
+                                pilotSummary.ifBlank { "idle" },
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                    }
+                }
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         Text("Controls", fontWeight = FontWeight.Bold)
@@ -374,7 +449,10 @@ fun SirenaMapScreen(
                                             autonomyOn = r.optBoolean("enabled", want)
                                             autonomyMsg = r.optString("message").orEmpty()
                                         } else {
-                                            autonomyMsg = r?.optString("error").orEmpty().ifBlank { "autonomy request failed" }
+                                            autonomyMsg =
+                                                r?.optString("error").orEmpty().ifBlank {
+                                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
+                                                }
                                         }
                                     }
                                 },
@@ -447,6 +525,37 @@ fun SirenaMapScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MapLegendDot(color: Color, label: String) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Box(
+            Modifier
+                .size(8.dp)
+                .background(color, CircleShape),
+        )
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+private fun healthOneLine(title: String, o: JSONObject?): String {
+    if (o == null) return "$title: —"
+    val ok = o.optBoolean("connected")
+    val msg = o.optString("message").trim()
+    return if (ok) {
+        "$title: OK"
+    } else {
+        val short = if (msg.length > 18) msg.take(18) + "…" else msg
+        "$title: ${short.ifBlank { "off" }}"
     }
 }
 
