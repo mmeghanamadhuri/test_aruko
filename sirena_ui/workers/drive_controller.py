@@ -95,6 +95,15 @@ _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
 MIN_SPEED_PCT = 15
 MAX_SPEED_PCT = 25
 
+# When manual drive begins from a full stop (`_active_drive` is None),
+# the BLDC path needs a reliable kick (same floor as the operator slider
+# minimum). Immediately after that start, drop to this lower duty so logs,
+# lidar, and bench observation can characterise motion at a crawl. The
+# cruise value is sent only to the nav layer — it is below MIN_SPEED_PCT
+# on purpose (UI clamp does not apply to hardware PWM).
+FROM_STOP_KICK_PCT = 15
+FROM_STOP_CRUISE_PCT = 5
+
 
 def _clamp_speed(pct: int) -> int:
     """Clamp `pct` into the operator-safe envelope. Negative / non-int
@@ -702,16 +711,41 @@ class DriveController(QObject):
             ldir, rdir = self._wheel_dirs_for(direction)
             if ldir is None or rdir is None:
                 return
+            with self._lock:
+                start_from_stop = self._active_drive is None
             # Use drive_continuous for all four directions so L/R is
             # held-while-pressed (matches forward/back) instead of the
             # old timed turn that auto-stopped after ~2.3s.
-            self._nav.drive_continuous(
-                left_dir=ldir,
-                right_dir=rdir,
-                speed_percent=speed_pct,
-            )
-            with self._lock:
-                self._active_drive = (ldir, speed_pct, rdir, speed_pct)
+            if start_from_stop:
+                kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
+                cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
+                self._nav.drive_continuous(
+                    left_dir=ldir,
+                    right_dir=rdir,
+                    speed_percent=kick,
+                )
+                self._nav.set_wheels(
+                    left_dir=ldir,
+                    left_speed=cruise,
+                    right_dir=rdir,
+                    right_speed=cruise,
+                )
+                with self._lock:
+                    self._active_drive = (ldir, cruise, rdir, cruise)
+                log.info(
+                    "drive from stop: kick %s%% then cruise %s%% (UI slider %s%%)",
+                    kick,
+                    cruise,
+                    speed_pct,
+                )
+            else:
+                self._nav.drive_continuous(
+                    left_dir=ldir,
+                    right_dir=rdir,
+                    speed_percent=speed_pct,
+                )
+                with self._lock:
+                    self._active_drive = (ldir, speed_pct, rdir, speed_pct)
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
 

@@ -375,3 +375,55 @@ def test_polarity_apply_on_nav_without_setters_is_silent(
         )
     finally:
         ctrl.shutdown()
+
+
+# ---------------------------------------------------------------------
+# Start-from-stop: kick then low cruise (characterisation)
+# ---------------------------------------------------------------------
+
+
+def test_drive_from_stop_kicks_then_cruises_low(
+    isolate_polarity_dir: Path,
+) -> None:
+    """First motion after idle uses drive_continuous at the kick duty,
+    then set_wheels at FROM_STOP_CRUISE_PCT."""
+    from sirena_ui.workers import drive_controller as dc
+
+    nav = FakeNav()
+    ctrl = _make_controller(nav, default_speed=20)
+    try:
+        ctrl.ensure_hardware()
+        assert _wait_for(lambda: nav.brake_engaged)
+        ctrl.set_brake(False)
+        assert _wait_for(lambda: not nav.brake_engaged)
+
+        ctrl.drive("forward")
+
+        def saw_kick_and_cruise() -> bool:
+            dcs = [c for c in nav.calls if c[0] == "drive_continuous"]
+            sws = [c for c in nav.calls if c[0] == "set_wheels"]
+            return len(dcs) >= 1 and len(sws) >= 1
+
+        assert _wait_for(saw_kick_and_cruise)
+
+        # drive_continuous first with kick speed
+        dc_calls = [c for c in nav.calls if c[0] == "drive_continuous"]
+        sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
+        assert len(dc_calls) >= 1
+        assert dc_calls[-1][1]["speed_percent"] == dc.FROM_STOP_KICK_PCT
+        assert len(sw_calls) >= 1
+        last_sw = sw_calls[-1][1]
+        assert last_sw["left_speed"] == dc.FROM_STOP_CRUISE_PCT
+        assert last_sw["right_speed"] == dc.FROM_STOP_CRUISE_PCT
+
+        # Second drive without stop: single drive_continuous at slider speed
+        nav.calls.clear()
+        ctrl.drive("forward")
+        assert _wait_for(lambda: len(nav.calls) >= 1)
+        dc_calls2 = [c for c in nav.calls if c[0] == "drive_continuous"]
+        sw_calls2 = [c for c in nav.calls if c[0] == "set_wheels"]
+        assert len(dc_calls2) >= 1
+        assert dc_calls2[-1][1]["speed_percent"] == 20
+        assert sw_calls2 == []
+    finally:
+        ctrl.shutdown()
