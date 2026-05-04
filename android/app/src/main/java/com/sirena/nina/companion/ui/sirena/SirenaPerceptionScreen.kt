@@ -1,7 +1,9 @@
 package com.sirena.nina.companion.ui.sirena
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
 import android.webkit.WebView
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,15 +25,19 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sirena.nina.companion.CompanionViewModel
+import com.sirena.nina.companion.data.SlamOccupancyGrid
 import com.sirena.nina.companion.ui.theme.SirenaSwitch
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 
 @Composable
@@ -43,10 +49,17 @@ fun SirenaPerceptionScreen(
 ) {
     val streamRoot = daemonUrl?.trimEnd('/') ?: ""
     val visionOn = caps?.optBoolean("vision_bridge_enabled") == true
+    val slamOn = caps?.optBoolean("slam_bridge_enabled") == true
+    val depthOn = caps?.optBoolean("depth_bridge_enabled") == true
+    val autonomyApi = caps?.optBoolean("autonomy_bridge_enabled") == true
+
     var cameraOn by remember { mutableStateOf(false) }
     var autonomyOn by remember { mutableStateOf(false) }
     var visionStatus by remember { mutableStateOf<JSONObject?>(null) }
     var statusLine by remember { mutableStateOf("") }
+    var lidarBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var autonomyHint by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(cameraOn, visionOn) {
         if (!visionOn) return@LaunchedEffect
@@ -66,6 +79,33 @@ fun SirenaPerceptionScreen(
         }
     }
 
+    LaunchedEffect(slamOn, streamRoot) {
+        if (!slamOn || streamRoot.isBlank()) {
+            lidarBitmap = null
+            return@LaunchedEffect
+        }
+        while (true) {
+            if (vm.fetchSlamSnapshot() != null) {
+                val g = vm.fetchSlamOccupancyGrid()
+                lidarBitmap = g?.toOccBitmap()
+            } else {
+                lidarBitmap = null
+            }
+            delay(800)
+        }
+    }
+
+    LaunchedEffect(autonomyApi, streamRoot) {
+        if (!autonomyApi || streamRoot.isBlank()) return@LaunchedEffect
+        while (true) {
+            val st = vm.fetchAutonomyStatus()
+            if (st?.optBoolean("bridge_enabled") == true) {
+                autonomyOn = st.optBoolean("enabled")
+            }
+            delay(2000)
+        }
+    }
+
     Column(
         modifier
             .fillMaxSize()
@@ -80,25 +120,48 @@ fun SirenaPerceptionScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Pill("Lidar: pending")
-                Pill("Depth: pending")
+                Pill(
+                    if (slamOn) "Lidar: live" else "Lidar: off",
+                )
+                Pill(
+                    if (depthOn) "Depth: live" else "Depth: off",
+                )
                 Pill(if (cameraOn) "Cam: live" else "Cam: off")
             }
         }
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Autonomous", style = MaterialTheme.typography.bodyMedium)
-            SirenaSwitch(checked = autonomyOn, onCheckedChange = { autonomyOn = it }, enabled = true)
+            SirenaSwitch(
+                checked = autonomyOn,
+                onCheckedChange = { want ->
+                    if (!autonomyApi) return@SirenaSwitch
+                    scope.launch {
+                        val r = vm.postAutonomyEnabled(want)
+                        autonomyHint = if (r?.optBoolean("ok") == true) {
+                            ""
+                        } else {
+                            r?.optString("error").orEmpty().ifBlank { "autonomy request failed" }
+                        }
+                    }
+                },
+                enabled = autonomyApi,
+            )
         }
-        Text(
-            "Autonomy API is not exposed by nina-link yet; this mirrors operator intent while map/perception APIs are phased in.",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        if (autonomyHint.isNotBlank()) {
+            Text(
+                autonomyHint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (!autonomyApi) {
+            Text(
+                "Autonomy API off — set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1 on the Jetson.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
 
         Row(
             Modifier
@@ -106,29 +169,28 @@ fun SirenaPerceptionScreen(
                 .height(260.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SensorPane(
-                title = "LiDAR",
-                subtitle = "SLAM occupancy feed pending daemon endpoint",
+            LidarSlamPane(
+                title = "LiDAR / SLAM",
+                bitmap = if (slamOn) lidarBitmap else null,
                 modifier = Modifier.weight(1f),
             )
             CameraPane(
                 title = "RGB",
                 streamRoot = streamRoot,
+                streamPath = "/v1/vision/stream",
                 enabled = cameraOn && visionOn && streamRoot.isNotBlank(),
                 modifier = Modifier.weight(1f),
             )
-            SensorPane(
+            CameraPane(
                 title = "Depth",
-                subtitle = "Depth visualization pending daemon endpoint",
+                streamRoot = streamRoot,
+                streamPath = "/v1/depth/stream",
+                enabled = depthOn && streamRoot.isNotBlank(),
                 modifier = Modifier.weight(1f),
             )
         }
 
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("Camera stream", style = MaterialTheme.typography.bodyMedium)
             SirenaSwitch(
                 checked = cameraOn,
@@ -147,18 +209,30 @@ fun SirenaPerceptionScreen(
 }
 
 @Composable
-private fun SensorPane(title: String, subtitle: String, modifier: Modifier = Modifier) {
+private fun LidarSlamPane(title: String, bitmap: Bitmap?, modifier: Modifier = Modifier) {
     Card(modifier.fillMaxSize(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
-                Surface(
-                    Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
-                    shape = MaterialTheme.shapes.medium,
-                ) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (bitmap != null) {
+                    Image(
+                        bitmap = bitmap.asImageBitmap(),
+                        contentDescription = "SLAM occupancy",
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    Surface(
+                        Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = MaterialTheme.shapes.medium,
+                    ) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Text(
+                                "SLAM grid from /v1/slam/occupancy",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -175,13 +249,19 @@ private fun Pill(text: String) {
 
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
-private fun CameraPane(title: String, streamRoot: String, enabled: Boolean, modifier: Modifier = Modifier) {
+private fun CameraPane(
+    title: String,
+    streamRoot: String,
+    streamPath: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+) {
     Card(modifier.fillMaxSize(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(title, fontWeight = FontWeight.SemiBold)
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                 if (enabled) {
-                    val streamUrl = "$streamRoot/v1/vision/stream"
+                    val streamUrl = "$streamRoot$streamPath"
                     val html =
                         remember(streamUrl) {
                             "<html><body style=\"margin:0;background:#000;\"><img src=\"$streamUrl\" width=\"100%\"/></body></html>"
@@ -203,11 +283,30 @@ private fun CameraPane(title: String, streamRoot: String, enabled: Boolean, modi
                         shape = MaterialTheme.shapes.medium,
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Text("Turn on camera stream", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                if (streamRoot.isBlank()) "No daemon URL"
+                                else "Stream off",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                 }
             }
         }
+    }
+}
+
+private fun SlamOccupancyGrid.toOccBitmap(): Bitmap? {
+    if (bytes.size < width * height) return null
+    val pixels = IntArray(width * height)
+    var i = 0
+    for (idx in pixels.indices) {
+        val v = bytes[i].toInt() and 0xff
+        i++
+        pixels[idx] = (0xff shl 24) or (v shl 16) or (v shl 8) or v
+    }
+    return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).apply {
+        setPixels(pixels, 0, width, 0, 0, width, height)
     }
 }

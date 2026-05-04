@@ -9,11 +9,14 @@ from typing import Any, Dict, Iterator, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
+from nina.link_daemon import autonomy_bridge
+from nina.link_daemon import depth_bridge
+from nina.link_daemon import slam_bridge
 from nina.link_daemon.config import LinkDaemonConfig
 from nina.link_daemon import manifest_audio
 from nina.link_daemon import manifest_delete
@@ -108,6 +111,12 @@ class DriveBody(BaseModel):
 
 class PlayActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
+
+
+class AutonomyEnabledBody(BaseModel):
+    """Toggle autonomous wander (same stack as Sirena UI when bridges are on)."""
+
+    enabled: bool = True
 
 
 class RecordStartBody(BaseModel):
@@ -408,6 +417,16 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "action_audio_clear_endpoint": "/v1/actions/audio/clear",
             "action_audio_generate_endpoint": "/v1/actions/audio/generate",
             "action_delete_endpoint": "/v1/actions/delete",
+            "slam_status_endpoint": "/v1/slam/status",
+            "slam_snapshot_endpoint": "/v1/slam/snapshot",
+            "slam_occupancy_endpoint": "/v1/slam/occupancy",
+            "slam_bridge_enabled": cfg.enable_slam_bridge,
+            "depth_status_endpoint": "/v1/depth/status",
+            "depth_stream_endpoint": "/v1/depth/stream",
+            "depth_bridge_enabled": cfg.enable_depth_bridge,
+            "autonomy_status_endpoint": "/v1/autonomy/status",
+            "autonomy_enabled_endpoint": "/v1/autonomy/enabled",
+            "autonomy_bridge_enabled": cfg.enable_autonomy_bridge,
             "manifest_path": str(cfg.actions_manifest_path),
             "session_script_configured": bool(cfg.session_script),
             "message": (
@@ -849,6 +868,130 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             _mjpeg_iter(),
             media_type="multipart/x-mixed-replace; boundary=frame",
         )
+
+    @app.get("/v1/slam/status")
+    def slam_status_http() -> Dict[str, Any]:
+        if not cfg.enable_slam_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SLAM bridge disabled — set NINA_LINK_ENABLE_SLAM_BRIDGE=1",
+            )
+        slam_bridge.ensure_bridge_started()
+        br = slam_bridge.get_bridge()
+        if br is None:
+            return {"ok": False, "message": "slam unavailable"}
+        out: Dict[str, Any] = {"ok": True, **br.status()}
+        sj = br.snapshot_json()
+        if sj:
+            out["snapshot"] = sj
+        return out
+
+    @app.get("/v1/slam/snapshot")
+    def slam_snapshot_http() -> Dict[str, Any]:
+        if not cfg.enable_slam_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SLAM bridge disabled",
+            )
+        slam_bridge.ensure_bridge_started()
+        br = slam_bridge.get_bridge()
+        if br is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "slam unavailable")
+        sj = br.snapshot_json()
+        if sj is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, detail="no SLAM snapshot yet")
+        return sj
+
+    @app.get("/v1/slam/occupancy")
+    def slam_occupancy_http() -> Response:
+        if not cfg.enable_slam_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SLAM bridge disabled",
+            )
+        slam_bridge.ensure_bridge_started()
+        br = slam_bridge.get_bridge()
+        if br is None:
+            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "slam unavailable")
+        snap = br.latest_snapshot()
+        data = br.occupancy_bytes()
+        if snap is None or data is None:
+            raise HTTPException(
+                status.HTTP_404_NOT_FOUND, detail="no occupancy grid yet"
+            )
+        return Response(
+            content=data,
+            media_type="application/octet-stream",
+            headers={
+                "X-Slam-Width": str(snap.width),
+                "X-Slam-Height": str(snap.height),
+                "X-Slam-Scale-Mm-Per-Px": str(snap.scale_mm_per_px),
+            },
+        )
+
+    @app.get("/v1/depth/status")
+    def depth_status_http() -> Dict[str, Any]:
+        if not cfg.enable_depth_bridge:
+            return {
+                "ok": False,
+                "bridge_enabled": False,
+                "message": "Depth bridge disabled",
+            }
+        return {"ok": True, "bridge_enabled": True, **depth_bridge.status_payload()}
+
+    def _depth_mjpeg_iter() -> Iterator[bytes]:
+        boundary = b"frame"
+        for jpeg in depth_bridge.iter_depth_mjpeg(lambda: False, fps_cap=12.0):
+            yield (
+                b"--" + boundary + b"\r\n"
+                b"Content-Type: image/jpeg\r\n\r\n"
+                + jpeg
+                + b"\r\n"
+            )
+
+    @app.get("/v1/depth/stream")
+    def depth_stream_http() -> StreamingResponse:
+        if not cfg.enable_depth_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Depth bridge disabled — set NINA_LINK_ENABLE_DEPTH_BRIDGE=1",
+            )
+        ok_open, dmsg = depth_bridge.acquire("stream_open_probe")
+        if ok_open:
+            depth_bridge.release("stream_open_probe")
+        else:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"depth camera unavailable: {dmsg}",
+            )
+        return StreamingResponse(
+            _depth_mjpeg_iter(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
+
+    @app.get("/v1/autonomy/status")
+    def autonomy_status_http() -> Dict[str, Any]:
+        if not cfg.enable_autonomy_bridge:
+            return {
+                "ok": True,
+                "bridge_enabled": False,
+                "message": "Autonomy bridge disabled",
+            }
+        return {"ok": True, "bridge_enabled": True, **autonomy_bridge.status_dict()}
+
+    @app.post("/v1/autonomy/enabled")
+    def autonomy_enabled_http(
+        body: AutonomyEnabledBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_autonomy_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Autonomy bridge disabled — set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1",
+            )
+        return autonomy_bridge.set_enabled(body.enabled)
 
     @app.post("/v1/session/claim")
     def session_claim_http(

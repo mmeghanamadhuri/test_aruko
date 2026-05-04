@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
@@ -308,6 +309,56 @@ class LinkClient {
             post("$baseUrl/v1/session/release", bearer, "{}")
         }
 
+    suspend fun slamStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/slam/status")
+        }
+
+    suspend fun slamSnapshot(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/slam/snapshot")
+        }
+
+    /**
+     * Raw occupancy grid (`application/octet-stream`) plus dimensions from response headers.
+     */
+    suspend fun slamOccupancyGrid(baseUrl: String): SlamOccupancyGrid? =
+        withContext(Dispatchers.IO) {
+            val url = "$baseUrl/v1/slam/occupancy".toHttpUrlOrNull() ?: return@withContext null
+            val req = Request.Builder().url(url).get().build()
+            client.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) return@withContext null
+                val w = resp.header("X-Slam-Width")?.toIntOrNull() ?: return@withContext null
+                val h = resp.header("X-Slam-Height")?.toIntOrNull() ?: return@withContext null
+                val bytes = resp.body?.bytes() ?: return@withContext null
+                if (bytes.size < w * h) return@withContext null
+                SlamOccupancyGrid(bytes, w, h)
+            }
+        }
+
+    suspend fun depthStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/depth/status")
+        }
+
+    suspend fun autonomyStatus(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/autonomy/status")
+        }
+
+    suspend fun setAutonomyEnabled(
+        baseUrl: String,
+        bearer: String?,
+        enabled: Boolean,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/autonomy/enabled",
+                bearer,
+                JSONObject().put("enabled", enabled).toString(),
+            )
+        }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)
@@ -399,3 +450,22 @@ fun JSONObject.jsonCleanString(key: String): String? {
 }
 
 class LinkApiException(val code: Int, message: String) : Exception(message)
+
+/** Raw SLAM occupancy grid bytes (``width * height`` uint8 cells). */
+data class SlamOccupancyGrid(val bytes: ByteArray, val width: Int, val height: Int) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (javaClass != other?.javaClass) return false
+        other as SlamOccupancyGrid
+        if (width != other.width || height != other.height) return false
+        if (!bytes.contentEquals(other.bytes)) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        var result = width
+        result = 31 * result + height
+        result = 31 * result + bytes.contentHashCode()
+        return result
+    }
+}

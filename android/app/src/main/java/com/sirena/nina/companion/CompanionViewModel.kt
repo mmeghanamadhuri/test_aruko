@@ -6,6 +6,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.LinkClient
+import com.sirena.nina.companion.data.SlamOccupancyGrid
 import com.sirena.nina.companion.data.jsonCleanString
 import com.sirena.nina.companion.data.Prefs
 import com.sirena.nina.companion.network.DaemonUrlResolver
@@ -720,6 +721,55 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val url = prefs.baseUrl.first()
             client.visionDetections(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchSlamStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.slamStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchSlamSnapshot(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.slamSnapshot(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchSlamOccupancyGrid(): SlamOccupancyGrid? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.slamOccupancyGrid(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchDepthStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.depthStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchAutonomyStatus(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.autonomyStatus(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun postAutonomyEnabled(enabled: Boolean): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.setAutonomyEnabled(url, bearer, enabled)
         } catch (_: Exception) {
             null
         }

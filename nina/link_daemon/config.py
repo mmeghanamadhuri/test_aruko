@@ -91,6 +91,12 @@ class LinkDaemonConfig:
     enable_actions_static: bool = False
     #: Optional script invoked as ``script claim|release`` for kiosk / UI mutual exclusion (must be executable).
     session_script: Optional[str] = None
+    #: Expose RPLIDAR + BreezySLAM over HTTP (``/v1/slam/*``) for the companion / headless access.
+    enable_slam_bridge: bool = False
+    #: RealSense D435 colorized depth MJPEG (``/v1/depth/stream``). Shares one device with autonomy.
+    enable_depth_bridge: bool = False
+    #: Autonomous pilot (reactive wander) over HTTP. Conflicts with momentary HTTP drive while active.
+    enable_autonomy_bridge: bool = False
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -141,6 +147,9 @@ def load_config() -> LinkDaemonConfig:
         session_script=(
             os.environ.get("NINA_LINK_SESSION_SCRIPT", "").strip() or None
         ),
+        enable_slam_bridge=_env_bool("NINA_LINK_ENABLE_SLAM_BRIDGE", False),
+        enable_depth_bridge=_env_bool("NINA_LINK_ENABLE_DEPTH_BRIDGE", False),
+        enable_autonomy_bridge=_env_bool("NINA_LINK_ENABLE_AUTONOMY_BRIDGE", False),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

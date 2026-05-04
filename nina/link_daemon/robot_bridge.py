@@ -21,6 +21,23 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 _motion_lock = threading.Lock()
 _nav = None  # lazy NavigationManager
 
+# HTTP momentary drive refuses while autonomy holds the wheels (matches desktop expectation).
+_autonomy_blocks_drive = False
+
+
+def set_autonomy_blocks_drive(on: bool) -> None:
+    global _autonomy_blocks_drive
+    _autonomy_blocks_drive = bool(on)
+
+
+def autonomy_blocks_drive() -> bool:
+    return _autonomy_blocks_drive
+
+
+def navigation_for_autonomy():
+    """Same lazy NavigationManager singleton as ``momentary_drive`` / E-stop."""
+    return _navigation()
+
 
 def _navigation():
     global _nav
@@ -49,6 +66,12 @@ def momentary_drive(
     duration_ms = max(50, min(5000, int(duration_ms)))
     speed_percent = max(5, min(100, int(speed_percent)))
     d_sec = duration_ms / 1000.0
+
+    if autonomy_blocks_drive():
+        return {
+            "ok": False,
+            "error": "autonomy active — disable autonomy before HTTP drive",
+        }
 
     def run() -> None:
         try:
