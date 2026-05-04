@@ -163,29 +163,83 @@ probe_existing_route() {
     return 0
 }
 
+# Pick the most-likely wired Ethernet interface, *deprefering*
+# USB-tethered NICs (iPhone hotspot, Android tether, USB-Ethernet
+# dongles) which all show up as `enx<MAC>` per the systemd
+# predictable-name convention.
+#
+# Order of preference:
+#   1. `enP*` (Jetson onboard - only the integrated 1GbE matches)
+#   2. `eth*` / `eno*` / `ens*` / `enp*` (PCIe / motherboard NICs)
+#   3. anything else starting with `e` *except* `enx*` (USB tether)
+#
+# We skip enx* entirely because routing a 192.168.11.0/24 static
+# through someone's iPhone is never what's wanted, and worse, the
+# iPhone subnet (172.20.10.0/28) provides a default route that
+# masks the missing wired config in `ip route get LIDAR_IP`.
+pick_wired_iface() {
+    local ifaces
+    mapfile -t ifaces < <(
+        ip -o link \
+            | awk -F': ' '$2 !~ /^lo|docker|veth|virbr|wl/ {print $2}'
+    )
+    local p1="" p2="" p3=""
+    for i in "${ifaces[@]}"; do
+        case "$i" in
+            enP*)             p1="$i" ;;
+            eth*|eno*|ens*|enp*) [[ -z "$p2" ]] && p2="$i" ;;
+            enx*)             ;;   # USB tether - skip
+            e*)               [[ -z "$p3" ]] && p3="$i" ;;
+        esac
+    done
+    [[ -n "$p1" ]] && { echo "$p1"; return 0; }
+    [[ -n "$p2" ]] && { echo "$p2"; return 0; }
+    [[ -n "$p3" ]] && { echo "$p3"; return 0; }
+    return 1
+}
+
 configure_via_nmcli() {
     if ! command -v nmcli >/dev/null 2>&1; then
         return 1
     fi
-    local primary
-    primary="$(nmcli -g NAME,TYPE,DEVICE c show --active 2>/dev/null \
-        | awk -F: '$2=="ethernet"{print $1; exit}')"
-    if [[ -z "${primary}" ]]; then
-        # No active wired connection; bail and let the fallback try.
+    local iface
+    iface="$(pick_wired_iface)" || true
+    if [[ -z "${iface}" ]]; then
         return 1
     fi
-    log "Configuring NetworkManager profile '${primary}' to use ${HOST_IP}/${HOST_NETMASK}"
-    sudo nmcli con mod "${primary}" \
-        ipv4.addresses "${HOST_IP}/${HOST_NETMASK}" \
-        ipv4.method manual \
-        ipv4.never-default yes
-    sudo nmcli con up "${primary}" >/dev/null
+
+    # If a profile already exists for this iface, modify it. If not,
+    # create a fresh dedicated profile - we name it `nina-lidar` so
+    # it's obvious in `nmcli con show`.
+    local con_name
+    con_name="$(nmcli -g GENERAL.CONNECTION dev show "${iface}" 2>/dev/null \
+        | head -n1)"
+    if [[ -z "${con_name}" || "${con_name}" == "--" ]]; then
+        con_name="nina-lidar"
+        log "Creating NetworkManager profile '${con_name}' on ${iface} -> ${HOST_IP}/${HOST_NETMASK}"
+        # Idempotent: delete an old profile of the same name first.
+        sudo nmcli con delete "${con_name}" >/dev/null 2>&1 || true
+        sudo nmcli con add type ethernet ifname "${iface}" \
+            con-name "${con_name}" \
+            ipv4.addresses "${HOST_IP}/${HOST_NETMASK}" \
+            ipv4.method manual \
+            ipv4.never-default yes \
+            ipv6.method ignore
+    else
+        log "Modifying NetworkManager profile '${con_name}' on ${iface} -> ${HOST_IP}/${HOST_NETMASK}"
+        sudo nmcli con mod "${con_name}" \
+            ipv4.addresses "${HOST_IP}/${HOST_NETMASK}" \
+            ipv4.method manual \
+            ipv4.never-default yes \
+            ipv6.method ignore
+    fi
+    sudo nmcli con up "${con_name}" >/dev/null
     return 0
 }
 
 configure_via_networkd() {
     local iface
-    iface="$(ip -o link | awk -F': ' '$2 !~ /^lo|docker|veth/ && $2 ~ /^e/ {print $2; exit}')"
+    iface="$(pick_wired_iface)" || true
     if [[ -z "${iface}" ]]; then
         return 1
     fi
