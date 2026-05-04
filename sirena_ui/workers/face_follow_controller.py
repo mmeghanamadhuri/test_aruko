@@ -43,10 +43,13 @@ class FaceFollowController(QObject):
         self._lost_ticks = 0
         self._frame_wh: Tuple[int, int] = (640, 480)
 
-        self._area_far = 0.88
-        self._area_close_stop = 1.08
-        self._area_close_back = 1.22
-        self._ang_dead = 0.07
+        # ratio = face_area / reference_area; >1 means closer than at lock.
+        # Tight close_stop kept the bot "hunting" with turn nudges in the
+        # 0.88–1.08 band; 1.0 treats "at least as close as lock" as range-stop.
+        self._area_far = 0.90
+        self._area_close_stop = 1.0
+        self._area_close_back = 1.18
+        self._ang_dead = 0.11
         self._lost_max_ticks = 14
 
     def set_frame_size(self, w: int, h: int) -> None:
@@ -82,7 +85,7 @@ class FaceFollowController(QObject):
         self._target_name = None
         self._ref_area = None
         try:
-            self._drive.stop()
+            self._drive.stop(drain=True)
         except Exception as exc:
             log.debug("drive.stop: %s", exc)
         self.status_message.emit("Follow: off")
@@ -95,7 +98,12 @@ class FaceFollowController(QObject):
             return None
         if self._target_name is None:
             return max(faces, key=_bbox_area)
-        matches = [f for f in faces if f.identity == self._target_name]
+        tn = self._target_name.casefold()
+        matches = [
+            f
+            for f in faces
+            if f.identity and f.identity.strip().casefold() == tn
+        ]
         return matches[0] if matches else None
 
     def _tick(self) -> None:
@@ -103,7 +111,7 @@ class FaceFollowController(QObject):
             return
         if self._drive.state().get("brake"):
             try:
-                self._drive.stop()
+                self._drive.stop(drain=True)
             except Exception:
                 pass
             self._active = False
@@ -115,17 +123,18 @@ class FaceFollowController(QObject):
         chosen = self._pick_face(faces)
         if chosen is None:
             self._lost_ticks += 1
+            # Drain + stop immediately so the ~300ms drive heartbeat cannot
+            # keep replaying the last SET while the face is out of frame.
+            try:
+                self._drive.stop(drain=True)
+            except Exception:
+                pass
             if self._lost_ticks >= self._lost_max_ticks:
-                try:
-                    self._drive.stop()
-                except Exception:
-                    pass
-                if self._lost_ticks == self._lost_max_ticks:
-                    self._active = False
-                    self._timer.stop()
-                    self.status_message.emit(
-                        "Follow: lost target — tap Start follow to retry"
-                    )
+                self._active = False
+                self._timer.stop()
+                self.status_message.emit(
+                    "Follow: lost target — tap Start follow to retry"
+                )
             return
 
         self._lost_ticks = 0
@@ -157,7 +166,7 @@ class FaceFollowController(QObject):
 
         if ratio > self._area_close_stop:
             try:
-                self._drive.stop()
+                self._drive.stop(drain=True)
             except Exception:
                 pass
             if abs(err_x) > self._ang_dead:
@@ -175,10 +184,10 @@ class FaceFollowController(QObject):
                 log.debug("drive_wheels forward: %s", exc)
             return
 
-        # Size OK: centre only
+        # Size OK: centre only (close to reference size — hold still)
         if abs(err_x) <= self._ang_dead:
             try:
-                self._drive.stop()
+                self._drive.stop(drain=True)
             except Exception:
                 pass
             return

@@ -454,10 +454,15 @@ class DriveController(QObject):
         self._emit_state()
         self._enqueue(lambda d=direction, s=speed: self._do_drive(d, s))
 
-    def stop(self) -> None:
+    def stop(self, *, drain: bool = False) -> None:
+        """Request soft stop. With ``drain=True``, drop pending worker
+        commands first so a queued heartbeat SET cannot run after this
+        stop (critical for face-follow / autonomy hand-off)."""
         with self._lock:
             self._state["direction"] = "idle"
         self._emit_state()
+        if drain:
+            self._drain_queue()
         self._enqueue(self._do_stop)
 
     def emergency_stop(self) -> None:

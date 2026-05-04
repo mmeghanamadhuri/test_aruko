@@ -13,6 +13,8 @@ import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from PyQt5.QtCore import Qt
+
 from nina.config.settings import NinaSettings, load_settings
 from nina.controllers.action_runner import ActionRunner
 from nina.controllers.dynamixel_manager import DynamixelManager
@@ -106,7 +108,10 @@ class NinaService:
             w = VisionWorker()
             g = FaceGreeter(parent=w)
             recv = FaceGreetReceiver(g, parent=w)
-            w.faces_recognized.connect(recv.on_faces_recognized)
+            w.faces_recognized.connect(
+                recv.on_faces_recognized,
+                type=Qt.QueuedConnection,
+            )
             self._vision = w
             self._face_greeter = g
         return self._vision
