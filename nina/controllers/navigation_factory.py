@@ -21,6 +21,9 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
     NINA_NAV_DIR_SETTLE_SEC    # default 0.03; delay after DIR+EL before PWM; 0 = off
     NINA_NAV_PWM_REASSERT_SEC  # default 0.02; 2nd PWM write from rest; 0 = off
+    NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.08; straight crawl only; 0 = off
+    NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT # default 20 (% of cmd speed for opposite jog)
+    NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC   # default 0.04; pause at PWM 0 after jog
 """
 
 from __future__ import annotations
@@ -63,6 +66,10 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
             invert_right_dir=settings.invert_right_dir,
             start_kick_percent=settings.start_kick_percent,
             start_kick_sec=settings.start_kick_sec,
+            dir_pwm_gap_sec=settings.dir_pwm_gap_sec,
+            straight_opposite_nudge_sec=settings.straight_opposite_nudge_sec,
+            straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
+            opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
         )
         return RemoteNavigationManager(cfg)
 
@@ -76,5 +83,10 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
         invert_right_dir=settings.invert_right_dir,
         start_kick_percent=settings.start_kick_percent,
         start_kick_sec=settings.start_kick_sec,
+        dir_pwm_gap_sec=settings.dir_pwm_gap_sec,
+        pwm_reassert_sec=settings.pwm_reassert_sec,
+        straight_opposite_nudge_sec=settings.straight_opposite_nudge_sec,
+        straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
+        opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
     )
     return NavigationManager(cfg_local)

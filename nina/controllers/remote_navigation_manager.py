@@ -101,6 +101,10 @@ class RemoteNavigationConfig:
     # from NavigationSettings. Unit tests keep these zero: one SET + OK.
     start_kick_percent: int = 0
     start_kick_sec: float = 0.0
+    dir_pwm_gap_sec: float = 0.0
+    straight_opposite_nudge_sec: float = 0.0
+    straight_opposite_nudge_pct: int = 20
+    opposite_zero_settle_sec: float = 0.0
 
 
 class RemoteNavigationManager:
@@ -133,6 +137,7 @@ class RemoteNavigationManager:
         self._invert_right_override: Optional[bool] = None
         self._last_l_pwm = 0
         self._last_r_pwm = 0
+        self._last_straight_sign: Optional[int] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -292,9 +297,56 @@ class RemoteNavigationManager:
         r_letter = self._dir_letter(self.SIDE_RIGHT, right_dir)
         ls = max(0, min(100, int(left_speed)))
         rs = max(0, min(100, int(right_speed)))
-
         was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
         moving_now = ls > 0 or rs > 0
+        straight_crawl = (
+            left_dir == right_dir
+            and ls == rs
+            and ls > 0
+        )
+        target_sign: Optional[int] = None
+        if straight_crawl:
+            target_sign = 1 if left_dir == self.DIR_FORWARD else -1
+
+        cfg = self.config
+        ns = max(0.0, min(0.5, float(cfg.straight_opposite_nudge_sec)))
+        pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
+        want_nudge = (
+            straight_crawl
+            and ns > 0
+            and pct > 0
+            and (
+                was_rest
+                or (
+                    self._last_straight_sign is not None
+                    and target_sign is not None
+                    and self._last_straight_sign != target_sign
+                )
+            )
+        )
+
+        if want_nudge:
+            opp_dir = (
+                self.DIR_BACKWARD
+                if left_dir == self.DIR_FORWARD
+                else self.DIR_FORWARD
+            )
+            ol = self._dir_letter(self.SIDE_LEFT, opp_dir)
+            orr = self._dir_letter(self.SIDE_RIGHT, opp_dir)
+            nd = max(1, min(100, (ls * pct + 99) // 100))
+            gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_pre > 0:
+                time.sleep(gap_pre)
+            self._send_command(f"SET {ol} {nd} {orr} {nd}")
+            time.sleep(ns)
+            self._send_command(f"SET {ol} 0 {orr} 0")
+            zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
+            if zs > 0:
+                time.sleep(zs)
+            gap_mid = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_mid > 0:
+                time.sleep(gap_mid)
+
         kp = max(0, min(100, int(self.config.start_kick_percent)))
         ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(self.config.start_kick_sec)))
 
@@ -312,12 +364,19 @@ class RemoteNavigationManager:
         self._send_command(f"SET {l_letter} {ls} {r_letter} {rs}")
         self._last_l_pwm = ls
         self._last_r_pwm = rs
+        if ls == 0 and rs == 0:
+            self._last_straight_sign = None
+        elif straight_crawl and target_sign is not None:
+            self._last_straight_sign = target_sign
+        else:
+            self._last_straight_sign = None
 
     def stop(self) -> None:
         """Soft stop: PWM=0 on both wheels, EL stays HIGH (chip armed)."""
         self._send_command("STOP")
         self._last_l_pwm = 0
         self._last_r_pwm = 0
+        self._last_straight_sign = None
         log.info("stop (PWM=0, EL=HIGH)")
 
     def emergency_stop(self) -> None:
@@ -326,6 +385,7 @@ class RemoteNavigationManager:
         self._send_command("ESTOP")
         self._last_l_pwm = 0
         self._last_r_pwm = 0
+        self._last_straight_sign = None
 
     def engage_brake(self) -> None:
         """Coast stop. Same semantics as the local manager (PWM=0 IS the brake)."""

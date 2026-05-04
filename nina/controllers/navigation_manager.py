@@ -152,6 +152,16 @@ log = logging.getLogger("nina.navigation")
 # (0 disables). Second PWM write: NINA_NAV_PWM_REASSERT_SEC.
 _DEFAULT_DIR_PWM_GAP_SEC = float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03"))
 _DEFAULT_PWM_REASSERT_SEC = float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02"))
+# Brief straight-line jog opposite to the crawl (anti-backlash). 0 sec disables.
+_DEFAULT_STRAIGHT_OPP_NUDGE_SEC = float(
+    os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.08")
+)
+_DEFAULT_STRAIGHT_OPP_NUDGE_PCT = int(
+    os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT", "20")
+)
+_DEFAULT_OPP_ZERO_SETTLE_SEC = float(
+    os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
+)
 
 
 @dataclass(frozen=True)
@@ -203,6 +213,9 @@ class NavigationConfig:
     start_kick_sec: float = 1.0
     dir_pwm_gap_sec: float = _DEFAULT_DIR_PWM_GAP_SEC
     pwm_reassert_sec: float = _DEFAULT_PWM_REASSERT_SEC
+    straight_opposite_nudge_sec: float = _DEFAULT_STRAIGHT_OPP_NUDGE_SEC
+    straight_opposite_nudge_pct: int = _DEFAULT_STRAIGHT_OPP_NUDGE_PCT
+    opposite_zero_settle_sec: float = _DEFAULT_OPP_ZERO_SETTLE_SEC
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -275,6 +288,7 @@ class NavigationManager:
         # Last PWM duties sent (0..100) for breakaway-kick heuristics.
         self._last_l_pwm = 0
         self._last_r_pwm = 0
+        self._last_straight_sign: Optional[int] = None  # +1 F / -1 B / None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -478,6 +492,7 @@ class NavigationManager:
         finally:
             self._last_l_pwm = 0
             self._last_r_pwm = 0
+            self._last_straight_sign = None
 
     def engage_brake(self) -> None:
         """Coast-stop both wheels.
@@ -572,19 +587,67 @@ class NavigationManager:
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
-        self._prepare_side_motion(self.SIDE_LEFT, left_dir)
-        self._prepare_side_motion(self.SIDE_RIGHT, right_dir)
 
         ls = max(0, min(100, int(left_speed)))
         rs = max(0, min(100, int(right_speed)))
         was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
         moving_now = ls > 0 or rs > 0
+        straight_crawl = (
+            left_dir == right_dir
+            and ls == rs
+            and ls > 0
+        )
+        target_sign: Optional[int] = None
+        if straight_crawl:
+            target_sign = 1 if left_dir == self.DIR_FORWARD else -1
+
+        cfg = self.config
+        ns = max(0.0, min(0.5, float(cfg.straight_opposite_nudge_sec)))
+        pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
+        want_nudge = (
+            straight_crawl
+            and ns > 0
+            and pct > 0
+            and (
+                was_rest
+                or (
+                    self._last_straight_sign is not None
+                    and target_sign is not None
+                    and self._last_straight_sign != target_sign
+                )
+            )
+        )
+
+        if want_nudge:
+            opp_dir = (
+                self.DIR_BACKWARD
+                if left_dir == self.DIR_FORWARD
+                else self.DIR_FORWARD
+            )
+            self._prepare_side_motion(self.SIDE_LEFT, opp_dir)
+            self._prepare_side_motion(self.SIDE_RIGHT, opp_dir)
+            gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_pre > 0:
+                time.sleep(gap_pre)
+            nd = max(1, min(100, (ls * pct + 99) // 100))
+            self._apply_side_pwm(self.SIDE_LEFT, nd)
+            self._apply_side_pwm(self.SIDE_RIGHT, nd)
+            time.sleep(ns)
+            self._apply_side_pwm(self.SIDE_LEFT, 0)
+            self._apply_side_pwm(self.SIDE_RIGHT, 0)
+            zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
+            if zs > 0:
+                time.sleep(zs)
+
+        self._prepare_side_motion(self.SIDE_LEFT, left_dir)
+        self._prepare_side_motion(self.SIDE_RIGHT, right_dir)
+
         if was_rest and moving_now:
-            gap = max(0.0, min(0.2, float(self.config.dir_pwm_gap_sec)))
+            gap = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
             if gap > 0:
                 time.sleep(gap)
-        kp = max(0, min(100, int(self.config.start_kick_percent)))
-        ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(self.config.start_kick_sec)))
+        kp = max(0, min(100, int(cfg.start_kick_percent)))
+        ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(cfg.start_kick_sec)))
 
         def _kick_duty(cmd: int) -> int:
             if cmd <= 0 or kp <= 0 or ks <= 0:
@@ -605,13 +668,19 @@ class NavigationManager:
         self._apply_side_pwm(self.SIDE_LEFT, ls)
         self._apply_side_pwm(self.SIDE_RIGHT, rs)
         if was_rest and moving_now and (ls > 0 or rs > 0):
-            rar = max(0.0, min(0.1, float(self.config.pwm_reassert_sec)))
+            rar = max(0.0, min(0.1, float(cfg.pwm_reassert_sec)))
             if rar > 0:
                 time.sleep(rar)
                 self._apply_side_pwm(self.SIDE_LEFT, ls)
                 self._apply_side_pwm(self.SIDE_RIGHT, rs)
         self._last_l_pwm = ls
         self._last_r_pwm = rs
+        if ls == 0 and rs == 0:
+            self._last_straight_sign = None
+        elif straight_crawl and target_sign is not None:
+            self._last_straight_sign = target_sign
+        else:
+            self._last_straight_sign = None
 
     def _command_both(self, direction: str, speed: int) -> None:
         """Mirrors the RPi forward_forever / backward_forever sequence:

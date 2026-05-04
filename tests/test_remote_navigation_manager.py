@@ -454,6 +454,40 @@ def test_set_wheels_start_kick_from_rest_issues_boost_then_target(
     assert "SET F 40 F 40" not in lines2[-2:]
 
 
+def test_set_wheels_straight_opposite_nudge_from_rest_then_crawl(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """Opposite-direction jog before straight crawl when configured."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            straight_opposite_nudge_sec=0.01,
+            straight_opposite_nudge_pct=20,
+            opposite_zero_settle_sec=0.0,
+            dir_pwm_gap_sec=0.0,
+        )
+    )
+    nav.initialize()
+    fake_serial.queue("OK", "OK", "OK")
+    nav.set_wheels(
+        left_dir="forward", left_speed=15, right_dir="forward", right_speed=15,
+    )
+    port = _last_open(fake_serial)
+    lines = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert lines == ["SET B 3 B 3", "SET B 0 B 0", "SET F 15 F 15"]
+
+    fake_serial.queue("OK", "OK", "OK")
+    nav.set_wheels(
+        left_dir="backward", left_speed=12, right_dir="backward", right_speed=12,
+    )
+    lines2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    # From forward crawl: nudge forward (20% of 12 -> 3) then backward crawl.
+    assert lines2[-3:] == ["SET F 3 F 3", "SET F 0 F 0", "SET B 12 B 12"]
+
+
 def test_invalid_direction_raises(fake_serial: _FakeSerialRegistry) -> None:
     fake_serial.queue("PONG")
     nav = RemoteNavigationManager(

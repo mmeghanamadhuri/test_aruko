@@ -44,6 +44,12 @@ class NavigationSettings:
     then drops to the commanded speed. Set either to 0 to disable
     (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC). SEC is clamped
     to at most NAV_START_KICK_SEC_MAX (default when unset = that max).
+
+    `straight_opposite_nudge_sec` (+ `NUDGE_PCT`, `OPPOSITE_ZERO_SETTLE_SEC`)
+    apply only to symmetric straight crawls (same dir and speed on
+    both sides). From rest, or when reversing straight F<->B, the
+    wheels jog briefly in the opposite direction, return to PWM 0, then
+    apply the command. Set NUDGE_SEC to 0 to disable.
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -53,6 +59,14 @@ class NavigationSettings:
     invert_right_dir: bool
     start_kick_percent: int = 35
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
+    # Local + remote: delay after DIR+EL before torque (local GPIO). Remote
+    # uses the same value as a sleep between protocol steps when mirroring.
+    dir_pwm_gap_sec: float = 0.03
+    pwm_reassert_sec: float = 0.02
+    # Straight-line only: brief opposite jog before crawling (0 sec = off).
+    straight_opposite_nudge_sec: float = 0.08
+    straight_opposite_nudge_pct: int = 20
+    opposite_zero_settle_sec: float = 0.04
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -201,6 +215,17 @@ def load_settings(repo_root: Path) -> NinaSettings:
                     )
                 ),
             ),
+        ),
+        dir_pwm_gap_sec=float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03")),
+        pwm_reassert_sec=float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02")),
+        straight_opposite_nudge_sec=float(
+            os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC", "0.08")
+        ),
+        straight_opposite_nudge_pct=int(
+            os.environ.get("NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT", "20")
+        ),
+        opposite_zero_settle_sec=float(
+            os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
         ),
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
         # 'remote' -> commands are sent over serial to a Raspberry Pi
