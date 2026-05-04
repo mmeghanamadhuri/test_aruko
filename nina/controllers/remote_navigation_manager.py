@@ -23,6 +23,11 @@ Wire protocol is documented in `pi_motor_bridge/motor_bridge.py`:
     READY                             (async, on bridge boot)
     EVT WATCHDOG                      (async, when Pi watchdog parks the wheels)
 
+Straight-line preload (opposite jog before crawl) issues low-duty symmetric
+reverse SETs (e.g. ``B 3 B 3``). The Pi bridge must use ``kick_and_set`` for
+those kicks, not ``warm_reverse_and_set``, which inserts a forward puff before
+reverse and would cancel the preload. See ``pi_motor_bridge/motor_bridge.py``.
+
 Direction inversion:
   The Pi side already mirrors the right-wheel polarity inside
   `control_speed()`. This class additionally honours
@@ -348,7 +353,7 @@ class RemoteNavigationManager:
             )
             ol = self._dir_letter(self.SIDE_LEFT, opp_dir)
             orr = self._dir_letter(self.SIDE_RIGHT, opp_dir)
-            nd = max(1, min(100, (ls * pct + 99) // 100))
+            nd = max(3, min(100, (ls * pct + 99) // 100))
             gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
             if gap_pre > 0:
                 time.sleep(gap_pre)

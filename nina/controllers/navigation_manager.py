@@ -639,7 +639,7 @@ class NavigationManager:
             gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
             if gap_pre > 0:
                 time.sleep(gap_pre)
-            nd = max(1, min(100, (ls * pct + 99) // 100))
+            nd = max(3, min(100, (ls * pct + 99) // 100))
             self._apply_side_pwm(self.SIDE_LEFT, nd)
             self._apply_side_pwm(self.SIDE_RIGHT, nd)
             time.sleep(ns)

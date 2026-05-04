@@ -95,6 +95,26 @@ import time
 
 import navigation_bldc as nav
 
+# Jetson straight-line preload sends symmetric reverse at low duty (e.g. B 3 B 3)
+# before forward crawl. `warm_reverse_and_set` is for *sustained* reverse cold-start
+# and runs a forward "puff" first, which cancels that preload. Use `kick_and_set`
+# for symmetric reverse kicks at/below this duty so the wheel actually moves back.
+_LIGHT_REVERSE_SYMMETRIC_KICK_MAX = 8
+
+
+def _symmetric_light_reverse_kick(
+    lspeed: int, ldir: str, rspeed: int, rdir: str
+) -> bool:
+    """True when this SET is a low, symmetric reverse — use kick_and_set only."""
+    return (
+        ldir == rdir == "back"
+        and lspeed > 0
+        and rspeed > 0
+        and lspeed == rspeed
+        and lspeed <= _LIGHT_REVERSE_SYMMETRIC_KICK_MAX
+    )
+
+
 try:
     import serial  # pyserial
 except ImportError:
@@ -353,16 +373,15 @@ class MotorBridge:
                             ldir,
                             rdir,
                         )
-                        # warm_reverse_and_set is a strict superset of
-                        # kick_and_set: pure-forward kicks pass through
-                        # at zero extra cost, while any wheel commanded
-                        # to reverse gets a forward "puff" first to give
-                        # the rotor momentum the JYQD's fallback
-                        # commutation table can latch onto. Without it,
-                        # cheap hub motors with non-canonical hall
-                        # wiring stall on cold-start reverse no matter
-                        # how high the PWM duty.
-                        nav.warm_reverse_and_set(lspeed, ldir, rspeed, rdir)
+                        # warm_reverse_and_set adds a forward puff before
+                        # reverse (cold-start sustained reverse). The Jetson
+                        # preload sends short symmetric reverse first; that puff
+                        # cancels it, so use kick_and_set for low symmetric
+                        # reverse kicks only.
+                        if _symmetric_light_reverse_kick(lspeed, ldir, rspeed, rdir):
+                            nav.kick_and_set(lspeed, ldir, rspeed, rdir)
+                        else:
+                            nav.warm_reverse_and_set(lspeed, ldir, rspeed, rdir)
                     else:
                         nav.set_wheels(lspeed, ldir, rspeed, rdir)
                     self._wheels_active = target_active
