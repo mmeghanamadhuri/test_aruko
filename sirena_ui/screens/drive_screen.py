@@ -562,6 +562,16 @@ class DriveScreen(QWidget):
                 self._vision_acquired = True
             except Exception:
                 pass
+        # Recognise enrolled faces on the front camera (greeting is wired
+        # in NinaService). Vision on_leave disables detectors; turn face
+        # back on here so Drive still says "Hello <name>".
+        try:
+            self._service.vision.set_face_enabled(True)
+        except Exception:
+            pass
+        # Same policy as Vision: fresh face-recognition greetings when
+        # this screen takes the live feed (Drive shares VisionWorker).
+        self._service.reset_face_greet_cooldown()
         # Grab focus so WASD/Space/Esc reach our key handlers without
         # the user having to click into the screen body first.
         self.setFocus()

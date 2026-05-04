@@ -31,7 +31,7 @@ import time
 from pathlib import Path
 from typing import Dict, Optional
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
 from nina.services.audio_player import AudioPlayer
@@ -163,7 +163,7 @@ class FaceGreeter(QObject):
                 # for the same name.
                 return
 
-            text = f"Hello, {name}"
+            text = f"Hello {name}"
             out_path = self._cache_dir / f"{_safe_filename(name)}.mp3"
             worker = _GenerateClipWorker(name, text, out_path, parent=self)
             worker.finished_with_path.connect(self._on_synthesised)
@@ -190,3 +190,23 @@ class FaceGreeter(QObject):
             log.warning("FaceGreeter playback failed for %s: %s", name, exc)
             return
         self.spoken.emit(name)
+
+
+class FaceGreetReceiver(QObject):
+    """Queued receiver for `VisionWorker.faces_recognized` so greetings run
+    on this object's thread (typically the GUI thread) even though the
+    worker emits from its capture thread."""
+
+    def __init__(self, greeter: FaceGreeter, parent=None) -> None:
+        super().__init__(parent)
+        self._greeter = greeter
+
+    @pyqtSlot(list)
+    def on_faces_recognized(self, names: object) -> None:
+        if not names:
+            return
+        for name in names:
+            try:
+                self._greeter.greet(str(name))
+            except Exception:
+                pass

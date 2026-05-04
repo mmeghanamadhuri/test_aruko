@@ -22,6 +22,7 @@ from nina.services.audio_player import AudioPlayer
 from sirena_ui.workers.autonomy_controller import AutonomyController
 from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.slam_worker import SlamWorker
+from sirena_ui.workers.face_greeter import FaceGreeter, FaceGreetReceiver
 from sirena_ui.workers.vision_worker import VisionWorker
 
 
@@ -49,6 +50,7 @@ class NinaService:
         self._motor_count = len(DEFAULT_MOTOR_IDS)
         self._drive: Optional[DriveController] = None
         self._vision: Optional[VisionWorker] = None
+        self._face_greeter: Optional[FaceGreeter] = None
         self._slam: Optional[SlamWorker] = None
         self._autonomy: Optional[AutonomyController] = None
 
@@ -101,8 +103,18 @@ class NinaService:
         actually navigates to the Vision screen.
         """
         if self._vision is None:
-            self._vision = VisionWorker()
+            w = VisionWorker()
+            g = FaceGreeter(parent=w)
+            recv = FaceGreetReceiver(g, parent=w)
+            w.faces_recognized.connect(recv.on_faces_recognized)
+            self._vision = w
+            self._face_greeter = g
         return self._vision
+
+    def reset_face_greet_cooldown(self) -> None:
+        """Forget per-person greeting cooldown (e.g. when opening Vision)."""
+        if self._face_greeter is not None:
+            self._face_greeter.reset_cooldown()
 
     @property
     def slam(self) -> SlamWorker:
@@ -162,6 +174,7 @@ class NinaService:
                 except Exception:
                     pass
                 self._vision = None
+                self._face_greeter = None
             if self._drive is not None:
                 try:
                     self._drive.shutdown()

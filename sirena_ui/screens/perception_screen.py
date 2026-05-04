@@ -384,6 +384,12 @@ class PerceptionScreen(QWidget):
                 self._holds_camera = True
             except Exception as exc:
                 log.warning("vision.acquire failed: %s", exc)
+        self._service.reset_face_greet_cooldown()
+
+        try:
+            self._service.vision.set_face_enabled(True)
+        except Exception:
+            pass
 
         # 2) Lidar / SLAM - passive; Map screen also calls start().
         try:

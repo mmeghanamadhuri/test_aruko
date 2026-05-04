@@ -1,4 +1,4 @@
-"""Qt-free \"Hello, <name>\" playback after face enrollment (matches FaceGreeter).
+"""Qt-free \"Hello <name>\" playback after face enrollment (matches FaceGreeter).
 
 Caches MP3 under ``nina/data/greetings/`` like ``sirena_ui.workers.face_greeter``.
 """
@@ -25,7 +25,7 @@ def _safe_filename(name: str) -> str:
 
 
 def queue_hello_greeting(name: str) -> None:
-    """gTTS + play ``Hello, {name}`` on a background thread (best-effort)."""
+    """gTTS + play ``Hello {name}`` on a background thread (best-effort)."""
     raw = (name or "").strip()
     if not raw:
         return
@@ -35,7 +35,7 @@ def queue_hello_greeting(name: str) -> None:
             _GREET_DIR.mkdir(parents=True, exist_ok=True)
             stem = _safe_filename(raw)
             out_path = _GREET_DIR / f"{stem}.mp3"
-            text = f"Hello, {raw}"
+            text = f"Hello {raw}"
             if not out_path.exists() or out_path.stat().st_size == 0:
                 try:
                     AudioGenerator.generate(text, out_path)

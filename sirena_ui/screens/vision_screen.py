@@ -39,7 +39,6 @@ from sirena_ui.widgets.common import (
 )
 from sirena_ui.widgets.face_enroll_dialog import FaceEnrollDialog
 from sirena_ui.workers.face_follow_controller import FaceFollowController
-from sirena_ui.workers.face_greeter import FaceGreeter
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.object_announcer import ObjectAnnouncer
 from sirena_ui.workers.vision_types import KIND_FACE, KIND_OBJECT, Detection
@@ -125,10 +124,8 @@ class VisionScreen(QWidget):
         self._viewport_placeholder: Optional[QWidget] = None
         self._obj_conf_slider: Optional[QSlider] = None
         self._obj_conf_pill: Optional[Pill] = None
-        # Greets recognised people via gTTS + AudioPlayer with a
-        # per-person cooldown so we don't spam "Hello hari" on every
-        # frame.
-        self._greeter = FaceGreeter(parent=self)
+        # Recognised-face audio: wired in `NinaService.vision` so greetings
+        # run from Drive / Perception too, not only this screen.
         # Speaks the current set of detected object labels when the
         # operator clicks "Play Objects". Cached MP3s + 1.5 s cooldown
         # so a double-click doesn't queue two overlapping playbacks.
@@ -188,10 +185,7 @@ class VisionScreen(QWidget):
             worker.set_face_enabled(True)
         if self._object_toggle is not None and self._object_toggle._btn.isChecked():  # noqa: SLF001
             worker.set_object_enabled(True)
-        # Reset the greeter's cooldown table so re-opening the Vision
-        # tab always greets people (otherwise leaving + returning a
-        # few seconds later would feel silent).
-        self._greeter.reset_cooldown()
+        self._service.reset_face_greet_cooldown()
         # Also reflect the latest known status immediately so the pill
         # doesn't lag the first frame.
         self._apply_status(self._status_to_dict(worker.status()))
@@ -449,7 +443,6 @@ class VisionScreen(QWidget):
         worker.detections_changed.connect(self._follow.ingest_detections)
         worker.fps_changed.connect(self._on_fps)
         worker.status_changed.connect(self._apply_status)
-        worker.faces_recognized.connect(self._on_faces_recognized)
         worker.face_enable_failed.connect(self._on_face_enable_failed)
         worker.object_enable_failed.connect(self._on_object_enable_failed)
         worker.enrollment_finished.connect(
@@ -512,17 +505,6 @@ class VisionScreen(QWidget):
             "Tip: launch the app from a terminal to see the full "
             "Python traceback in stderr."
         )
-
-    def _on_faces_recognized(self, names: list) -> None:
-        # FaceGreeter handles per-name cooldown internally, so we can
-        # forward every frame's recognised set without de-duping here.
-        for name in names:
-            try:
-                self._greeter.greet(str(name))
-            except Exception:
-                pass
-
-    # ---------- handlers ----------
 
     def _on_frame(self, image: QImage) -> None:
         try:
