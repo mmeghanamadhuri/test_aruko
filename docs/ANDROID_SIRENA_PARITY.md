@@ -2,6 +2,17 @@
 
 This document tracks **functional and navigation parity** between the Jetpack Compose companion (`android/app`) and the PyQt desktop app (`sirena_ui`). UI layout differs by design; behavior targets the same Jetson **nina-link** HTTP API where it exists.
 
+## Hook: what to change when `sirena_ui` changes
+
+1. **Feature truth** — [`sirena_ui/docs/NINA_APP.md`](../sirena_ui/docs/NINA_APP.md) (every screen, env var, and control).
+2. **Constant-level mirrors (copy/paste source)** — update Kotlin in the same change as Python when any of these drift:
+   - `sirena_ui/widgets/sidebar.py` → `NAV_ITEMS` → [`SirenaDefinitions.kt`](../android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaDefinitions.kt) `SIRENA_NAV_ITEMS` + rail icons in [`NinaConsoleScreen.kt`](../android/app/src/main/java/com/sirena/nina/companion/ui/NinaConsoleScreen.kt) `navIcon`.
+   - `sirena_ui/screens/home_screen.py` → `QUICK_ACTIONS` → `SIRENA_QUICK_ACTIONS`.
+   - `sirena_ui/screens/settings_screen.py` → `SETTINGS_CATEGORIES` → `SIRENA_SETTINGS_CATEGORIES`.
+   - `sirena_ui/workers/health_collector.py` → `collect()` row order/labels → `SIRENA_HEALTH_SUBSYSTEM_LABELS` (reference for future full-table parity).
+3. **Machine-readable index** — [`android_sirena_parity.manifest.json`](android_sirena_parity.manifest.json) lists each screen, its desktop doc section, Android file(s), and typical HTTP paths. Bump `updated` (and `manifest_version` if the contract changes) when you add routes or screens.
+4. **HTTP** — new Jetson behaviour goes through [`nina/link_daemon/api.py`](../nina/link_daemon/api.py); extend [`LinkClient.kt`](../android/app/src/main/java/com/sirena/nina/companion/data/LinkClient.kt) and the relevant Composable / [`CompanionViewModel.kt`](../android/app/src/main/java/com/sirena/nina/companion/CompanionViewModel.kt).
+
 ## Shared HTTP surface
 
 The companion talks to `nina-link` only (see [`nina/link_daemon/api.py`](../nina/link_daemon/api.py)). Endpoints include Wi‑Fi, pairing, drive, actions, vision (stream, options, detections, enroll, announce), session claim/release, and static media. When **`NINA_LINK_ENABLE_SLAM_BRIDGE`**, **`NINA_LINK_ENABLE_DEPTH_BRIDGE`**, and **`NINA_LINK_ENABLE_AUTONOMY_BRIDGE`** are set on the Jetson (see [`scripts/install-nina-link-jetson.sh`](../scripts/install-nina-link-jetson.sh)), Android uses **`/v1/slam/*`** for occupancy + pose, **`/v1/depth/stream`** for RealSense MJPEG, and **`/v1/autonomy/*`** for both autonomous wander (`POST /v1/autonomy/enabled`) and goto-point navigation (`POST /v1/autonomy/goal` / `DELETE /v1/autonomy/goal`) — matching the same stacks as desktop `sirena_ui` subject to hardware availability.

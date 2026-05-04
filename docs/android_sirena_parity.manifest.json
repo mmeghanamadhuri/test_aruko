@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$comment": "Machine-readable hook: when sirena_ui or nina-link changes, update the matching Android files in the same PR. Human narrative stays in docs/ANDROID_SIRENA_PARITY.md.",
+  "manifest_version": 1,
+  "updated": "2026-05-04",
+  "python_source_of_truth": {
+    "feature_reference": "sirena_ui/docs/NINA_APP.md",
+    "navigation_order_and_keys": {
+      "symbol": "sirena_ui/widgets/sidebar.py",
+      "constant": "NAV_ITEMS"
+    },
+    "home_quick_action_tiles": {
+      "symbol": "sirena_ui/screens/home_screen.py",
+      "constant": "QUICK_ACTIONS"
+    },
+    "settings_category_sidebar": {
+      "symbol": "sirena_ui/screens/settings_screen.py",
+      "constant": "SETTINGS_CATEGORIES"
+    },
+    "health_subsystem_rows": {
+      "symbol": "sirena_ui/workers/health_collector.py",
+      "function": "collect"
+    },
+    "http_api": {
+      "file": "nina/link_daemon/api.py",
+      "note": "Companion uses HTTP only; new endpoints need LinkClient + screens."
+    }
+  },
+  "android_touch_points": {
+    "mirrored_constants": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaDefinitions.kt",
+    "navigation_rail_icons": "android/app/src/main/java/com/sirena/nina/companion/ui/NinaConsoleScreen.kt",
+    "home_quick_actions_grid": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaHomeScreen.kt",
+    "http_client": "android/app/src/main/java/com/sirena/nina/companion/data/LinkClient.kt",
+    "shared_state": "android/app/src/main/java/com/sirena/nina/companion/CompanionViewModel.kt"
+  },
+  "screens": [
+    {
+      "id": "home",
+      "desktop_doc_section": "Home — dashboard",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaHomeScreen.kt",
+        "constants": ["SIRENA_QUICK_ACTIONS", "SIRENA_HOME_STATUS_OVERVIEW"]
+      },
+      "sync_check": "Tile keys/order match QUICK_ACTIONS; hero CTAs match desktop."
+    },
+    {
+      "id": "drive",
+      "desktop_doc_section": "Drive — manual BLDC control + autonomy hand-off",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaDriveScreen.kt",
+        "http": ["/v1/robot/drive", "/v1/robot/emergency-stop", "/v1/robot/drive/status", "/v1/autonomy/enabled", "/v1/autonomy/status"]
+      }
+    },
+    {
+      "id": "vision",
+      "desktop_doc_section": "Vision — USB camera + perception",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaVisionScreen.kt",
+        "http": ["/v1/vision/stream", "/v1/vision/options", "/v1/vision/detections"]
+      }
+    },
+    {
+      "id": "perception",
+      "desktop_doc_section": "Perception — live LiDAR + RGB + Depth",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaPerceptionScreen.kt",
+        "http": ["/v1/slam/occupancy", "/v1/vision/stream", "/v1/depth/stream"]
+      }
+    },
+    {
+      "id": "map",
+      "desktop_doc_section": "Map — SLAM + sensor fusion + autonomy",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaMapScreen.kt",
+        "http": ["/v1/slam/snapshot", "/v1/slam/occupancy", "/v1/autonomy/enabled", "/v1/autonomy/goal", "/v1/autonomy/status"]
+      }
+    },
+    {
+      "id": "actions",
+      "desktop_doc_section": "Actions — record / play / audio",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaActionsScreen.kt",
+        "constants": ["SIRENA_ACTIONS_SUBTAB_LABELS"]
+      }
+    },
+    {
+      "id": "settings",
+      "desktop_doc_section": "Settings — 9 categories with sub-sidebar",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaSettingsScreen.kt",
+        "constants": ["SIRENA_SETTINGS_CATEGORIES"]
+      },
+      "sync_check": "Category keys and order match SETTINGS_CATEGORIES in settings_screen.py."
+    },
+    {
+      "id": "health",
+      "desktop_doc_section": "Health — donut + subsystem table",
+      "android": {
+        "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaHealthScreen.kt",
+        "constants": ["SIRENA_HEALTH_SUBSYSTEM_LABELS"],
+        "note": "Companion shows daemon /health + caps; full hardware table remains desktop unless bridged."
+      }
+    }
+  ],
+  "workflow": [
+    "1. Read the relevant section in sirena_ui/docs/NINA_APP.md.",
+    "2. If labels, nav keys, or tiles changed, diff Python constants listed in python_source_of_truth.",
+    "3. Update SirenaDefinitions.kt (and NinaConsoleScreen.kt nav icons if new section keys appear).",
+    "4. If behaviour moved to a new HTTP route, add LinkClient + ViewModel + target screen.",
+    "5. Bump manifest_version or updated date in this file when you change the contract."
+  ]
+}

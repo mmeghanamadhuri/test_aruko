@@ -30,7 +30,6 @@ val SIRENA_QUICK_ACTIONS: List<QuickAction> =
         QuickAction("actions:audio", "Audio", "\u266B", "Voice clips"),
         QuickAction("drive", "Drive", "\u2B95", "Manual control"),
         QuickAction("vision", "Vision", "\u25CE", "Camera & faces"),
-        QuickAction("perception", "Perception", "\u25A3", "Sensor fusion"),
         QuickAction("map", "Map", "\u25A6", "SLAM & dock"),
         QuickAction("health", "Health", "\u2665", "System checks"),
         QuickAction("settings", "Settings", "\u2699", "Configure"),
@@ -50,7 +49,7 @@ val SIRENA_SETTINGS_CATEGORIES: List<SettingsCategory> =
         SettingsCategory("audio", "Audio", "\u266B"),
         SettingsCategory("privacy", "Privacy", "\u26C4"),
         SettingsCategory("autodock", "Autodock", "\u2693"),
-        SettingsCategory("voice", "Voice", "\uD83C\uDFA4"),
+        SettingsCategory("voice", "Voice", "\u2693"),
         SettingsCategory("power", "Power", "\u26A1"),
         SettingsCategory("ota", "OTA", "\u21BB"),
     )
@@ -67,14 +66,21 @@ val SIRENA_HOME_STATUS_OVERVIEW: List<StatusStripItem> =
         StatusStripItem("Wi‑Fi", "Online"),
     )
 
-/** Labels aligned with [sirena_ui.workers.health_collector] rows (subset for UI scaffold). */
+/** Default row titles in order — mirrors [sirena_ui.workers.health_collector.collect]. */
 val SIRENA_HEALTH_SUBSYSTEM_LABELS: List<String> =
     listOf(
         "Dynamixel bus",
         "FTDI USB-serial",
-        "Serial motor bus",
-        "Realsense camera",
-        "RPLidar",
-        "BLDC navigation",
-        "ESP voice module",
+        "USB Camera",
+        "Lidar",
+        "IR cliff (GP2Y0E02B)",
+        "Ultrasonic (HC-SR04)",
+        "Depth camera (D435)",
+        "BLDC drive (JYQD V7.3E2)",
+        "Battery",
+        "Wi-Fi",
+        "ESP Voice Module",
+        "Disk",
+        "CPU",
+        "Temperature",
     )
