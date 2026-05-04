@@ -68,6 +68,7 @@ fun NinaConsoleSectionContent(
     when (section) {
         "home" ->
             SirenaHomeScreen(
+                vm = vm,
                 caps = caps,
                 statusUi = statusUi,
                 onNavigate = { key ->
@@ -142,6 +143,7 @@ fun NinaConsoleSectionContent(
             )
         else ->
             SirenaHomeScreen(
+                vm = vm,
                 caps = caps,
                 statusUi = statusUi,
                 onNavigate = { key ->

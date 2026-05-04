@@ -462,6 +462,18 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    suspend fun postRobotDriveInvert(left: Boolean?, right: Boolean?): JSONObject? {
+        if (left == null && right == null) return null
+        return try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            NinaLog.tap("Drive", "invert", "L=$left R=$right")
+            client.robotDriveInvert(url, bearer, left, right)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     suspend fun robotEmergencyStop() {
         NinaLog.tap("Drive", "emergency_stop", "")
         val url = prefs.baseUrl.first()
@@ -754,6 +766,25 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         try {
             val url = prefs.baseUrl.first()
             client.slamOccupancyGrid(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun fetchRobotHealth(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.robotHealth(url)
+        } catch (_: Exception) {
+            null
+        }
+
+    suspend fun saveSlamMapPgm(filename: String): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.slamSave(url, bearer, filename)
+        } catch (e: LinkApiException) {
+            JSONObject().put("ok", false).put("detail", e.message ?: "HTTP ${e.code}")
         } catch (_: Exception) {
             null
         }

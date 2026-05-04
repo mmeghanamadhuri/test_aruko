@@ -293,6 +293,7 @@ Share the **`.apk`** file; on each device allow **Install unknown apps** for the
 - `DELETE /v1/wifi/saved/{id_or_uuid}` — remove saved NM profile.
 - `POST /v1/pair` — `{ "pin" }` → `{ "token" }` for session bearer.
 - `GET /v1/robot/capabilities` — which bridges are enabled and endpoint paths.
+- `GET /v1/robot/health` — JSON `{ "rows": [ { "key", "label", "detail", "status" } ] }` aggregated from SLAM / drive / vision / depth / autonomy bridges (companion Health screen).
 - `POST /v1/robot/drive` / `POST /v1/robot/emergency-stop` — when `NINA_LINK_ENABLE_ROBOT_BRIDGE=1`.
 - `GET /v1/actions` / `POST /v1/actions/play` — when `NINA_LINK_ENABLE_ACTION_BRIDGE=1`.
 - `GET /v1/actions/recordings` — list `recordings/*.json` (no bus access).
@@ -302,6 +303,7 @@ Share the **`.apk`** file; on each device allow **Install unknown apps** for the
 - `GET /v1/autonomy/status` / `POST /v1/autonomy/enabled` — when `NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1`. Status returns the merged blob `{ "enabled", "mode": "idle"|"wander"|"goto", "health", "pilot", "goto", "last_pilot" }`. Enabled toggles wander.
 - `POST /v1/autonomy/goal` / `DELETE /v1/autonomy/goal` — same bridge flag. Body for POST is `{ "x_mm": <float>, "y_mm": <float> }` in the SLAM map frame (origin = map centre, +x right, +y forward). The Jetson plans an A* path on the live BreezySLAM grid (with footprint inflation), follows it with reactive obstacle avoidance, and stops on arrival. DELETE cancels the in-flight goto; if the goto turned autonomy on, autonomy also turns off.
 - `POST /v1/session/claim` / `POST /v1/session/release` — if `NINA_LINK_SESSION_SCRIPT` is set.
+- `POST /v1/slam/save` — body `{ "filename": "nina_map.pgm" }`; writes PGM under `nina/data/maps/` on the Jetson when `NINA_LINK_ENABLE_SLAM_BRIDGE=1` (same behaviour as desktop Save map).
 
 ## Android vs desktop Sirena UI
 

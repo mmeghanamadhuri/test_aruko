@@ -32,7 +32,11 @@ gradle wrapper --gradle-version 8.7
 
 After **Build → Build APK(s)** (release): outputs go to `app/build/outputs/apk/release/app-release.apk`. Release builds use the **debug signing config** so you can install on any device without a Play Console key (internal use only). Scripts: [`scripts/build-companion-apk.ps1`](../scripts/build-companion-apk.ps1) / [`scripts/build-companion-apk.sh`](../scripts/build-companion-apk.sh) if `gradlew` exists.
 
-See also [`docs/COMPANION_APP.md`](../docs/COMPANION_APP.md) and [`docs/ANDROID_SIRENA_PARITY.md`](../docs/ANDROID_SIRENA_PARITY.md) (desktop vs companion feature matrix). When `sirena_ui` changes labels, nav, or tiles, follow the **Hook** section there and [`docs/android_sirena_parity.manifest.json`](../docs/android_sirena_parity.manifest.json) (screen → file → HTTP mapping).
+See also [`docs/COMPANION_APP.md`](../docs/COMPANION_APP.md) and [`docs/ANDROID_SIRENA_PARITY.md`](../docs/ANDROID_SIRENA_PARITY.md) (desktop vs companion feature matrix). **What the tablet cannot mirror yet** (Health table, full Settings persist, map save, etc.): [`docs/ANDROID_SIRENA_GAPS.md`](../docs/ANDROID_SIRENA_GAPS.md). When `sirena_ui` changes labels, nav, or tiles, follow the **Hook** section in **ANDROID_SIRENA_PARITY** and [`docs/android_sirena_parity.manifest.json`](../docs/android_sirena_parity.manifest.json).
+
+**Debug logs** (HTTP failures log at WARN from `LinkClient`):
+
+`adb logcat -s NinaCompanion:I NinaCompanion:W NinaCompanion:E`
 
 ## Jetson dependencies (not built into the APK)
 

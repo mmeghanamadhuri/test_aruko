@@ -103,13 +103,16 @@ def navigation_hw_status() -> Dict[str, Any]:
     """Probe lazy NavigationManager init (same path as first drive command).
 
     Returns ``connected`` so the companion app can mirror Sirena UI's BLDC pill.
+    When connected, includes ``invert_left`` / ``invert_right`` (mirrors Qt Drive).
     """
     try:
-        _navigation()
+        nav = _navigation()
         return {
             "ok": True,
             "connected": True,
             "message": "BLDC L+R connected",
+            "invert_left": bool(nav.get_invert_left()),
+            "invert_right": bool(nav.get_invert_right()),
         }
     except Exception as exc:
         log.debug("navigation_hw_status: %s", exc)
@@ -117,7 +120,38 @@ def navigation_hw_status() -> Dict[str, Any]:
             "ok": True,
             "connected": False,
             "message": f"{type(exc).__name__}: {exc}",
+            "invert_left": False,
+            "invert_right": False,
         }
+
+
+def set_wheel_invert(
+    *,
+    left: Optional[bool] = None,
+    right: Optional[bool] = None,
+) -> Dict[str, Any]:
+    """Runtime per-wheel polarity (same calls as Sirena UI Drive Flip L/R)."""
+    if left is None and right is None:
+        return {"ok": False, "error": "no fields: set left and/or right"}
+
+    def run() -> None:
+        nav = _navigation()
+        if left is not None:
+            nav.set_invert_left(bool(left))
+        if right is not None:
+            nav.set_invert_right(bool(right))
+
+    try:
+        run()
+        nav = _navigation()
+        return {
+            "ok": True,
+            "invert_left": bool(nav.get_invert_left()),
+            "invert_right": bool(nav.get_invert_right()),
+        }
+    except Exception as exc:
+        log.exception("set_wheel_invert")
+        return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
 def emergency_stop() -> Dict[str, Any]:

@@ -86,6 +86,7 @@ fun SirenaMapScreen(
     var depthHl by remember { mutableStateOf("") }
     var irHl by remember { mutableStateOf("") }
     var ultraHl by remember { mutableStateOf("") }
+    var saveMapMsg by remember { mutableStateOf("") }
     val visionEnabled = caps?.optBoolean("vision_bridge_enabled") == true
     val scope = rememberCoroutineScope()
 
@@ -518,8 +519,39 @@ fun SirenaMapScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("Save map") }
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        saveMapMsg = ""
+                                        val r = vm.saveSlamMapPgm("nina_map.pgm")
+                                        saveMapMsg =
+                                            when {
+                                                r == null -> "Save failed (unreachable host)."
+                                                r.optBoolean("ok") ->
+                                                    "Saved: ${r.optString("filename", "nina_map.pgm")}"
+                                                else ->
+                                                    r.optString("detail", r.optString("message", "Save failed"))
+                                            }
+                                    }
+                                },
+                                enabled = slamOn,
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text("Save map")
+                            }
                             OutlinedButton(onClick = {}, enabled = false, modifier = Modifier.weight(1f)) { Text("Clear") }
+                        }
+                        if (saveMapMsg.isNotBlank()) {
+                            Text(
+                                saveMapMsg,
+                                style = MaterialTheme.typography.labelSmall,
+                                color =
+                                    if (saveMapMsg.startsWith("Saved")) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.error
+                                    },
+                            )
                         }
                     }
                 }

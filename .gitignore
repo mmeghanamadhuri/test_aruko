@@ -13,5 +13,8 @@ venv/
 .DS_Store
 Thumbs.db
 
+# Android Studio / device log dumps (often huge)
+*.logcat
+
 # Auto-downloaded vision model weights (YuNet ONNX, YOLO .pt, TensorRT engines)
 nina/models/weights/

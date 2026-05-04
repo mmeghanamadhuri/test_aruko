@@ -1,6 +1,6 @@
 # Android companion vs desktop `sirena_ui`
 
-This document tracks **functional and navigation parity** between the Jetpack Compose companion (`android/app`) and the PyQt desktop app (`sirena_ui`). UI layout differs by design; behavior targets the same Jetson **nina-link** HTTP API where it exists.
+This document tracks **functional and navigation parity** between the Jetpack Compose companion (`android/app`) and the PyQt desktop app (`sirena_ui`). UI layout differs by design; behavior targets the same Jetson **nina-link** HTTP API where it exists. For **known missing desktop features** and log capture tips, see [`ANDROID_SIRENA_GAPS.md`](ANDROID_SIRENA_GAPS.md).
 
 ## Hook: what to change when `sirena_ui` changes
 

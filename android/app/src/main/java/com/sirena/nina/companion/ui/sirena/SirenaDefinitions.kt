@@ -54,17 +54,8 @@ val SIRENA_SETTINGS_CATEGORIES: List<SettingsCategory> =
         SettingsCategory("ota", "OTA", "\u21BB"),
     )
 
-/** Mirrors health_screen / status_strip subsystem labels used on Home. */
+/** Row title/value used by Home system overview (desktop-style strip). */
 data class StatusStripItem(val title: String, val value: String)
-
-val SIRENA_HOME_STATUS_OVERVIEW: List<StatusStripItem> =
-    listOf(
-        StatusStripItem("Bus", "Connecting…"),
-        StatusStripItem("Camera", "Not connected"),
-        StatusStripItem("Lidar", "Not connected"),
-        StatusStripItem("Battery", "n/a"),
-        StatusStripItem("Wi‑Fi", "Online"),
-    )
 
 /** Default row titles in order — mirrors [sirena_ui.workers.health_collector.collect]. */
 val SIRENA_HEALTH_SUBSYSTEM_LABELS: List<String> =

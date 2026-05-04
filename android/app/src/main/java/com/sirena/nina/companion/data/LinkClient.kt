@@ -7,8 +7,10 @@ import okhttp3.OkHttpClient
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import com.sirena.nina.companion.util.NinaLog
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 /** HTTP client for the Jetson nina-link daemon (matches `nina/link_daemon/api.py`). */
@@ -87,6 +89,24 @@ class LinkClient {
         get("$baseUrl/v1/robot/capabilities")
     }
 
+    /** Aggregated subsystem health (lidar, BLDC, vision, depth, …) for the Health screen. */
+    suspend fun robotHealth(baseUrl: String): JSONObject = withContext(Dispatchers.IO) {
+        get("$baseUrl/v1/robot/health")
+    }
+
+    /** Save current SLAM grid as PGM under ``nina/data/maps/`` on the Jetson. */
+    suspend fun slamSave(
+        baseUrl: String,
+        bearer: String?,
+        filename: String,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        post(
+            "$baseUrl/v1/slam/save",
+            bearer,
+            JSONObject().put("filename", filename).toString(),
+        )
+    }
+
     suspend fun robotDriveMomentary(
         baseUrl: String,
         bearer: String?,
@@ -115,6 +135,19 @@ class LinkClient {
         withContext(Dispatchers.IO) {
             get("$baseUrl/v1/robot/drive/status")
         }
+
+    /** Per-wheel polarity flip (matches Qt Drive Flip L/R). */
+    suspend fun robotDriveInvert(
+        baseUrl: String,
+        bearer: String?,
+        left: Boolean?,
+        right: Boolean?,
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val json = JSONObject()
+        if (left != null) json.put("left", left)
+        if (right != null) json.put("right", right)
+        post("$baseUrl/v1/robot/drive/invert", bearer, json.toString())
+    }
 
     /** Manifest-backed action list from the Jetson (`nina/actions/manifest.json`). */
     suspend fun listActions(baseUrl: String): JSONObject =
@@ -420,13 +453,22 @@ class LinkClient {
     }
 
     private fun execute(req: Request): JSONObject {
-        client.newCall(req).execute().use { resp ->
-            val body = resp.body?.string().orEmpty()
-            if (!resp.isSuccessful) {
-                val hint = httpErrorDetail(body, resp.code, resp.message)
-                throw LinkApiException(resp.code, hint)
+        try {
+            client.newCall(req).execute().use { resp ->
+                val body = resp.body?.string().orEmpty()
+                if (!resp.isSuccessful) {
+                    val hint = httpErrorDetail(body, resp.code, resp.message)
+                    NinaLog.warn(
+                        "LinkClient",
+                        "${req.method} ${req.url} -> ${resp.code} $hint",
+                    )
+                    throw LinkApiException(resp.code, hint)
+                }
+                return if (body.isBlank()) JSONObject() else JSONObject(body)
             }
-            return if (body.isBlank()) JSONObject() else JSONObject(body)
+        } catch (e: IOException) {
+            NinaLog.warn("LinkClient", "${req.method} ${req.url} -> ${e.message}")
+            throw e
         }
     }
 

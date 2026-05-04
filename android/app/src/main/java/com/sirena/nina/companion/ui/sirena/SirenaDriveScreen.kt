@@ -19,14 +19,13 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -48,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.util.NinaLog
+import kotlin.math.sqrt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -79,6 +79,11 @@ fun SirenaDriveScreen(
     var bldcDetail by remember { mutableStateOf<String?>(null) }
     var brakeOn by remember { mutableStateOf(true) }
     var reverseOn by remember { mutableStateOf(false) }
+    var invertLeft by remember { mutableStateOf(false) }
+    var invertRight by remember { mutableStateOf(false) }
+    var hudHeading by remember { mutableStateOf("—") }
+    var hudDistance by remember { mutableStateOf("—") }
+    val slamOn = caps?.optBoolean("slam_bridge_enabled") == true
 
     val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
     val jetsonOnline = jetsonLink.isOnline
@@ -109,8 +114,39 @@ fun SirenaDriveScreen(
             if (j != null) {
                 bldcConnected = j.optBoolean("connected")
                 bldcDetail = j.optString("message").takeIf { it.isNotBlank() }
+                if (j.has("invert_left")) invertLeft = j.optBoolean("invert_left")
+                if (j.has("invert_right")) invertRight = j.optBoolean("invert_right")
             }
             delay(2500)
+        }
+    }
+
+    LaunchedEffect(slamOn, jetsonOnline) {
+        if (!slamOn || !jetsonOnline) {
+            hudHeading = "—"
+            hudDistance = "—"
+            return@LaunchedEffect
+        }
+        while (true) {
+            val st = try {
+                vm.fetchSlamStatus()
+            } catch (_: Exception) {
+                null
+            }
+            val snap = st?.optJSONObject("snapshot")
+            val pose = snap?.optJSONObject("pose")
+            if (pose != null) {
+                val th = pose.optDouble("theta_deg", Double.NaN)
+                hudHeading = if (th.isFinite()) String.format("%.0f°", th) else "—"
+                val x = pose.optDouble("x_mm", 0.0)
+                val y = pose.optDouble("y_mm", 0.0)
+                val m = sqrt(x * x + y * y) / 1000.0
+                hudDistance = String.format("%.1f m", m)
+            } else {
+                hudHeading = "—"
+                hudDistance = "—"
+            }
+            delay(2000)
         }
     }
 
@@ -141,20 +177,22 @@ fun SirenaDriveScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
+                        "Autonomous: " + if (autonomyOn) "ON" else "OFF",
+                        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
+                    Text(
                         when {
-                            !bridgeOn -> "Drive bridge off"
-                            !jetsonOnline -> "Jetson offline — BLDC unknown"
-                            bldcConnected == true -> "BLDC L+R connected"
+                            !bridgeOn -> "BLDC · bridge off"
+                            !jetsonOnline -> "BLDC · offline"
+                            bldcConnected == true -> "BLDC · connected"
                             bldcConnected == false -> {
                                 val d = bldcDetail
-                                if (!d.isNullOrBlank()) {
-                                    "BLDC not connected · ${d.take(48)}"
-                                } else {
-                                    "BLDC not connected"
-                                }
+                                if (!d.isNullOrBlank()) "BLDC · ${d.take(40)}" else "BLDC · not connected"
                             }
-
-                            else -> "BLDC …"
+                            else -> "BLDC · …"
                         },
                         Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                         style = MaterialTheme.typography.labelSmall,
@@ -180,47 +218,6 @@ fun SirenaDriveScreen(
                 "Enable vision bridge on the Jetson and set a daemon URL for MJPEG preview.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text("Autonomous", style = MaterialTheme.typography.bodyMedium)
-                Text(
-                    when {
-                        !autonomyApi ->
-                            "Set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1 on the Jetson (same stack as Sirena UI Map)."
-                        autonomyOn ->
-                            "Autonomy on — HTTP momentary drive may be refused until you turn this off."
-                        else ->
-                            "Wander / goto on Jetson via POST /v1/autonomy/enabled (mirrors desktop)."
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            SirenaSwitch(
-                checked = autonomyOn,
-                onCheckedChange = { want ->
-                    if (!autonomyApi) return@SirenaSwitch
-                    scope.launch {
-                        val r = vm.postAutonomyEnabled(want)
-                        if (r?.optBoolean("ok") == true) {
-                            autonomyOn = r.optBoolean("enabled", want)
-                            actionErr = null
-                        } else {
-                            actionErr =
-                                r?.optString("error").orEmpty().ifBlank {
-                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
-                                }
-                        }
-                    }
-                },
-                enabled = autonomyApi,
             )
         }
 
@@ -253,6 +250,10 @@ fun SirenaDriveScreen(
                         .fillMaxHeight(),
                 cameraPreviewOn = cameraPreviewOn && visionOn && streamRoot.isNotBlank(),
                 streamRoot = streamRoot,
+                speedLabel = "${speedPct.toInt()}%",
+                headingLabel = hudHeading,
+                distanceLabel = hudDistance,
+                batteryLabel = "n/a",
             )
             ControlCard(
                 modifier =
@@ -260,11 +261,50 @@ fun SirenaDriveScreen(
                         .weight(0.45f)
                         .fillMaxHeight(),
                 bridgeOn = bridgeOn,
+                autonomyOn = autonomyOn,
+                autonomyApi = autonomyApi,
+                onAutonomyChange = { want ->
+                    scope.launch {
+                        val r = vm.postAutonomyEnabled(want)
+                        if (r?.optBoolean("ok") == true) {
+                            autonomyOn = r.optBoolean("enabled", want)
+                            actionErr = null
+                        } else {
+                            actionErr =
+                                r?.optString("error").orEmpty().ifBlank {
+                                    r?.optString("message").orEmpty().ifBlank { "autonomy request failed" }
+                                }
+                        }
+                    }
+                },
+                invertLeft = invertLeft,
+                invertRight = invertRight,
+                onInvertLeft = { on ->
+                    scope.launch {
+                        val r = vm.postRobotDriveInvert(on, null)
+                        if (r?.optBoolean("ok") == true) {
+                            invertLeft = r.optBoolean("invert_left", on)
+                            actionErr = null
+                        } else {
+                            actionErr = r?.optString("error") ?: "invert failed"
+                        }
+                    }
+                },
+                onInvertRight = { on ->
+                    scope.launch {
+                        val r = vm.postRobotDriveInvert(null, on)
+                        if (r?.optBoolean("ok") == true) {
+                            invertRight = r.optBoolean("invert_right", on)
+                            actionErr = null
+                        } else {
+                            actionErr = r?.optString("error") ?: "invert failed"
+                        }
+                    }
+                },
                 brakeOn = brakeOn,
                 reverseOn = reverseOn,
                 onBrakeChange = { brakeOn = it },
                 onReverseChange = { reverseOn = it },
-                defaultMs = defaultMs,
                 speedMin = speedMin,
                 speedMax = speedMax,
                 speedPct = speedPct,
@@ -304,8 +344,8 @@ fun SirenaDriveScreen(
         }
 
         Text(
-            "Pulse ≈ ${defaultMs} ms per tap; speed ${speedPct.toInt()}% is sent with each pulse. " +
-                "Brake blocks D‑pad (like Sirena UI); reverse swaps forward and back.",
+            "Pulse ≈ ${defaultMs} ms per tap (hold on D‑pad). Brake blocks motion; reverse swaps forward/back. " +
+                "Flip L/R matches Sirena UI wheel polarity on the Jetson.",
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -318,6 +358,10 @@ private fun CameraCard(
     modifier: Modifier = Modifier,
     cameraPreviewOn: Boolean,
     streamRoot: String,
+    speedLabel: String,
+    headingLabel: String,
+    distanceLabel: String,
+    batteryLabel: String,
 ) {
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -358,7 +402,7 @@ private fun CameraCard(
                     ) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(
-                                "Turn on Camera preview",
+                                "USB camera not connected",
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall,
                             )
@@ -367,19 +411,25 @@ private fun CameraCard(
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                listOf("FPS", "Latency", "Exposure", "Gain").forEach { label ->
-                    Surface(
-                        Modifier.weight(1f),
-                        shape = RoundedCornerShape(6.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                    ) {
-                        Column(Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text(label, style = MaterialTheme.typography.labelSmall)
-                            Text("—", style = MaterialTheme.typography.bodySmall)
-                        }
-                    }
-                }
+                DriveHudTile("Speed", speedLabel, Modifier.weight(1f))
+                DriveHudTile("Heading", headingLabel, Modifier.weight(1f))
+                DriveHudTile("Distance", distanceLabel, Modifier.weight(1f))
+                DriveHudTile("Battery", batteryLabel, Modifier.weight(1f))
             }
+        }
+    }
+}
+
+@Composable
+private fun DriveHudTile(title: String, value: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.85f),
+    ) {
+        Column(Modifier.padding(8.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
         }
     }
 }
@@ -407,11 +457,17 @@ private fun DriveMjpegWebView(html: String) {
 private fun ControlCard(
     modifier: Modifier = Modifier,
     bridgeOn: Boolean,
+    autonomyOn: Boolean,
+    autonomyApi: Boolean,
+    onAutonomyChange: (Boolean) -> Unit,
+    invertLeft: Boolean,
+    invertRight: Boolean,
+    onInvertLeft: (Boolean) -> Unit,
+    onInvertRight: (Boolean) -> Unit,
     brakeOn: Boolean,
     reverseOn: Boolean,
     onBrakeChange: (Boolean) -> Unit,
     onReverseChange: (Boolean) -> Unit,
-    defaultMs: Int,
     speedMin: Int,
     speedMax: Int,
     speedPct: Float,
@@ -424,51 +480,30 @@ private fun ControlCard(
     val steps = (speedMax - speedMin).coerceAtLeast(0)
     val padMovesEnabled = bridgeOn && !brakeOn
     Card(modifier, colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Manual control", fontWeight = FontWeight.Bold)
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Row(
                 Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Brake", style = MaterialTheme.typography.bodyMedium)
+                Text("Manual", fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
-                        if (brakeOn) "Motion blocked (release to drive)" else "Released",
+                        if (autonomyApi) {
+                            if (autonomyOn) "Auto on" else "Auto off"
+                        } else {
+                            "Auto (bridge off)"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                SirenaSwitch(
-                    checked = brakeOn,
-                    onCheckedChange = onBrakeChange,
-                    enabled = bridgeOn,
-                )
-            }
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text("Reverse", style = MaterialTheme.typography.bodyMedium)
-                    Text(
-                        "Swap forward / back on D‑pad",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    SirenaSwitch(
+                        checked = autonomyOn,
+                        onCheckedChange = onAutonomyChange,
+                        enabled = autonomyApi,
                     )
                 }
-                SirenaSwitch(checked = reverseOn, onCheckedChange = onReverseChange, enabled = bridgeOn)
             }
-            Text("Speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Slider(
-                value = speedPct.coerceIn(smin, smax),
-                onValueChange = { onSpeedChange(it.coerceIn(smin, smax)) },
-                valueRange = smin..smax,
-                steps = steps.coerceAtLeast(0),
-                enabled = bridgeOn,
-            )
-            Text("${speedPct.toInt()}%", style = MaterialTheme.typography.labelSmall)
 
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
                 DrivePadButton("Forward", padMovesEnabled) { onDrive("forward") }
@@ -480,19 +515,87 @@ private fun ControlCard(
                 DrivePadButton("Back", padMovesEnabled) { onDrive("back") }
             }
 
-            OutlinedButton(
-                onClick = onEstop,
-                enabled = bridgeOn,
-                modifier =
-                    Modifier
-                        .fillMaxWidth()
-                        .heightIn(min = 48.dp),
-                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            ) {
-                Icon(Icons.Default.Stop, null, Modifier.size(20.dp))
-                Spacer(Modifier.size(8.dp))
-                Text("E-stop")
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Speed", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(
+                    modifier = Modifier.weight(1f),
+                    value = speedPct.coerceIn(smin, smax),
+                    onValueChange = { onSpeedChange(it.coerceIn(smin, smax)) },
+                    valueRange = smin..smax,
+                    steps = steps.coerceAtLeast(0),
+                    enabled = bridgeOn,
+                )
+                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.errorContainer) {
+                    Text(
+                        "${speedPct.toInt()}%",
+                        Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
             }
+
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Wheels",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("Flip L", style = MaterialTheme.typography.labelSmall)
+                    SirenaSwitch(
+                        checked = invertLeft,
+                        onCheckedChange = onInvertLeft,
+                        enabled = bridgeOn,
+                    )
+                    Text("Flip R", style = MaterialTheme.typography.labelSmall)
+                    SirenaSwitch(
+                        checked = invertRight,
+                        onCheckedChange = onInvertRight,
+                        enabled = bridgeOn,
+                    )
+                }
+            }
+
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedButton(
+                    onClick = { onBrakeChange(!brakeOn) },
+                    enabled = bridgeOn,
+                    modifier = Modifier.height(40.dp),
+                ) {
+                    Text(if (brakeOn) "Brake: ON" else "Brake: OFF")
+                }
+                OutlinedButton(
+                    onClick = { onReverseChange(!reverseOn) },
+                    enabled = bridgeOn,
+                    modifier = Modifier.height(40.dp),
+                ) {
+                    Text(if (reverseOn) "Reverse: ON" else "Reverse: OFF")
+                }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = onEstop,
+                    enabled = bridgeOn,
+                    modifier = Modifier.height(40.dp),
+                    colors =
+                        ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError,
+                        ),
+                ) {
+                    Text("\u26A0 E‑STOP")
+                }
+            }
+
+            Text(
+                "Tip: tap‑hold D‑pad pulses; desktop uses WASD · Space · Esc.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

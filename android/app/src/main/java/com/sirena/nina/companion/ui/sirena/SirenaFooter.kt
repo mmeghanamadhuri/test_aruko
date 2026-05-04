@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -16,20 +17,30 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.ui.theme.Charcoal800
 
+/** Mirrors [sirena_ui.widgets.status_bar.StatusBar] dot colours — ok / warn / bad. */
+private val DotOk = Color(0xFF2ECC71)
+private val DotWarn = Color(0xFFF5A623)
+private val DotBad = Color(0xFFE74C3C)
+
 /**
- * Mirrors [sirena_ui.widgets.status_bar.StatusBar] —
- * charcoal strip with four signal dots (Bus / Wi‑Fi / Battery / Voice) + optional right label.
+ * Charcoal strip with **Bus / Wi‑Fi / Battery / Voice** — dot + label per subsystem,
+ * plus optional right caption (mirrors desktop footer layout).
  */
 @Composable
 fun SirenaStatusFooter(
     modifier: Modifier = Modifier,
-    busConnected: Boolean,
-    wifiOnline: Boolean,
+    busOk: Boolean,
+    busWarn: Boolean = false,
+    wifiOk: Boolean,
+    wifiWarn: Boolean = false,
     batteryOk: Boolean,
-    voiceReady: Boolean,
+    batteryWarn: Boolean = false,
+    voiceOk: Boolean,
+    voiceWarn: Boolean = false,
     rightLabel: String,
 ) {
     Row(
@@ -43,30 +54,52 @@ fun SirenaStatusFooter(
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            StatusDot(on = busConnected, activeColor = MaterialTheme.colorScheme.primary)
-            StatusDot(on = wifiOnline, activeColor = MaterialTheme.colorScheme.secondary)
-            StatusDot(on = batteryOk, activeColor = MaterialTheme.colorScheme.tertiary)
-            StatusDot(on = voiceReady, activeColor = MaterialTheme.colorScheme.error)
+            StatusDotWithLabel("Bus", busOk, busWarn)
+            StatusDotWithLabel("Wi‑Fi", wifiOk, wifiWarn)
+            StatusDotWithLabel("Battery", batteryOk, batteryWarn)
+            StatusDotWithLabel("Voice", voiceOk, voiceWarn)
         }
         Text(
             text = rightLabel,
             style = MaterialTheme.typography.labelSmall,
-            color = Color.White.copy(alpha = 0.85f),
+            color = Color(0xFFC7C7CC),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.widthIn(max = 180.dp),
         )
     }
 }
 
 @Composable
-private fun StatusDot(on: Boolean, activeColor: Color) {
-    val base = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f)
-    Box(
-        modifier =
-            Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(if (on) activeColor else base),
-    )
+private fun StatusDotWithLabel(
+    title: String,
+    ok: Boolean,
+    warn: Boolean,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val dot =
+            when {
+                warn -> DotWarn
+                ok -> DotOk
+                else -> DotBad
+            }
+        Box(
+            modifier =
+                Modifier
+                    .size(10.dp)
+                    .clip(CircleShape)
+                    .background(dot),
+        )
+        Text(
+            title,
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.White,
+        )
+    }
 }

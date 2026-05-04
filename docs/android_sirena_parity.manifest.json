@@ -40,16 +40,16 @@
       "desktop_doc_section": "Home — dashboard",
       "android": {
         "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaHomeScreen.kt",
-        "constants": ["SIRENA_QUICK_ACTIONS", "SIRENA_HOME_STATUS_OVERVIEW"]
+        "constants": ["SIRENA_QUICK_ACTIONS"]
       },
-      "sync_check": "Tile keys/order match QUICK_ACTIONS; hero CTAs match desktop."
+      "sync_check": "Tile keys/order match QUICK_ACTIONS; system overview = Bus/Camera/Lidar/Battery/Wi‑Fi (health + caps); hero pills live from caps."
     },
     {
       "id": "drive",
       "desktop_doc_section": "Drive — manual BLDC control + autonomy hand-off",
       "android": {
         "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaDriveScreen.kt",
-        "http": ["/v1/robot/drive", "/v1/robot/emergency-stop", "/v1/robot/drive/status", "/v1/autonomy/enabled", "/v1/autonomy/status"]
+        "http": ["/v1/robot/drive", "/v1/robot/drive/invert", "/v1/robot/emergency-stop", "/v1/robot/drive/status", "/v1/autonomy/enabled", "/v1/autonomy/status", "/v1/slam/status", "/v1/robot/health"]
       }
     },
     {
@@ -75,7 +75,7 @@
         "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaMapScreen.kt",
         "http": ["/v1/slam/snapshot", "/v1/slam/occupancy", "/v1/autonomy/enabled", "/v1/autonomy/goal", "/v1/autonomy/status"]
       },
-      "sync_check": "Start mapping / Stop mapping copy; tap-to-go and cancel match api.py"
+      "sync_check": "Start mapping / Stop mapping; Save map -> POST /v1/slam/save; tap-to-go + cancel -> api.py"
     },
     {
       "id": "actions",
@@ -99,8 +99,9 @@
       "desktop_doc_section": "Health — donut + subsystem table",
       "android": {
         "file": "android/app/src/main/java/com/sirena/nina/companion/ui/sirena/SirenaHealthScreen.kt",
+        "http": ["GET /health", "GET /v1/robot/health", "GET /v1/robot/capabilities"],
         "constants": ["SIRENA_HEALTH_SUBSYSTEM_LABELS"],
-        "note": "Companion shows daemon /health + caps; full hardware table remains desktop unless bridged."
+        "note": "Subsystem rows from GET /v1/robot/health (nina.link_daemon.health_aggregator)."
       }
     }
   ],

@@ -1,11 +1,23 @@
 package com.sirena.nina.companion.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.outlined.TwoWheeler
@@ -126,6 +138,27 @@ fun NinaConsoleScreen(
             else -> "No daemon link"
         }
 
+    val timeFmt = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    var clockStr by remember { mutableStateOf(LocalTime.now().format(timeFmt)) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            clockStr = LocalTime.now().format(timeFmt)
+            delay(30_000L)
+        }
+    }
+
+    val jetsonOnline = jetsonLink.isOnline
+    val robotBridge = robotCaps?.optBoolean("robot_bridge_enabled") == true
+    val visionBridge = robotCaps?.optBoolean("vision_bridge_enabled") == true
+    val busOk = jetsonOnline && robotBridge
+    val busWarn = jetsonOnline && robotCaps != null && !robotBridge
+    val wifiOk = ready != null
+    val wifiWarn = ready?.status?.lastError?.isNotBlank() == true
+    val batteryOk = jetsonOnline && robotBridge
+    val batteryWarn = jetsonOnline && !robotBridge
+    val voiceOk = visionBridge
+    val voiceWarn = jetsonOnline && robotCaps != null && !visionBridge
+
     Scaffold(
         modifier =
             modifier
@@ -133,7 +166,12 @@ fun NinaConsoleScreen(
                 .background(MaterialTheme.colorScheme.surface),
         topBar = {
             TopAppBar(
-                title = { Text(titles[section] ?: "Nina") },
+                title = {
+                    Text(
+                        titles[section] ?: "Nina",
+                        modifier = Modifier.padding(end = 8.dp),
+                    )
+                },
                 navigationIcon = {
                     IconButton(
                         onClick = {
@@ -144,20 +182,57 @@ fun NinaConsoleScreen(
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
+                actions = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.padding(end = 8.dp),
+                    ) {
+                        Text(
+                            clockStr,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Text(
+                            "\u2706",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            "\u25AE",
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Box(
+                            modifier =
+                                Modifier
+                                    .size(10.dp)
+                                    .clip(CircleShape)
+                                    .background(
+                                        if (jetsonOnline) Color(0xFF2ECC71) else Color(0xFFE74C3C),
+                                    ),
+                        )
+                    }
+                },
                 colors =
                     TopAppBarDefaults.topAppBarColors(
                         containerColor = MaterialTheme.colorScheme.primary,
                         titleContentColor = MaterialTheme.colorScheme.onPrimary,
                         navigationIconContentColor = MaterialTheme.colorScheme.onPrimary,
+                        actionIconContentColor = MaterialTheme.colorScheme.onPrimary,
                     ),
             )
         },
         bottomBar = {
             SirenaStatusFooter(
-                busConnected = jetsonLink.isOnline,
-                wifiOnline = ready != null,
-                batteryOk = false,
-                voiceReady = robotCaps?.optBoolean("vision_bridge_enabled") == true,
+                busOk = busOk,
+                busWarn = busWarn,
+                wifiOk = wifiOk,
+                wifiWarn = wifiWarn,
+                batteryOk = batteryOk,
+                batteryWarn = batteryWarn,
+                voiceOk = voiceOk,
+                voiceWarn = voiceWarn,
                 rightLabel = footerRight,
             )
         },
@@ -167,21 +242,33 @@ fun NinaConsoleScreen(
                 .padding(padding)
                 .fillMaxSize(),
         ) {
-            NavigationRail(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant,
+            Column(
+                modifier = Modifier.fillMaxHeight(),
+                horizontalAlignment = Alignment.CenterHorizontally,
             ) {
-                SIRENA_NAV_ITEMS.forEach { item ->
-                    val icon = navIcon(item.key)
-                    NavigationRailItem(
-                        selected = section == item.key,
-                        onClick = {
-                            NinaLog.tap("NinaConsole", "rail", item.key)
-                            section = item.key
-                        },
-                        icon = { Icon(icon, item.label) },
-                        label = { Text(item.label, style = MaterialTheme.typography.labelSmall) },
-                    )
+                NavigationRail(
+                    modifier = Modifier.weight(1f),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    SIRENA_NAV_ITEMS.forEach { item ->
+                        val icon = navIcon(item.key)
+                        NavigationRailItem(
+                            selected = section == item.key,
+                            onClick = {
+                                NinaLog.tap("NinaConsole", "rail", item.key)
+                                section = item.key
+                            },
+                            icon = { Icon(icon, item.label) },
+                            label = { Text(item.label, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
                 }
+                Text(
+                    "v0.4",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
             }
 
             Box(

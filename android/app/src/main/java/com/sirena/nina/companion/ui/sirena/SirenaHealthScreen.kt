@@ -25,11 +25,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.StatusUi
+import kotlinx.coroutines.delay
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Live summary from the Nina Link daemon (`GET /health`) plus capability flags.
- * Full robot hardware diagnostics remain in Sirena UI on the Jetson.
+ * Nina Link liveness (`GET /health`), bridge flags, and aggregated subsystem rows
+ * (`GET /v1/robot/health`) matching desktop health collector intent via nina-link bridges.
  */
 @Composable
 fun SirenaHealthScreen(
@@ -41,10 +43,12 @@ fun SirenaHealthScreen(
 ) {
     var health by remember { mutableStateOf<JSONObject?>(null) }
     var healthErr by remember { mutableStateOf<String?>(null) }
+    var robotHealth by remember { mutableStateOf<JSONObject?>(null) }
 
     LaunchedEffect(daemonUrl) {
         if (daemonUrl.isNullOrBlank()) {
             health = null
+            robotHealth = null
             healthErr = "No daemon URL — complete Setup first."
             return@LaunchedEffect
         }
@@ -57,6 +61,14 @@ fun SirenaHealthScreen(
             }
         if (health == null) {
             healthErr = "Could not reach GET /health on the Jetson."
+        }
+    }
+
+    LaunchedEffect(daemonUrl) {
+        if (daemonUrl.isNullOrBlank()) return@LaunchedEffect
+        while (true) {
+            robotHealth = vm.fetchRobotHealth()
+            delay(3000)
         }
     }
 
@@ -74,8 +86,8 @@ fun SirenaHealthScreen(
         )
 
         Text(
-            "Companion view: Nina Link process and enabled HTTP bridges. " +
-                "Detailed hardware checks (Dynamixel, lidar, RealSense) run in Sirena UI on the robot.",
+            "Daemon process + bridge flags + live subsystem rows from the Jetson (same stacks as " +
+                "the desktop app when bridges are enabled).",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -109,6 +121,19 @@ fun SirenaHealthScreen(
             }
         }
 
+        Text("Robot subsystems", fontWeight = FontWeight.SemiBold)
+        robotHealth?.optJSONArray("rows")?.let { arr ->
+            SubsystemRows(arr)
+        } ?: Text(
+            if (daemonUrl.isNullOrBlank()) {
+                "—"
+            } else {
+                "Loading GET /v1/robot/health…"
+            },
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
         statusUi?.lastError?.takeIf { it.isNotBlank() }?.let { err ->
             Card(
                 Modifier.fillMaxWidth(),
@@ -129,6 +154,9 @@ fun SirenaHealthScreen(
             BridgeRow("Action playback", c.optBoolean("action_bridge_enabled"))
             BridgeRow("Record session", c.optBoolean("record_bridge_enabled"))
             BridgeRow("Vision / camera", c.optBoolean("vision_bridge_enabled"))
+            BridgeRow("SLAM / lidar", c.optBoolean("slam_bridge_enabled"))
+            BridgeRow("Depth (RealSense)", c.optBoolean("depth_bridge_enabled"))
+            BridgeRow("Autonomy", c.optBoolean("autonomy_bridge_enabled"))
             BridgeRow("Static media (audio files)", c.optBoolean("actions_static_enabled"))
             val manifest = c.optString("manifest_path").takeIf { it.isNotBlank() }
             if (manifest != null) {
@@ -157,6 +185,58 @@ private fun HealthStatusChip(ok: Boolean, label: String) {
             Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             style = MaterialTheme.typography.labelSmall,
         )
+    }
+}
+
+@Composable
+private fun SubsystemRows(rows: JSONArray) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        for (i in 0 until rows.length()) {
+            val o = rows.optJSONObject(i) ?: continue
+            val label = o.optString("label", "—")
+            val detail = o.optString("detail", "")
+            val st = o.optString("status", "pending")
+            SubsystemHealthCard(label = label, detail = detail, status = st)
+        }
+    }
+}
+
+@Composable
+private fun SubsystemHealthCard(label: String, detail: String, status: String) {
+    val chip =
+        when (status) {
+            "ok" -> "OK" to MaterialTheme.colorScheme.primaryContainer
+            "warn" -> "WARN" to MaterialTheme.colorScheme.tertiaryContainer
+            "error" -> "ERR" to MaterialTheme.colorScheme.errorContainer
+            else -> "—" to MaterialTheme.colorScheme.surfaceVariant
+        }
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(label, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+                Surface(color = chip.second, shape = MaterialTheme.shapes.small) {
+                    Text(
+                        chip.first,
+                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+            if (detail.isNotBlank()) {
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
 }
 

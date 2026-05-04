@@ -24,6 +24,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,6 +38,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.R
 import com.sirena.nina.companion.StatusUi
+import com.sirena.nina.companion.CompanionViewModel
+import kotlinx.coroutines.delay
 import org.json.JSONObject
 
 /**
@@ -41,12 +48,25 @@ import org.json.JSONObject
  */
 @Composable
 fun SirenaHomeScreen(
+    vm: CompanionViewModel,
     caps: JSONObject?,
     statusUi: StatusUi?,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val stripItems = buildHomeStatusStrip(statusUi, caps)
+    var robotHealth by remember { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            robotHealth =
+                try {
+                    vm.fetchRobotHealth()
+                } catch (_: Exception) {
+                    null
+                }
+            delay(5000)
+        }
+    }
+    val stripItems = buildDesktopSystemOverview(statusUi, caps, robotHealth)
 
     Column(
         modifier
@@ -85,8 +105,8 @@ fun SirenaHomeScreen(
                     HeroTitleSubtitle()
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         SirenaPill("Idle")
-                        SirenaPill("Torque ON", emphasis = true)
-                        SirenaPill("Voice ready")
+                        SirenaPill(heroTorqueLabel(caps), emphasis = true)
+                        SirenaPill(heroVoiceLabel(caps))
                     }
                 }
                 Column(
@@ -124,14 +144,39 @@ fun SirenaHomeScreen(
             }
         }
 
-        Text(
-            "System overview",
-            style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.SemiBold,
-        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "System overview",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Text(
+                "Tap Health for details",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         StatusOverviewStrip(items = stripItems)
     }
 }
+
+private fun heroTorqueLabel(caps: JSONObject?): String =
+    when (caps?.optBoolean("robot_bridge_enabled")) {
+        true -> "Torque ON"
+        false -> "Drive bridge off"
+        null -> "Torque …"
+    }
+
+private fun heroVoiceLabel(caps: JSONObject?): String =
+    when (caps?.optBoolean("vision_bridge_enabled")) {
+        true -> "Voice ready"
+        false -> "Voice off"
+        null -> "Voice …"
+    }
 
 @Composable
 private fun HeroTitleSubtitle() {
@@ -172,7 +217,23 @@ private fun HeroButtons(onNavigate: (String) -> Unit) {
     }
 }
 
-private fun buildHomeStatusStrip(status: StatusUi?, caps: JSONObject?): List<StatusStripItem> {
+private fun healthRowDetail(health: JSONObject?, key: String): String? {
+    val rows = health?.optJSONArray("rows") ?: return null
+    for (i in 0 until rows.length()) {
+        val o = rows.optJSONObject(i) ?: continue
+        if (o.optString("key", "") == key) {
+            return o.optString("detail").takeIf { it.isNotBlank() }
+        }
+    }
+    return null
+}
+
+/** Matches desktop Home status strip: Bus, Camera, Lidar, Battery, Wi‑Fi. */
+private fun buildDesktopSystemOverview(
+    status: StatusUi?,
+    caps: JSONObject?,
+    robotHealth: JSONObject?,
+): List<StatusStripItem> {
     val ip = status?.ipv4?.takeIf { it.isNotBlank() } ?: "—"
     val role = status?.wifiRole?.trim()?.takeIf { r -> r.isNotEmpty() && !r.equals("null", ignoreCase = true) } ?: ""
     val apLabel = status?.apSsid?.trim()?.takeIf { it.isNotEmpty() && !it.equals("null", ignoreCase = true) }
@@ -180,30 +241,44 @@ private fun buildHomeStatusStrip(status: StatusUi?, caps: JSONObject?): List<Sta
         when {
             !status?.activeStaSsid.isNullOrBlank() -> status!!.activeStaSsid!!
             role == "ap" -> "AP (${apLabel ?: "Nina-Setup"})"
-            role == "sta" && status?.activeStaSsid.isNullOrBlank() -> "STA (no SSID reported)"
-            role == "unknown" -> if (ip != "—") "Mode unknown (linked)" else "—"
+            role == "sta" && status?.activeStaSsid.isNullOrBlank() -> "STA (no SSID)"
+            role == "unknown" -> if (ip != "—") "Linked" else "—"
             role.isNotEmpty() -> role
-            else -> "—"
+            else -> "Online"
         }
-    val driveBr =
+
+    val bus =
         when (caps?.optBoolean("robot_bridge_enabled")) {
-            true -> "On"
+            true -> "Ready"
             false -> "Off"
-            null -> "—"
+            null -> "…"
         }
-    val actBr =
-        when (caps?.optBoolean("action_bridge_enabled")) {
-            true -> "On"
-            false -> "Off"
-            null -> "—"
-        }
-    val seen = if (status?.clientSeen == true) "Yes" else "—"
+
+    val camera =
+        healthRowDetail(robotHealth, "camera")
+            ?: when (caps?.optBoolean("vision_bridge_enabled")) {
+                true -> "Bridge on"
+                false -> "Off"
+                null -> "…"
+            }
+
+    val lidar =
+        healthRowDetail(robotHealth, "lidar")
+            ?: healthRowDetail(robotHealth, "slam")
+                ?: when (caps?.optBoolean("slam_bridge_enabled")) {
+                    true -> "Bridge on"
+                    false -> "Off"
+                    null -> "…"
+                }
+
+    val battery = "n/a"
+
     return listOf(
-        StatusStripItem("Jetson", ip),
-        StatusStripItem("Wi‑Fi", wifi),
-        StatusStripItem("Drive", driveBr),
-        StatusStripItem("Play", actBr),
-        StatusStripItem("Seen", seen),
+        StatusStripItem("Bus", bus),
+        StatusStripItem("Camera", camera.take(24)),
+        StatusStripItem("Lidar", lidar.take(24)),
+        StatusStripItem("Battery", battery),
+        StatusStripItem("Wi‑Fi", wifi.take(24)),
     )
 }
 

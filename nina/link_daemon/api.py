@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import secrets
+from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
 from fastapi import FastAPI, Header, HTTPException, Query, Request, status
@@ -16,6 +17,7 @@ from nina.link_daemon import actions_bridge
 from nina.link_daemon import actions_manifest
 from nina.link_daemon import autonomy_bridge
 from nina.link_daemon import depth_bridge
+from nina.link_daemon import health_aggregator
 from nina.link_daemon import slam_bridge
 from nina.link_daemon.config import LinkDaemonConfig
 from nina.link_daemon import manifest_audio
@@ -109,6 +111,13 @@ class DriveBody(BaseModel):
     speed_percent: Optional[int] = Field(default=None, ge=5, le=100)
 
 
+class DriveInvertBody(BaseModel):
+    """Flip left/right wheel polarity at runtime (matches Qt Drive Flip L/R)."""
+
+    left: Optional[bool] = None
+    right: Optional[bool] = None
+
+
 class PlayActionBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
 
@@ -117,6 +126,12 @@ class AutonomyEnabledBody(BaseModel):
     """Toggle autonomous wander (same stack as Sirena UI when bridges are on)."""
 
     enabled: bool = True
+
+
+class SlamSaveBody(BaseModel):
+    """Save current SLAM occupancy grid as a PGM under ``nina/data/maps/``."""
+
+    filename: str = Field(default="nina_map.pgm", max_length=120)
 
 
 class AutonomyGoalBody(BaseModel):
@@ -410,6 +425,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "drive_speed_min_percent": 15,
             "drive_speed_max_percent": 25,
             "drive_status_endpoint": "/v1/robot/drive/status",
+            "drive_invert_endpoint": "/v1/robot/drive/invert",
             "actions_endpoint": "/v1/actions",
             "action_play_endpoint": "/v1/actions/play",
             "action_bridge_enabled": cfg.enable_action_bridge,
@@ -432,7 +448,9 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "slam_status_endpoint": "/v1/slam/status",
             "slam_snapshot_endpoint": "/v1/slam/snapshot",
             "slam_occupancy_endpoint": "/v1/slam/occupancy",
+            "slam_save_endpoint": "/v1/slam/save",
             "slam_bridge_enabled": cfg.enable_slam_bridge,
+            "robot_health_endpoint": "/v1/robot/health",
             "depth_status_endpoint": "/v1/depth/status",
             "depth_stream_endpoint": "/v1/depth/stream",
             "depth_bridge_enabled": cfg.enable_depth_bridge,
@@ -450,6 +468,11 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 else "Enable NINA_LINK_ENABLE_ROBOT_BRIDGE on the Jetson for HTTP drive."
             ),
         }
+
+    @app.get("/v1/robot/health")
+    def robot_health_http() -> Dict[str, Any]:
+        """Subsystem rows aggregated from bridges (companion Health screen)."""
+        return health_aggregator.build_robot_health(cfg, coordinator)
 
     @app.post("/v1/robot/drive")
     def robot_drive(
@@ -506,10 +529,31 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 "bridge_enabled": False,
                 "connected": False,
                 "message": "Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1.",
+                "invert_left": False,
+                "invert_right": False,
             }
         st = robot_bridge.navigation_hw_status()
         st["bridge_enabled"] = True
         return st
+
+    @app.post("/v1/robot/drive/invert")
+    def robot_drive_invert(
+        body: DriveInvertBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if body.left is None and body.right is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="Set at least one of left, right",
+            )
+        if not cfg.enable_robot_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Robot bridge disabled — set NINA_LINK_ENABLE_ROBOT_BRIDGE=1.",
+            )
+        return robot_bridge.set_wheel_invert(left=body.left, right=body.right)
 
     @app.post("/v1/system/poweroff")
     def system_poweroff_http(
@@ -942,6 +986,32 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 "X-Slam-Scale-Mm-Per-Px": str(snap.scale_mm_per_px),
             },
         )
+
+    @app.post("/v1/slam/save")
+    def slam_save_http(
+        body: SlamSaveBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        auth_mutate(authorization, request)
+        if not cfg.enable_slam_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="SLAM bridge disabled",
+            )
+        fn = health_aggregator.safe_map_filename(body.filename)
+        repo_root = Path(__file__).resolve().parents[2]
+        out_dir = repo_root / "nina" / "data" / "maps"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_path = out_dir / fn
+        slam_bridge.ensure_bridge_started()
+        br = slam_bridge.get_bridge()
+        if br is None or not br.save_map(out_path):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                detail="No SLAM map to save yet, or write failed",
+            )
+        return {"ok": True, "path": str(out_path), "filename": fn}
 
     @app.get("/v1/depth/status")
     def depth_status_http() -> Dict[str, Any]:
