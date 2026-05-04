@@ -141,10 +141,26 @@ fi
 #      and `networkctl reload`.
 
 probe_existing_route() {
-    if ip route get "${LIDAR_IP}" 2>/dev/null | grep -q "src "; then
-        return 0
+    # `ip route get LIDAR_IP` is too permissive on its own: on a
+    # fresh Jetson with Wi-Fi up, the kernel returns the default
+    # route (via wlan0 -> default gateway) and we'd falsely
+    # conclude the lidar is reachable. We need the chosen source
+    # address to be on the lidar's own /24, which only happens if
+    # SOME interface is actually configured into 192.168.11.0/24.
+    local src prefix
+    src="$(ip route get "${LIDAR_IP}" 2>/dev/null \
+            | sed -n 's/.*src \([0-9.]*\).*/\1/p')"
+    if [[ -z "${src}" ]]; then
+        return 1
     fi
-    return 1
+    prefix="${LIDAR_IP%.*}."
+    if [[ "${src}" != ${prefix}* ]]; then
+        log "found a route to ${LIDAR_IP} via src=${src} - that's not"
+        log "  on ${prefix}0/${HOST_NETMASK}, so it's the default-gateway"
+        log "  fallback (Wi-Fi etc). Reconfiguring the wired interface."
+        return 1
+    fi
+    return 0
 }
 
 configure_via_nmcli() {
@@ -207,15 +223,34 @@ fi
 
 log "ping -c 3 ${LIDAR_IP}"
 if ! ping -c 3 -W 1 "${LIDAR_IP}" ; then
+    # Surface the actual routing decision the kernel just made so
+    # the operator doesn't have to guess which interface the ping
+    # went out on.
+    log "kernel routing decision for ${LIDAR_IP}:"
+    ip route get "${LIDAR_IP}" 2>&1 | sed 's/^/    /' || true
+    log "configured interfaces:"
+    ip -4 -o addr show | awk '{print "    "$2"\t"$4}' || true
     die "no response from ${LIDAR_IP}.
 Things to check before re-running:
   * The 12 V power adapter is connected to the lidar's barrel jack
     (USB will NOT power the S2E; the optics motor needs ~1 A @ 12 V).
   * The Ethernet cable is plugged in. The link LED on the lidar's
-    Ethernet adapter board should be solid green.
+    Ethernet adapter board should be solid green. Confirm with
+    \`ethtool <iface>\` - 'Link detected: yes' is the bare minimum.
   * The Jetson's Ethernet interface really is in 192.168.11.0/24.
-    Run \`ip -4 addr show\` and look for a wired iface with
-    \`inet ${HOST_IP}/${HOST_NETMASK}\`."
+    The 'configured interfaces' list above should contain a wired
+    iface with \`${HOST_IP}/${HOST_NETMASK}\`. If it doesn't, the
+    static-IP step earlier in this script silently no-op'd - usually
+    because the wired iface wasn't 'active' to NetworkManager.
+    Force it with:
+        nmcli device status                      # find the wired iface
+        sudo nmcli con add type ethernet ifname <iface> \\
+            con-name nina-lidar \\
+            ipv4.addresses ${HOST_IP}/${HOST_NETMASK} \\
+            ipv4.method manual ipv4.never-default yes \\
+            ipv6.method ignore
+        sudo nmcli con up nina-lidar
+    Then re-run this script."
 fi
 
 # --------------------------------------------------------------------
