@@ -420,6 +420,40 @@ def test_speed_is_clamped_to_0_100(fake_serial: _FakeSerialRegistry) -> None:
     assert _writes_as_strings(port)[-1] == "SET F 100 B 0"
 
 
+def test_set_wheels_start_kick_from_rest_issues_boost_then_target(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """Breakaway kick: two SET lines when configured and both sides were at rest."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            start_kick_percent=40,
+            start_kick_sec=0.01,
+        )
+    )
+    nav.initialize()
+    fake_serial.queue("OK", "OK")
+    nav.set_wheels(
+        left_dir="forward", left_speed=15, right_dir="forward", right_speed=15,
+    )
+    port = _last_open(fake_serial)
+    lines = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert lines == ["SET F 40 F 40", "SET F 15 F 15"]
+
+    fake_serial.queue("OK")
+    nav.set_wheels(
+        left_dir="forward", left_speed=15, right_dir="forward", right_speed=15,
+    )
+    lines2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert lines2[-1] == "SET F 15 F 15"
+    assert lines2.count("SET F 15 F 15") >= 2
+    # Second call from motion: no boost SET before the final line.
+    assert "SET F 40 F 40" not in lines2[-2:]
+
+
 def test_invalid_direction_raises(fake_serial: _FakeSerialRegistry) -> None:
     fake_serial.queue("PONG")
     nav = RemoteNavigationManager(

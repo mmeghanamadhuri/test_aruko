@@ -31,6 +31,12 @@ class NavigationSettings:
     `default_speed_percent`, `turn_duration_sec`, `invert_left_dir`,
     and `invert_right_dir` apply to both modes - they live in the
     Jetson side regardless of who actually toggles GPIOs.
+
+    `start_kick_percent` / `start_kick_sec` apply when both wheels were
+    at PWM 0 and a new command requests motion: each non-zero side
+    briefly runs at at least the kick duty to overcome static friction,
+    then drops to the commanded speed. Set either to 0 to disable
+    (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC).
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -38,6 +44,8 @@ class NavigationSettings:
     turn_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
+    start_kick_percent: int = 35
+    start_kick_sec: float = 0.06
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -175,6 +183,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
+        start_kick_percent=int(os.environ.get("NINA_NAV_START_KICK_PCT", "35")),
+        start_kick_sec=float(os.environ.get("NINA_NAV_START_KICK_SEC", "0.06")),
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
         # 'remote' -> commands are sent over serial to a Raspberry Pi
         #             running pi_motor_bridge/motor_bridge.py.

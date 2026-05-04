@@ -176,6 +176,11 @@ class NavigationConfig:
     settle_delay_sec: float = 0.1          # matches RPi `time.sleep(0.1)` between stop and re-drive
     invert_left_dir: bool = False          # flip if left wheel spins opposite of expected
     invert_right_dir: bool = False         # flip if right wheel spins opposite of expected
+    # When both wheels were at PWM 0, boost each moving side to at least this duty for
+    # `start_kick_sec` to overcome static friction / JYQD cogging, then apply the command.
+    # Set either to 0 to disable (see NINA_NAV_START_KICK_*).
+    start_kick_percent: int = 35
+    start_kick_sec: float = 0.06
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -245,6 +250,9 @@ class NavigationManager:
         # without restarting - effective on the next set_wheels call.
         self._invert_left_override: Optional[bool] = None
         self._invert_right_override: Optional[bool] = None
+        # Last PWM duties sent (0..100) for breakaway-kick heuristics.
+        self._last_l_pwm = 0
+        self._last_r_pwm = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -445,6 +453,9 @@ class NavigationManager:
             self._set_status_led(red=True, green=True, blue=True)
         except Exception as exc:
             log.exception("emergency_stop failed: %s", exc)
+        finally:
+            self._last_l_pwm = 0
+            self._last_r_pwm = 0
 
     def engage_brake(self) -> None:
         """Coast-stop both wheels.
@@ -541,8 +552,34 @@ class NavigationManager:
             raise ValueError(f"Invalid right_dir '{right_dir}'")
         self._prepare_side_motion(self.SIDE_LEFT, left_dir)
         self._prepare_side_motion(self.SIDE_RIGHT, right_dir)
-        self._apply_side_pwm(self.SIDE_LEFT, left_speed)
-        self._apply_side_pwm(self.SIDE_RIGHT, right_speed)
+
+        ls = max(0, min(100, int(left_speed)))
+        rs = max(0, min(100, int(right_speed)))
+        was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
+        moving_now = ls > 0 or rs > 0
+        kp = max(0, min(100, int(self.config.start_kick_percent)))
+        ks = max(0.0, float(self.config.start_kick_sec))
+
+        def _kick_duty(cmd: int) -> int:
+            if cmd <= 0 or kp <= 0 or ks <= 0:
+                return cmd
+            return max(cmd, kp)
+
+        kls = _kick_duty(ls)
+        krs = _kick_duty(rs)
+        need_kick = (
+            was_rest
+            and moving_now
+            and (kls > ls or krs > rs)
+        )
+        if need_kick:
+            self._apply_side_pwm(self.SIDE_LEFT, kls)
+            self._apply_side_pwm(self.SIDE_RIGHT, krs)
+            time.sleep(ks)
+        self._apply_side_pwm(self.SIDE_LEFT, ls)
+        self._apply_side_pwm(self.SIDE_RIGHT, rs)
+        self._last_l_pwm = ls
+        self._last_r_pwm = rs
 
     def _command_both(self, direction: str, speed: int) -> None:
         """Mirrors the RPi forward_forever / backward_forever sequence:

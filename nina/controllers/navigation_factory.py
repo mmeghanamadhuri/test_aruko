@@ -17,6 +17,8 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_REMOTE_PORT       # default /dev/ttyUSB0
     NINA_NAV_REMOTE_BAUD       # default 115200
     NINA_NAV_REMOTE_TIMEOUT_SEC# default 0.4
+    NINA_NAV_START_KICK_PCT    # default 35; 0 = no breakaway pulse
+    NINA_NAV_START_KICK_SEC    # default 0.06; 0 = no breakaway pulse
 """
 
 from __future__ import annotations
@@ -57,6 +59,8 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
             turn_duration_sec=settings.turn_duration_sec,
             invert_left_dir=settings.invert_left_dir,
             invert_right_dir=settings.invert_right_dir,
+            start_kick_percent=settings.start_kick_percent,
+            start_kick_sec=settings.start_kick_sec,
         )
         return RemoteNavigationManager(cfg)
 
@@ -68,5 +72,7 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
         turn_duration_sec=settings.turn_duration_sec,
         invert_left_dir=settings.invert_left_dir,
         invert_right_dir=settings.invert_right_dir,
+        start_kick_percent=settings.start_kick_percent,
+        start_kick_sec=settings.start_kick_sec,
     )
     return NavigationManager(cfg_local)

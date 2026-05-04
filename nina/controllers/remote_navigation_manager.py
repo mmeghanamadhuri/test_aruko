@@ -95,6 +95,10 @@ class RemoteNavigationConfig:
     turn_duration_sec: float = 2.3
     invert_left_dir: bool = False
     invert_right_dir: bool = False
+    # 0 / 0.0 = off. `build_navigation_manager` passes env-driven values
+    # from NavigationSettings. Unit tests keep these zero: one SET + OK.
+    start_kick_percent: int = 0
+    start_kick_sec: float = 0.0
 
 
 class RemoteNavigationManager:
@@ -125,6 +129,8 @@ class RemoteNavigationManager:
         # change is effective on the next SET command.
         self._invert_left_override: Optional[bool] = None
         self._invert_right_override: Optional[bool] = None
+        self._last_l_pwm = 0
+        self._last_r_pwm = 0
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -284,17 +290,40 @@ class RemoteNavigationManager:
         r_letter = self._dir_letter(self.SIDE_RIGHT, right_dir)
         ls = max(0, min(100, int(left_speed)))
         rs = max(0, min(100, int(right_speed)))
+
+        was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
+        moving_now = ls > 0 or rs > 0
+        kp = max(0, min(100, int(self.config.start_kick_percent)))
+        ks = max(0.0, float(self.config.start_kick_sec))
+
+        def _kick_duty(cmd: int) -> int:
+            if cmd <= 0 or kp <= 0 or ks <= 0:
+                return cmd
+            return max(cmd, kp)
+
+        kls = _kick_duty(ls)
+        krs = _kick_duty(rs)
+        need_kick = was_rest and moving_now and (kls > ls or krs > rs)
+        if need_kick:
+            self._send_command(f"SET {l_letter} {kls} {r_letter} {krs}")
+            time.sleep(ks)
         self._send_command(f"SET {l_letter} {ls} {r_letter} {rs}")
+        self._last_l_pwm = ls
+        self._last_r_pwm = rs
 
     def stop(self) -> None:
         """Soft stop: PWM=0 on both wheels, EL stays HIGH (chip armed)."""
         self._send_command("STOP")
+        self._last_l_pwm = 0
+        self._last_r_pwm = 0
         log.info("stop (PWM=0, EL=HIGH)")
 
     def emergency_stop(self) -> None:
         """Hard stop: PWM=0 + EL LOW on both wheels (chip disabled, no torque)."""
         log.warning("EMERGENCY STOP requested")
         self._send_command("ESTOP")
+        self._last_l_pwm = 0
+        self._last_r_pwm = 0
 
     def engage_brake(self) -> None:
         """Coast stop. Same semantics as the local manager (PWM=0 IS the brake)."""
