@@ -579,6 +579,24 @@ class NavigationManager:
         else:
             self._backend.set_duty(pins.pwm_r, duty)
 
+    def _pwm_zero_reassert_gap_sec(self) -> float:
+        g = float(self.config.pwm_reassert_sec)
+        if g <= 0:
+            g = 0.02
+        return max(0.002, min(0.1, g))
+
+    def _apply_both_pwm_zero_twice(self) -> None:
+        """Two PWM=0 writes on both sides after a brief pause.
+
+        JYQDs / PWM backends occasionally leave one channel crawling at
+        very low duty if zero is commanded only once (seen on right
+        after long opposite-direction preload pulses)."""
+        self._apply_side_pwm(self.SIDE_LEFT, 0)
+        self._apply_side_pwm(self.SIDE_RIGHT, 0)
+        time.sleep(self._pwm_zero_reassert_gap_sec())
+        self._apply_side_pwm(self.SIDE_LEFT, 0)
+        self._apply_side_pwm(self.SIDE_RIGHT, 0)
+
     def _start_both_wheels(
         self,
         *,
@@ -643,8 +661,7 @@ class NavigationManager:
             self._apply_side_pwm(self.SIDE_LEFT, nd)
             self._apply_side_pwm(self.SIDE_RIGHT, nd)
             time.sleep(ns)
-            self._apply_side_pwm(self.SIDE_LEFT, 0)
-            self._apply_side_pwm(self.SIDE_RIGHT, 0)
+            self._apply_both_pwm_zero_twice()
             zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
             if zs > 0:
                 time.sleep(zs)
@@ -677,7 +694,9 @@ class NavigationManager:
             time.sleep(ks)
         self._apply_side_pwm(self.SIDE_LEFT, ls)
         self._apply_side_pwm(self.SIDE_RIGHT, rs)
-        if was_rest and moving_now and (ls > 0 or rs > 0):
+        if ls == 0 and rs == 0:
+            self._apply_both_pwm_zero_twice()
+        elif was_rest and moving_now and (ls > 0 or rs > 0):
             rar = max(0.0, min(0.1, float(cfg.pwm_reassert_sec)))
             if rar > 0:
                 time.sleep(rar)

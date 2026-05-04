@@ -110,6 +110,8 @@ class RemoteNavigationConfig:
     straight_opposite_nudge_sec: float = 0.0
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.0
+    # Second PWM-zero write timing (mirrors local); 0 in tests skips extra SET.
+    pwm_reassert_sec: float = 0.0
     # Matches local `NavigationConfig.settle_delay_sec` — pause after STOP
     # before a fresh SET in `drive_continuous`.
     settle_delay_sec: float = 0.1
@@ -360,6 +362,11 @@ class RemoteNavigationManager:
             self._send_command(f"SET {ol} {nd} {orr} {nd}")
             time.sleep(ns)
             self._send_command(f"SET {ol} 0 {orr} 0")
+            gap_z = float(self.config.pwm_reassert_sec)
+            if gap_z > 0:
+                gap_z = max(0.002, min(0.1, gap_z))
+                time.sleep(gap_z)
+                self._send_command(f"SET {ol} 0 {orr} 0")
             zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
             if zs > 0:
                 time.sleep(zs)
@@ -382,6 +389,12 @@ class RemoteNavigationManager:
             self._send_command(f"SET {l_letter} {kls} {r_letter} {krs}")
             time.sleep(ks)
         self._send_command(f"SET {l_letter} {ls} {r_letter} {rs}")
+        if ls == 0 and rs == 0:
+            gap_z = float(self.config.pwm_reassert_sec)
+            if gap_z > 0:
+                gap_z = max(0.002, min(0.1, gap_z))
+                time.sleep(gap_z)
+                self._send_command(f"SET {l_letter} 0 {r_letter} 0")
         self._last_l_pwm = ls
         self._last_r_pwm = rs
         if ls == 0 and rs == 0:

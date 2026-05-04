@@ -359,7 +359,14 @@ def soft_stop() -> None:
     This is what we want for a normal `STOP` from the Jetson - the
     next SET command can change direction instantly without an arm
     delay.
+
+    Write PWM=0 twice with a short pause: a single write occasionally
+    leaves one JYQD channel crawling at very low duty (often the
+    right/ mirrored side after long pulses).
     """
+    control_speed("left", "enable", 0, "front")
+    control_speed("right", "enable", 0, "front")
+    time.sleep(0.02)
     control_speed("left", "enable", 0, "front")
     control_speed("right", "enable", 0, "front")
 

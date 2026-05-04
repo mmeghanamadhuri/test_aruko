@@ -72,6 +72,7 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
             straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
             opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
             settle_delay_sec=settings.settle_delay_sec,
+            pwm_reassert_sec=settings.pwm_reassert_sec,
         )
         return RemoteNavigationManager(cfg)
 
