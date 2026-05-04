@@ -40,7 +40,7 @@ import threading
 import time
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 from PyQt5.QtGui import QImage
@@ -224,6 +224,9 @@ class VisionWorker(QObject):
 
     def status(self) -> VisionStatus:
         return self._pipeline.status()
+
+    def capture_dimensions(self) -> Tuple[int, int]:
+        return self._pipeline.capture_dimensions()
 
     def enroll_face(self, name: str, target_samples: int = 8) -> None:
         """Capture face samples for `name` and add to the FaceDB.

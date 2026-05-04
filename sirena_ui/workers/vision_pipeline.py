@@ -868,6 +868,15 @@ class VisionPipeline:
                 self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._width))
                 self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._height))
 
+    def capture_dimensions(self) -> Tuple[int, int]:
+        """Video frame size: last annotated frame if available, else config."""
+        with self._lock:
+            lf = self._last_frame
+            if lf is not None:
+                h, w = lf.shape[:2]
+                return int(w), int(h)
+            return int(self._width), int(self._height)
+
     # ------------------------------------------------------------------
     # Detector toggles
     # ------------------------------------------------------------------
