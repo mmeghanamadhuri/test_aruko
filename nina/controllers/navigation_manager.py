@@ -106,6 +106,16 @@ After reboot, BCM 12 and BCM 13 are PWM-only (cannot also be GPIO);
 all other pins above stay as plain GPIO.
 
 Wiring rules:
+- If one wheel consistently needs a **manual push** on **forward** but
+  the *other* wheel does on **reverse**, scope **DIR at the JYQD screw**
+  on both sides when moving in each direction. On the stock pin map,
+  **right "forward"** and **left "reverse"** both assert **DIR LOW**;
+  marginal LOW drive (slow opto settle, WEAK GPIO, divider boards) can
+  present exactly that swapped behaviour. Software mitigations:
+  `NINA_NAV_DIR_SETTLE_SEC` and `NINA_NAV_PWM_REASSERT_SEC` in
+  `NavigationManager._start_both_wheels`; fix the harness if volts are
+  not clean 0/3.3 V at the screw.
+
 - Leave the Signal screw on **each** JYQD physically disconnected.
   Don't tie it to GND, don't tie it to 5V, don't run a wire from the
   Jetson - just leave the screw empty. The chip needs nothing there.
@@ -134,6 +144,14 @@ from nina.config.settings import NAV_START_KICK_SEC_MAX
 
 
 log = logging.getLogger("nina.navigation")
+
+# After EL+DIR are written with PWM 0, pause before torque so DIR lines
+# reach valid levels at the JYQD optos. On some builds the wheel that
+# needs DIR LOW for that motion (right "forward", left "reverse" on the
+# stock map) starts reliably only after this settle. NINA_NAV_DIR_SETTLE_SEC
+# (0 disables). Second PWM write: NINA_NAV_PWM_REASSERT_SEC.
+_DEFAULT_DIR_PWM_GAP_SEC = float(os.environ.get("NINA_NAV_DIR_SETTLE_SEC", "0.03"))
+_DEFAULT_PWM_REASSERT_SEC = float(os.environ.get("NINA_NAV_PWM_REASSERT_SEC", "0.02"))
 
 
 @dataclass(frozen=True)
@@ -183,6 +201,8 @@ class NavigationConfig:
     # matches `nina.config.settings.NAV_START_KICK_SEC_MAX` when using `load_settings`.
     start_kick_percent: int = 35
     start_kick_sec: float = 1.0
+    dir_pwm_gap_sec: float = _DEFAULT_DIR_PWM_GAP_SEC
+    pwm_reassert_sec: float = _DEFAULT_PWM_REASSERT_SEC
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -559,6 +579,10 @@ class NavigationManager:
         rs = max(0, min(100, int(right_speed)))
         was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
         moving_now = ls > 0 or rs > 0
+        if was_rest and moving_now:
+            gap = max(0.0, min(0.2, float(self.config.dir_pwm_gap_sec)))
+            if gap > 0:
+                time.sleep(gap)
         kp = max(0, min(100, int(self.config.start_kick_percent)))
         ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(self.config.start_kick_sec)))
 
@@ -580,6 +604,12 @@ class NavigationManager:
             time.sleep(ks)
         self._apply_side_pwm(self.SIDE_LEFT, ls)
         self._apply_side_pwm(self.SIDE_RIGHT, rs)
+        if was_rest and moving_now and (ls > 0 or rs > 0):
+            rar = max(0.0, min(0.1, float(self.config.pwm_reassert_sec)))
+            if rar > 0:
+                time.sleep(rar)
+                self._apply_side_pwm(self.SIDE_LEFT, ls)
+                self._apply_side_pwm(self.SIDE_RIGHT, rs)
         self._last_l_pwm = ls
         self._last_r_pwm = rs
 
