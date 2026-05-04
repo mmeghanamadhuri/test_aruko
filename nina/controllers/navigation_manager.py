@@ -289,6 +289,10 @@ class NavigationManager:
         self._last_l_pwm = 0
         self._last_r_pwm = 0
         self._last_straight_sign: Optional[int] = None  # +1 F / -1 B / None
+        # Last motion was symmetric straight (same dir, same non-zero PWM).
+        # False after turns, curves (ls!=rs), or full stop — next symmetric
+        # straight needs backlash preload if we are still moving (PWM != 0).
+        self._last_was_symmetric_straight = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -493,6 +497,7 @@ class NavigationManager:
             self._last_l_pwm = 0
             self._last_r_pwm = 0
             self._last_straight_sign = None
+            self._last_was_symmetric_straight = False
 
     def engage_brake(self) -> None:
         """Coast-stop both wheels.
@@ -615,6 +620,11 @@ class NavigationManager:
                     and target_sign is not None
                     and self._last_straight_sign != target_sign
                 )
+                or (
+                    moving_now
+                    and not was_rest
+                    and not self._last_was_symmetric_straight
+                )
             )
         )
 
@@ -681,6 +691,12 @@ class NavigationManager:
             self._last_straight_sign = target_sign
         else:
             self._last_straight_sign = None
+        self._last_was_symmetric_straight = (
+            ls > 0
+            and rs > 0
+            and left_dir == right_dir
+            and ls == rs
+        )
 
     def _command_both(self, direction: str, speed: int) -> None:
         """Mirrors the RPi forward_forever / backward_forever sequence:

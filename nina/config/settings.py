@@ -47,9 +47,10 @@ class NavigationSettings:
 
     `straight_opposite_nudge_sec` (+ `NUDGE_PCT`, `OPPOSITE_ZERO_SETTLE_SEC`)
     apply only to symmetric straight crawls (same dir and speed on
-    both sides). From rest, or when reversing straight F<->B, the
-    wheels jog briefly in the opposite direction, return to PWM 0, then
-    apply the command. Set NUDGE_SEC to 0 to disable.
+    both sides). The opposite jog runs from rest, when reversing
+    straight F<->B while moving, or when transitioning from a turn /
+    curve (non-symmetric motion) to symmetric straight while PWM is
+    still non-zero. Set NUDGE_SEC to 0 to disable.
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -67,6 +68,9 @@ class NavigationSettings:
     straight_opposite_nudge_sec: float = 0.08
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.04
+    # Pause after soft stop / between stop and fresh motion (`stop()`,
+    # `drive_continuous`). Matches `NavigationConfig.settle_delay_sec`.
+    settle_delay_sec: float = 0.1
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -227,6 +231,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         opposite_zero_settle_sec=float(
             os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
         ),
+        settle_delay_sec=float(os.environ.get("NINA_NAV_SETTLE_SEC", "0.1")),
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
         # 'remote' -> commands are sent over serial to a Raspberry Pi
         #             running pi_motor_bridge/motor_bridge.py.

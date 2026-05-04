@@ -488,6 +488,75 @@ def test_set_wheels_straight_opposite_nudge_from_rest_then_crawl(
     assert lines2[-3:] == ["SET F 3 F 3", "SET F 0 F 0", "SET B 12 B 12"]
 
 
+def test_set_wheels_straight_after_turn_gets_opposite_nudge(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """Turn (differential) then straight while PWM stayed up: preload straight."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            straight_opposite_nudge_sec=0.01,
+            straight_opposite_nudge_pct=20,
+            opposite_zero_settle_sec=0.0,
+            dir_pwm_gap_sec=0.0,
+        )
+    )
+    nav.initialize()
+    fake_serial.queue("OK")
+    nav.set_wheels(
+        left_dir="backward",
+        left_speed=20,
+        right_dir="forward",
+        right_speed=20,
+    )
+    port = _last_open(fake_serial)
+    lines = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert lines == ["SET B 20 F 20"]
+
+    fake_serial.queue("OK", "OK", "OK")
+    nav.set_wheels(
+        left_dir="forward",
+        left_speed=15,
+        right_dir="forward",
+        right_speed=15,
+    )
+    lines2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert lines2[-4:] == [
+        "SET B 20 F 20",
+        "SET B 3 B 3",
+        "SET B 0 B 0",
+        "SET F 15 F 15",
+    ]
+
+
+def test_drive_continuous_sends_stop_before_set(fake_serial: _FakeSerialRegistry) -> None:
+    """Remote drive_continuous mirrors local: STOP, settle, then motion."""
+    fake_serial.queue("PONG")
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            straight_opposite_nudge_sec=0.0,
+            settle_delay_sec=0.0,
+        )
+    )
+    nav.initialize()
+    fake_serial.queue("OK", "OK")
+    nav.drive_continuous(
+        left_dir="forward",
+        right_dir="forward",
+        speed_percent=18,
+    )
+    port = _last_open(fake_serial)
+    ws = _writes_as_strings(port)
+    assert "STOP" in ws
+    assert ws[-1] == "SET F 18 F 18"
+
+
 def test_invalid_direction_raises(fake_serial: _FakeSerialRegistry) -> None:
     fake_serial.queue("PONG")
     nav = RemoteNavigationManager(

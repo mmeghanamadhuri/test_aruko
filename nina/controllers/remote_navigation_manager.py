@@ -105,6 +105,9 @@ class RemoteNavigationConfig:
     straight_opposite_nudge_sec: float = 0.0
     straight_opposite_nudge_pct: int = 20
     opposite_zero_settle_sec: float = 0.0
+    # Matches local `NavigationConfig.settle_delay_sec` — pause after STOP
+    # before a fresh SET in `drive_continuous`.
+    settle_delay_sec: float = 0.1
 
 
 class RemoteNavigationManager:
@@ -138,6 +141,7 @@ class RemoteNavigationManager:
         self._last_l_pwm = 0
         self._last_r_pwm = 0
         self._last_straight_sign: Optional[int] = None
+        self._last_was_symmetric_straight = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -274,6 +278,12 @@ class RemoteNavigationManager:
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
         speed = self._resolve_speed(speed_percent)
+        # Mirror local `NavigationManager.drive_continuous`: park PWM,
+        # brief settle, then arm the new motion. Without this, remote
+        # mode only issued set_wheels() and straight-line nudge never ran
+        # on turn → straight or other shape changes while PWM stayed up.
+        self.stop()
+        time.sleep(max(0.0, float(self.config.settle_delay_sec)))
         self.set_wheels(
             left_dir=left_dir, left_speed=speed,
             right_dir=right_dir, right_speed=speed,
@@ -321,6 +331,11 @@ class RemoteNavigationManager:
                     self._last_straight_sign is not None
                     and target_sign is not None
                     and self._last_straight_sign != target_sign
+                )
+                or (
+                    moving_now
+                    and not was_rest
+                    and not self._last_was_symmetric_straight
                 )
             )
         )
@@ -370,6 +385,12 @@ class RemoteNavigationManager:
             self._last_straight_sign = target_sign
         else:
             self._last_straight_sign = None
+        self._last_was_symmetric_straight = (
+            ls > 0
+            and rs > 0
+            and left_dir == right_dir
+            and ls == rs
+        )
 
     def stop(self) -> None:
         """Soft stop: PWM=0 on both wheels, EL stays HIGH (chip armed)."""
@@ -377,6 +398,7 @@ class RemoteNavigationManager:
         self._last_l_pwm = 0
         self._last_r_pwm = 0
         self._last_straight_sign = None
+        self._last_was_symmetric_straight = False
         log.info("stop (PWM=0, EL=HIGH)")
 
     def emergency_stop(self) -> None:
@@ -386,6 +408,7 @@ class RemoteNavigationManager:
         self._last_l_pwm = 0
         self._last_r_pwm = 0
         self._last_straight_sign = None
+        self._last_was_symmetric_straight = False
 
     def engage_brake(self) -> None:
         """Coast stop. Same semantics as the local manager (PWM=0 IS the brake)."""

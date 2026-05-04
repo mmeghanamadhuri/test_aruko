@@ -24,6 +24,7 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_SEC # default 0.08; straight crawl only; 0 = off
     NINA_NAV_STRAIGHT_OPPOSITE_NUDGE_PCT # default 20 (% of cmd speed for opposite jog)
     NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC   # default 0.04; pause at PWM 0 after jog
+    NINA_NAV_SETTLE_SEC        # default 0.1; soft-stop pause / drive_continuous gap
 """
 
 from __future__ import annotations
@@ -70,6 +71,7 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
             straight_opposite_nudge_sec=settings.straight_opposite_nudge_sec,
             straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
             opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
+            settle_delay_sec=settings.settle_delay_sec,
         )
         return RemoteNavigationManager(cfg)
 
@@ -88,5 +90,6 @@ def build_navigation_manager(settings: NavigationSettings) -> Any:
         straight_opposite_nudge_sec=settings.straight_opposite_nudge_sec,
         straight_opposite_nudge_pct=settings.straight_opposite_nudge_pct,
         opposite_zero_settle_sec=settings.opposite_zero_settle_sec,
+        settle_delay_sec=settings.settle_delay_sec,
     )
     return NavigationManager(cfg_local)
