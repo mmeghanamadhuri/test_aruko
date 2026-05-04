@@ -24,12 +24,13 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
 from PyQt5.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QSlider,
@@ -60,6 +61,9 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
+# Bench / field check: drive forward at current speed, then stop.
+STRAIGHT_TEST_MS = 5000
+
 
 class DriveScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
@@ -74,6 +78,10 @@ class DriveScreen(QWidget):
         # even when the user hasn't clicked into a child widget.
         self.setFocusPolicy(Qt.StrongFocus)
         self._kb_active_key: Optional[int] = None
+
+        self._straight_test_timer = QTimer(self)
+        self._straight_test_timer.setSingleShot(True)
+        self._straight_test_timer.timeout.connect(self._finish_straight_test)
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -266,6 +274,23 @@ class DriveScreen(QWidget):
         dpad_row.addStretch(1)
         card.add_layout(dpad_row)
 
+        straight_row = QHBoxLayout()
+        straight_row.setContentsMargins(0, 0, 0, 0)
+        straight_row.addStretch(1)
+        self._straight_test_btn = QPushButton("Straight 5 s (test)")
+        self._straight_test_btn.setObjectName("secondaryButton")
+        self._straight_test_btn.setCursor(Qt.PointingHandCursor)
+        self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
+        self._straight_test_btn.setMinimumHeight(32)
+        self._straight_test_btn.setToolTip(
+            "Drive forward at the current speed for 5 seconds, then stop. "
+            "Turn off autonomous mode and release the brake first."
+        )
+        self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
+        straight_row.addWidget(self._straight_test_btn)
+        straight_row.addStretch(1)
+        card.add_layout(straight_row)
+
         # Speed row - inline label + slider + pill. The +/- buttons that
         # used to flank the slider were removed: with the slider clamped
         # to a 10-percentage-point window (MIN_SPEED_PCT..MAX_SPEED_PCT)
@@ -401,6 +426,10 @@ class DriveScreen(QWidget):
     # ---------- handlers ----------
 
     def _on_brake_toggle(self, checked: bool) -> None:
+        if checked and self._straight_test_timer.isActive():
+            self._straight_test_timer.stop()
+            self._drive.stop()
+            self._restore_after_straight_test()
         self._brake_btn.setText(f"Brake: {'ON' if checked else 'OFF'}")
         self._drive.set_brake(checked)
         self.setFocus()
@@ -423,6 +452,7 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def _on_emergency_stop(self) -> None:
+        self._straight_test_timer.stop()
         self._drive.emergency_stop()
         # Sync the Brake toggle so the screen reflects the new state
         # immediately (the controller already engaged the brake on the
@@ -431,15 +461,53 @@ class DriveScreen(QWidget):
         self._brake_btn.setChecked(True)
         self._brake_btn.setText("Brake: ON")
         self._brake_btn.blockSignals(False)
+        self._restore_after_straight_test()
         # Return focus to the screen so a follow-up Esc / Space still
         # reaches our key handlers instead of the EMERGENCY STOP button.
+        self.setFocus()
+
+    def _on_straight_test_clicked(self) -> None:
+        if self._straight_test_timer.isActive():
+            return
+        if self._autonomy.is_enabled():
+            QMessageBox.warning(
+                self,
+                "Autonomous mode",
+                "Turn off autonomous mode before running a manual straight test.",
+            )
+            return
+        if self._brake_btn.isChecked():
+            QMessageBox.information(
+                self,
+                "Brake engaged",
+                "Release the brake (Brake: OFF) before running a straight test.",
+            )
+            return
+        self._drive.ensure_hardware()
+        self._straight_test_btn.setEnabled(False)
+        self._dpad.set_enabled(False)
+        self._drive.drive("forward")
+        self._straight_test_timer.start(STRAIGHT_TEST_MS)
+        self.setFocus()
+
+    def _restore_after_straight_test(self) -> None:
+        if not self._autonomy.is_enabled():
+            self._straight_test_btn.setEnabled(True)
+            st = self._drive.state()
+            self._dpad.set_enabled(not st["brake"])
+        else:
+            self._straight_test_btn.setEnabled(False)
+
+    def _finish_straight_test(self) -> None:
+        self._straight_test_timer.stop()
+        self._drive.stop()
+        self._restore_after_straight_test()
         self.setFocus()
 
     def _on_autonomy_toggle(self, on: bool) -> None:
         try:
             self._autonomy.set_enabled(on)
         except Exception as exc:
-            from PyQt5.QtWidgets import QMessageBox
             QMessageBox.critical(
                 self,
                 "Autonomous mode failed",
@@ -447,6 +515,9 @@ class DriveScreen(QWidget):
             )
 
     def _on_autonomy_enabled(self, on: bool) -> None:
+        if on and self._straight_test_timer.isActive():
+            self._straight_test_timer.stop()
+            self._drive.stop()
         self._autonomy_btn.blockSignals(True)
         self._autonomy_btn.setChecked(on)
         # Short label - we removed the explanatory banner below the
@@ -466,6 +537,7 @@ class DriveScreen(QWidget):
         self._brake_btn.setEnabled(not on)
         self._reverse_btn.setEnabled(not on)
         self._speed_slider.setEnabled(not on)
+        self._straight_test_btn.setEnabled(not on)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
         # update here. The title-row pill conveys the same state.
 
@@ -493,6 +565,12 @@ class DriveScreen(QWidget):
         # Grab focus so WASD/Space/Esc reach our key handlers without
         # the user having to click into the screen body first.
         self.setFocus()
+
+    def on_leave(self) -> None:
+        if self._straight_test_timer.isActive():
+            self._straight_test_timer.stop()
+            self._drive.stop()
+            self._restore_after_straight_test()
 
     def _on_camera_frame(self, image: QImage) -> None:
         """Render an incoming RGB frame into the Front-camera card."""
@@ -548,6 +626,24 @@ class DriveScreen(QWidget):
             super().keyPressEvent(event)
             return
 
+        if self._straight_test_timer.isActive():
+            key = event.key()
+            if key == Qt.Key_Space:
+                self._straight_test_timer.stop()
+                self._drive.stop()
+                self._restore_after_straight_test()
+                event.accept()
+                return
+            if key == Qt.Key_Escape:
+                self._on_emergency_stop()
+                event.accept()
+                return
+            if key in _KEY_TO_DIRECTION:
+                event.accept()
+                return
+            super().keyPressEvent(event)
+            return
+
         key = event.key()
         if key in _KEY_TO_DIRECTION:
             # Only allow one direction key at a time. Pressing a second
@@ -590,7 +686,10 @@ class DriveScreen(QWidget):
         # enablement: while autonomy is on, the D-pad stays disabled
         # regardless of the manual brake state.
         if not self._autonomy.is_enabled():
-            self._dpad.set_enabled(not state["brake"])
+            if self._straight_test_timer.isActive():
+                self._dpad.set_enabled(False)
+            else:
+                self._dpad.set_enabled(not state["brake"])
 
         # Reflect persisted/runtime polarity in the toggle pills WITHOUT
         # firing their `clicked` signal back into the controller (which
