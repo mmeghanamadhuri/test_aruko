@@ -252,6 +252,12 @@ def test_depth_top_skip_default_value(clean_env) -> None:
         "going below 30 lets the floor back into the forward cone "
         "and the bot will spin in place"
     )
+    assert 0.60 <= realsense_d435.DEFAULT_FWD_BAND_FRAC < 1.0, (
+        f"DEFAULT_FWD_BAND_FRAC={realsense_d435.DEFAULT_FWD_BAND_FRAC}; "
+        "set to 1.0 the forward cone again sees floor in the lower "
+        "middle band on steep down-tilt (spin in place); above 0.60 "
+        "keeps chair-leg-scale obstacles visible in the trimmed cone"
+    )
 
 
 # ---------------------------------------------------------------------

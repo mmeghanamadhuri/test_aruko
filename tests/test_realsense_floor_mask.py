@@ -8,8 +8,10 @@ two-part:
 
 1. `RealSenseD435._publish` slices a MIDDLE vertical band, not the
    bottom 2/3 of the frame, so floor pixels never reach
-   `forward_min_mm`. The defaults skip top 25% (sky/ceiling) and
-   bottom 35% (floor in front of bot).
+   `forward_min_mm`. The defaults skip top 10% (sky/ceiling) and
+   bottom 35% (floor in front of bot). The **forward** third uses only
+   the upper `NINA_DEPTH_FWD_BAND_FRAC` of that band so floor inside
+   the band on a steep down-tilt does not hijack `forward_min_mm`.
 
 2. `obstacle_field.fuse()` records a per-source forward-min map so
    the autonomy log can spell out exactly which sensor pulled
@@ -105,6 +107,41 @@ def test_top_rows_excluded_from_forward_min() -> None:
     )
 
 
+def test_floor_in_middle_band_lower_tail_ignored_for_forward() -> None:
+    """When pitched down, floor can appear in the lower rows of the
+    middle band (still above BOT_SKIP). Those pixels must not apply to
+    the forward cone if they fall below the forward-only vertical
+    cutoff — only the upper FWD_BAND_FRAC of the band counts."""
+    np = pytest.importorskip("numpy")
+
+    drv = _drv()
+    h, w = 100, 30
+    arr = np.full((h, w), 2000, dtype=np.uint16)
+    cy0 = max(0, min(h - 1, int(h * realsense_d435.DEFAULT_TOP_SKIP_PCT / 100)))
+    cy1 = max(
+        cy0 + 1,
+        min(h, int(h * (100 - realsense_d435.DEFAULT_BOT_SKIP_PCT) / 100)),
+    )
+    mid_h = cy1 - cy0
+    cy_fwd1 = cy0 + max(1, min(mid_h, int(mid_h * realsense_d435.DEFAULT_FWD_BAND_FRAC)))
+    cy_fwd1 = min(cy_fwd1, cy1)
+    cx0, cx1 = w // 3, 2 * w // 3
+    # Phantom floor only in forward columns and only in rows at/after
+    # the forward slice ends (still inside left/right full band).
+    arr[cy_fwd1:cy1, cx0:cx1] = 480
+
+    drv._publish(np, arr)
+    frame = drv.read()
+
+    assert frame is not None
+    assert frame.forward_min_mm is not None
+    assert frame.forward_min_mm >= 2000, (
+        f"forward_min_mm={frame.forward_min_mm} - floor in the lower "
+        "tail of the middle band leaked into the forward cone "
+        f"(cy_fwd1={cy_fwd1}, cy1={cy1})"
+    )
+
+
 def test_real_obstacle_in_middle_band_is_seen() -> None:
     """An obstacle at chassis height (the middle band of the depth
     image) MUST still be reported, otherwise the floor mask would
@@ -177,7 +214,9 @@ def test_single_pixel_glint_does_not_trigger_forward_block() -> None:
     h, w = 100, 90  # forward cone = 30 cols x ~55 rows = 1650 px
     arr = np.full((h, w), 2000, dtype=np.uint16)
     # Plant ONE glint pixel at 320 mm in the middle of the forward cone.
-    arr[50, w // 2] = 320
+    # Row must sit inside the forward-only vertical slice (see
+    # NINA_DEPTH_FWD_BAND_FRAC), not only the full middle band.
+    arr[45, w // 2] = 320
 
     drv._publish(np, arr)
     frame = drv.read()
@@ -219,7 +258,7 @@ def test_real_obstacle_cluster_still_passes_filter() -> None:
     )
 
 
-def test_min_range_floor_rejects_below_threshold() -> None:
+def test_min_range_floor_rejects_below_threshold(monkeypatch) -> None:
     """DEFAULT_MIN_RANGE_MM was bumped from 200 -> 300 to drop the
     range where the D435 mostly returns IR-projector saturation /
     floor reflections rather than real distance. Even a real
@@ -227,6 +266,10 @@ def test_min_range_floor_rejects_below_threshold() -> None:
     - if something is really inside the camera's reliable minimum,
     the depth sensor can't measure it accurately anyway."""
     np = pytest.importorskip("numpy")
+
+    # Full middle-band forward cone — this test targets MIN_MM, not the
+    # forward-only vertical trim.
+    monkeypatch.setattr(realsense_d435, "DEFAULT_FWD_BAND_FRAC", 1.0)
 
     drv = _drv()
     h, w = 100, 90
@@ -271,7 +314,7 @@ def test_min_cluster_px_env_override_is_honoured(monkeypatch) -> None:
     # ONE pixel at 700 mm. With CLUSTER=1 it should be reported (the
     # operator explicitly opted out of cluster filtering for their
     # known-good environment).
-    arr[50, w // 2] = 700
+    arr[45, w // 2] = 700
 
     drv._publish(np, arr)
     frame = drv.read()

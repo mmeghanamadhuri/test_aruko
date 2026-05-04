@@ -95,6 +95,29 @@ DEFAULT_MIN_CLUSTER_PX = int(os.environ.get("NINA_DEPTH_MIN_CLUSTER_PX", "50"))
 DEFAULT_TOP_SKIP_PCT = int(os.environ.get("NINA_DEPTH_TOP_SKIP_PCT", "10"))
 DEFAULT_BOT_SKIP_PCT = int(os.environ.get("NINA_DEPTH_BOT_SKIP_PCT", "35"))
 
+# Fraction of the **middle vertical band** (after TOP/BOT skips) used
+# for the **forward** third only, counting from the top of that band.
+# Left/right cones keep the full band height so low lateral obstacles
+# stay visible.
+#
+# When the D435 is pitched **more** than the nominal ~10 deg, the
+# floor often intrudes into the *lower* rows of that middle band (not
+# only the bottom BOT_SKIP region). Those pixels read ~400–800 mm;
+# `obstacle_field.fuse()` takes the min with lidar, so depth wins and
+# the pilot spins in place; tilting the camera up moves the floor out
+# of the band again. Trimming the forward cone to the upper part of
+# the band drops that floor belt without masking left/right.
+#
+# `1.0` preserves the pre-split behaviour. Set lower in the field
+# (e.g. `0.55`–`0.65`) if a steep down-tilt still wedges floor into
+# forward_min despite raising NINA_DEPTH_BOT_SKIP_PCT.
+_DEFAULT_FWD_ENV = os.environ.get("NINA_DEPTH_FWD_BAND_FRAC", "0.74")
+try:
+    _raw_fwd = float(_DEFAULT_FWD_ENV)
+except ValueError:
+    _raw_fwd = 0.74
+DEFAULT_FWD_BAND_FRAC = max(0.25, min(1.0, _raw_fwd))
+
 
 def _import_pyrealsense2():
     """Return the pyrealsense2 module that actually has the C bindings.
@@ -331,11 +354,18 @@ class RealSenseD435:
         # skipping those rows, every frame reports ~480 mm forward
         # and the autonomy stack reads that as 'forward blocked' and
         # spins on the spot forever.
+        #
+        # The forward *slice* uses only the upper DEFAULT_FWD_BAND_FRAC
+        # of that middle band; the lower rows often still carry floor
+        # returns when the camera is tilted down more than ~10 deg.
         cx0 = w // 3
         cx1 = 2 * w // 3
         cy0 = max(0, min(h - 1, int(h * DEFAULT_TOP_SKIP_PCT / 100)))
         cy1 = max(cy0 + 1, min(h, int(h * (100 - DEFAULT_BOT_SKIP_PCT) / 100)))
-        forward = arr[cy0:cy1, cx0:cx1]
+        mid_h = cy1 - cy0
+        cy_fwd1 = cy0 + max(1, min(mid_h, int(mid_h * DEFAULT_FWD_BAND_FRAC)))
+        cy_fwd1 = min(cy_fwd1, cy1)
+        forward = arr[cy0:cy_fwd1, cx0:cx1]
         left = arr[cy0:cy1, : cx0]
         right = arr[cy0:cy1, cx1:]
 
