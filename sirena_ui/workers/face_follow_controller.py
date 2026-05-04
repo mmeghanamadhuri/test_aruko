@@ -13,10 +13,16 @@ from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
-from sirena_ui.workers.drive_controller import MAX_SPEED_PCT, MIN_SPEED_PCT, DriveController
+from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.vision_types import KIND_FACE, Detection
 
 log = logging.getLogger("sirena_ui.face_follow")
+
+# Follow speeds — `drive_wheels` passes these through to PWM (can be < MIN_SPEED_PCT).
+_SPEED_APPROACH_PCT = 15
+_SPEED_CRUISE_PCT = 10
+_SPEED_BACK_PCT = 10
+_SPEED_NUDGE_PCT = 10
 
 
 def _bbox_area(det: Detection) -> int:
@@ -35,6 +41,9 @@ class FaceFollowController(QObject):
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
         self._timer.setInterval(66)
+        self._nudge_pulse_timer = QTimer(self)
+        self._nudge_pulse_timer.setSingleShot(True)
+        self._nudge_pulse_timer.timeout.connect(self._finish_nudge_pulse)
 
         self._active = False
         self._target_name: Optional[str] = None
@@ -43,18 +52,15 @@ class FaceFollowController(QObject):
         self._lost_ticks = 0
         self._frame_wh: Tuple[int, int] = (640, 480)
 
-        # ratio = face_area / reference_area. We inflate ref at lock so
-        # "1.0" is slightly farther than the raw bbox at first sight —
-        # roughly a ~1 ft standoff vs rushing to the lock-size snap.
-        # Bands leave a wide coast zone so momentum does not overrun into
-        # the subject; forward speed tapers as ratio nears `_area_far`.
-        self._ref_at_lock_ratio = 0.82
-        self._area_far = 0.68
-        self._area_close_stop = 0.88
-        self._area_close_back = 1.05
-        self._approach_taper_span = 0.14
-        self._approach_speed_floor = 0.34
-        self._ang_dead = 0.11
+        # ratio = face_area / reference_area (ref = bbox area at lock).
+        # <1 face shrunk vs lock = target farther -> forward.
+        # >_area_close_stop = close hold + turn nudges only.
+        # >_area_close_back = clearly too close -> reverse.
+        self._area_far = 0.92
+        self._area_blend_far = 0.82
+        self._area_close_stop = 1.06
+        self._area_close_back = 1.25
+        self._ang_dead = 0.09
         self._lost_max_ticks = 14
 
     def set_frame_size(self, w: int, h: int) -> None:
@@ -75,6 +81,7 @@ class FaceFollowController(QObject):
         self._ref_area = None
         self._lost_ticks = 0
         self._active = True
+        self._nudge_pulse_timer.stop()
         self._timer.start()
         who = self._target_name or "largest face"
         self.status_message.emit(f"Follow: seeking {who}…")
@@ -87,6 +94,7 @@ class FaceFollowController(QObject):
     def stop(self) -> None:
         self._active = False
         self._timer.stop()
+        self._nudge_pulse_timer.stop()
         self._target_name = None
         self._ref_area = None
         try:
@@ -121,12 +129,14 @@ class FaceFollowController(QObject):
                 pass
             self._active = False
             self._timer.stop()
+            self._nudge_pulse_timer.stop()
             self.status_message.emit("Follow: stopped (brake on)")
             return
 
         faces = [d for d in self._latest if d.kind == KIND_FACE]
         chosen = self._pick_face(faces)
         if chosen is None:
+            self._nudge_pulse_timer.stop()
             self._lost_ticks += 1
             # Drain + stop immediately so the ~300ms drive heartbeat cannot
             # keep replaying the last SET while the face is out of frame.
@@ -137,6 +147,7 @@ class FaceFollowController(QObject):
             if self._lost_ticks >= self._lost_max_ticks:
                 self._active = False
                 self._timer.stop()
+                self._nudge_pulse_timer.stop()
                 self.status_message.emit(
                     "Follow: lost target — tap Start follow to retry"
                 )
@@ -151,54 +162,51 @@ class FaceFollowController(QObject):
 
         area = float(max(1, _bbox_area(chosen)))
         if self._ref_area is None:
-            # Inflate reference so the bot holds short of the first-seen
-            # distance (~1 ft + margin for decel vs bbox growth).
-            self._ref_area = area / max(0.5, min(0.95, float(self._ref_at_lock_ratio)))
+            self._ref_area = float(max(1, area))
             label = chosen.identity or chosen.label or "face"
             self.status_message.emit(f"Follow: locked {label} ({int(area)} px²)")
 
         ratio = area / self._ref_area
 
-        base = float(MIN_SPEED_PCT)
-        cruise = int(max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, round(base * 0.7))))
-        if ratio < self._area_far:
-            span = max(1e-6, float(self._approach_taper_span))
-            tail = self._area_far - ratio
-            if tail < span:
-                w = max(0.0, min(1.0, tail / span))
-                cruise = max(
-                    MIN_SPEED_PCT,
-                    int(
-                        round(
-                            cruise
-                            * (self._approach_speed_floor + (1.0 - self._approach_speed_floor) * w)
-                        )
-                    ),
-                )
+        min_sp = _SPEED_CRUISE_PCT
+        max_sp = _SPEED_APPROACH_PCT
 
-        # Distance policy: too far -> forward; cosy band -> hold; closer -> stop; very close -> back
+        # Distance policy: too far -> forward; cosy band -> hold; closer -> hold + nudge; very close -> back
         if ratio > self._area_close_back:
-            sp = int(max(MIN_SPEED_PCT, round(base * 0.5)))
+            self._nudge_pulse_timer.stop()
             try:
-                self._drive.drive_wheels("back", sp, "back", sp)
+                self._drive.drive_wheels(
+                    "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
+                )
             except Exception as exc:
                 log.debug("drive_wheels back: %s", exc)
             return
 
         if ratio > self._area_close_stop:
-            try:
-                self._drive.stop(drain=True)
-            except Exception:
-                pass
-            if abs(err_x) > self._ang_dead:
-                self._nudge_turn(err_x, int(round(base * 0.5)))
+            if abs(err_x) <= self._ang_dead:
+                try:
+                    self._drive.stop(drain=True)
+                except Exception:
+                    pass
+                return
+            self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
             return
 
         if ratio < self._area_far:
-            # Approach: forward with heading mix
-            yaw = err_x * 8.0
-            ls = int(max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, cruise + int(yaw))))
-            rs = int(max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, cruise - int(yaw))))
+            if ratio <= self._area_blend_far:
+                cruise_sp = float(_SPEED_APPROACH_PCT)
+            else:
+                t = (ratio - self._area_blend_far) / max(
+                    1e-6, self._area_far - self._area_blend_far
+                )
+                t = max(0.0, min(1.0, t))
+                cruise_sp = _SPEED_APPROACH_PCT + (_SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT) * t
+            cruise = int(round(cruise_sp))
+            self._nudge_pulse_timer.stop()
+            # Stronger yaw mix so the bot tracks lateral target motion while approaching.
+            yaw = err_x * 14.0
+            ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
+            rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
             try:
                 self._drive.drive_wheels("forward", ls, "forward", rs)
             except Exception as exc:
@@ -207,15 +215,26 @@ class FaceFollowController(QObject):
 
         # Size OK: centre only (close to reference size — hold still)
         if abs(err_x) <= self._ang_dead:
+            self._nudge_pulse_timer.stop()
             try:
                 self._drive.stop(drain=True)
             except Exception:
                 pass
             return
-        self._nudge_turn(err_x, int(round(base * 0.55)))
+        self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
+
+    def _finish_nudge_pulse(self) -> None:
+        if not self._active:
+            return
+        try:
+            self._drive.stop(drain=True)
+        except Exception:
+            pass
 
     def _nudge_turn(self, err_x: float, turn_sp: int) -> None:
-        turn_sp = max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, turn_sp))
+        if self._nudge_pulse_timer.isActive():
+            return
+        turn_sp = max(_SPEED_CRUISE_PCT, min(_SPEED_APPROACH_PCT, int(turn_sp)))
         try:
             if err_x > 0:
                 self._drive.drive_wheels("forward", turn_sp, "back", turn_sp)
@@ -223,3 +242,5 @@ class FaceFollowController(QObject):
                 self._drive.drive_wheels("back", turn_sp, "forward", turn_sp)
         except Exception as exc:
             log.debug("nudge_turn: %s", exc)
+            return
+        self._nudge_pulse_timer.start(200)
