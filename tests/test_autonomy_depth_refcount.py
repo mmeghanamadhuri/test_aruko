@@ -12,16 +12,42 @@ both call `RealSenseD435.open()` on the same device:
 Conversely, toggling autonomy OFF must NOT close the depth sensor
 if a Perception screen still wants it. These tests pin both
 contracts using a fake RealSenseD435 that records every open/close.
+
+`acquire_depth` is intentionally **async**: the actual
+`RealSense.open()` runs on a worker thread because
+`pipeline.start()` blocks 1-3 s on the Jetson. Tests that need to
+observe the post-open state use the `_wait_depth_open()` helper
+below to deterministically join that worker thread.
 """
 
 from __future__ import annotations
 
+import time
 from typing import Optional
 
 import pytest
 
 from nina.config.settings import AutonomySettings
 from sirena_ui.workers.autonomy_controller import AutonomyController
+
+
+def _wait_depth_open(ctrl: AutonomyController, timeout: float = 2.0) -> None:
+    """Block until the controller's pending depth-open thread (if
+    any) completes. Used by tests that need to assert the
+    post-open state without racing the worker thread."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        # Snapshot under the lock to avoid races with the worker
+        # thread mutating these fields.
+        with ctrl._lock:  # noqa: SLF001 - test helper
+            in_progress = ctrl._depth_open_in_progress
+            thread = ctrl._depth_open_thread
+        if not in_progress:
+            if thread is not None:
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+            return
+        time.sleep(0.01)
+    raise AssertionError("depth open thread didn't finish within timeout")
 
 
 # ---------------------------------------------------------------------
@@ -184,10 +210,18 @@ def controller(fake_pilot):
 def test_acquire_depth_opens_camera_once(controller) -> None:
     """The first acquire_depth() actually calls the underlying
     RealSenseD435.open(). Without this the Perception screen would
-    show "depth waiting" forever on a healthy bot."""
+    show "depth waiting" forever on a healthy bot.
+
+    The open is async (worker thread) so we join it before
+    checking. The synchronous return value is "we promise to open"
+    (True, "depth opening..."), not "we have opened" - that
+    distinction matters because RealSense.start() can take 1-3 s
+    and freezes the Qt main thread if called inline.
+    """
     ctrl, depth, _ = controller
     ok, msg = ctrl.acquire_depth()
     assert ok is True, f"acquire_depth said not ok: {msg!r}"
+    _wait_depth_open(ctrl)
     assert depth.opens == 1
 
 
@@ -199,7 +233,9 @@ def test_second_acquire_does_not_reopen_camera(controller) -> None:
     without any actionable diagnostic."""
     ctrl, depth, _ = controller
     ctrl.acquire_depth()
-    ctrl.acquire_depth()
+    _wait_depth_open(ctrl)
+    ctrl.acquire_depth()  # second acquire - just bumps refcount
+    _wait_depth_open(ctrl)  # no-op, but confirms no thread is mid-open
     assert depth.opens == 1, (
         f"depth.open() ran {depth.opens} times for two acquires - "
         "the refcount is broken; librealsense will reject the second"
@@ -212,7 +248,9 @@ def test_release_with_outstanding_holder_does_not_close(controller) -> None:
     Perception screen is still watching."""
     ctrl, depth, _ = controller
     ctrl.acquire_depth()  # Perception screen
-    ctrl.set_enabled(True)  # autonomy on - acquires too
+    _wait_depth_open(ctrl)
+    ctrl.set_enabled(True)  # autonomy on - acquires too (refcount += 1)
+    _wait_depth_open(ctrl)
     ctrl.set_enabled(False)  # autonomy off - releases
     assert depth.closes == 0, (
         "depth was closed even though Perception screen still held "
@@ -227,7 +265,9 @@ def test_last_release_actually_closes(controller) -> None:
     process exit."""
     ctrl, depth, _ = controller
     ctrl.acquire_depth()
+    _wait_depth_open(ctrl)
     ctrl.acquire_depth()
+    _wait_depth_open(ctrl)
     ctrl.release_depth()
     ctrl.release_depth()
     assert depth.closes == 1
@@ -242,18 +282,27 @@ def test_failed_open_does_not_corrupt_refcount(controller) -> None:
     ctrl, depth, _ = controller
     depth.fail_open = True
 
+    # Sync return is (True, "depth opening...") because the open
+    # hasn't run yet. The actual failure is observable only after
+    # the worker thread completes.
     ok, msg = ctrl.acquire_depth()
-    assert ok is False
-    assert "D435" in msg or "depth" in msg
+    assert ok is True
+    _wait_depth_open(ctrl)
+    # Post-open state: failure recorded, refcount cleared.
+    assert ctrl._depth_open_ok is False  # noqa: SLF001 - test introspection
+    assert "D435" in ctrl._depth_open_msg or "depth" in ctrl._depth_open_msg
 
-    # Perception screen leaves; this must be a clean no-op.
+    # Perception screen leaves; this must be a clean no-op because
+    # the failed open already cleared the refcount.
     ctrl.release_depth()
     assert depth.closes == 0  # nothing to close - open never succeeded
 
     # Now a SECOND acquire should still work (heal the refcount).
     depth.fail_open = False
     ok2, _ = ctrl.acquire_depth()
+    _wait_depth_open(ctrl)
     assert ok2 is True
+    assert ctrl._depth_open_ok is True  # noqa: SLF001
     assert depth.opens == 2  # one failed + one succeeded
 
 
@@ -275,6 +324,7 @@ def test_release_depth_disables_color_publish(controller) -> None:
     builds segfault on."""
     ctrl, depth, _ = controller
     ctrl.acquire_depth()
+    _wait_depth_open(ctrl)
     ctrl.set_depth_visualization_enabled(True)
     assert depth.color_publish_calls[-1] is True
 
@@ -284,3 +334,67 @@ def test_release_depth_disables_color_publish(controller) -> None:
     # and the close).
     assert depth.color_publish_calls[-1] is False
     assert depth.closes == 1
+
+
+def test_acquire_depth_returns_immediately(controller) -> None:
+    """The whole point of the async refactor: `acquire_depth()`
+    must return without waiting for the (potentially multi-second)
+    `RealSense.open()` to complete. We verify by making the fake
+    open *block* and asserting the call still returns promptly.
+    """
+    import threading
+
+    ctrl, depth, _ = controller
+    # Replace the fake's open() with one that blocks until released.
+    gate = threading.Event()
+
+    def blocking_open() -> None:
+        depth.opens += 1
+        gate.wait(timeout=5.0)
+
+    depth.open = blocking_open  # type: ignore[method-assign]
+
+    t0 = time.monotonic()
+    ok, msg = ctrl.acquire_depth()
+    elapsed = time.monotonic() - t0
+
+    # Must return promptly even though the open is still running
+    # in the background. 0.2 s is generous; the actual return path
+    # takes <1 ms because we just spawn a thread and return.
+    assert elapsed < 0.2, (
+        f"acquire_depth blocked for {elapsed:.2f}s - the Qt main "
+        "thread would freeze for the same duration in the GUI"
+    )
+    assert ok is True
+    assert "opening" in msg.lower()
+
+    # Release the fake open so the worker thread can finish + the
+    # test fixture cleanup doesn't hang.
+    gate.set()
+    _wait_depth_open(ctrl)
+
+
+def test_release_during_open_closes_when_open_completes(controller) -> None:
+    """If release_depth() is called while an open is still in
+    flight, the open thread MUST close the pipeline on completion -
+    otherwise the camera stays on with nobody consuming frames."""
+    import threading
+
+    ctrl, depth, _ = controller
+    gate = threading.Event()
+
+    def blocking_open() -> None:
+        depth.opens += 1
+        gate.wait(timeout=5.0)
+
+    depth.open = blocking_open  # type: ignore[method-assign]
+
+    ctrl.acquire_depth()                # spawns open thread
+    ctrl.release_depth()                # asks for close-when-ready
+    gate.set()                          # let open finish
+    _wait_depth_open(ctrl)
+
+    assert depth.closes == 1, (
+        "open finished but no close was issued; the pipeline would "
+        "leak its USB endpoint until process exit"
+    )

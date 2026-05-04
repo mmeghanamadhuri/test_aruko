@@ -87,6 +87,16 @@ class AutonomyController(QObject):
     goto_state_changed = pyqtSignal(dict)
     sensor_health_changed = pyqtSignal(dict)
     mode_changed = pyqtSignal(str)        # 'idle' | 'wander' | 'goto'
+    # Depth lifecycle. RealSense pipeline.start() blocks 1-3 s on
+    # the calling thread; on Jetson over USB-3 it can occasionally
+    # hang for tens of seconds if librealsense is mid-recovery from
+    # a previous unclean shutdown. We open it on a worker thread
+    # and emit this signal when the open completes (success or
+    # failure) so screens can keep their UI thread responsive while
+    # the pipeline initialises.
+    #
+    # Payload: {"ok": bool, "message": str, "in_progress": bool}
+    depth_open_changed = pyqtSignal(dict)
 
     def __init__(
         self,
@@ -158,6 +168,13 @@ class AutonomyController(QObject):
         self._depth_refcount = 0
         self._depth_open_ok = False
         self._depth_open_msg = "not opened"
+        self._depth_open_in_progress = False
+        self._depth_open_thread: Optional[threading.Thread] = None
+        # Set true while a release_depth() is waiting for an in-flight
+        # open. The open thread checks this on completion and closes
+        # the pipeline immediately if the caller has already released
+        # their reference.
+        self._depth_close_pending = False
 
     # ------------------------------------------------------------------
     # Public API
@@ -198,37 +215,137 @@ class AutonomyController(QObject):
     def acquire_depth(self) -> Tuple[bool, str]:
         """Open the D435 if it isn't already, increment the refcount.
 
-        Returns ``(opened_ok, message)`` so the caller can surface the
-        error in its own UI without having to ``read()`` and infer.
-        Idempotent + thread-safe: a second call from the autonomy
-        enable path while the Perception screen already opened the
-        camera is a refcount bump, NOT a redundant
-        ``pipeline.start()`` (which librealsense rejects).
+        **Non-blocking**: returns immediately. If this is the first
+        reference, a worker thread is spawned to call
+        ``RealSense.open()`` (which blocks 1-3 s on
+        ``pipeline.start()`` and can occasionally stall for tens of
+        seconds during USB recovery). The actual outcome arrives via
+        the ``depth_open_changed`` Qt signal once the open completes.
+
+        Return contract:
+
+          * ``(True,  "depth ready")``         - already open from a
+                                                  previous acquire
+                                                  (refcount > 1).
+          * ``(True,  "depth opening...")``    - first acquire; open
+                                                  is now running on
+                                                  a worker thread.
+                                                  Wait for
+                                                  ``depth_open_changed``
+                                                  for the real result.
+          * ``(False, "depth: <error>")``      - a previous open
+                                                  failed and we're
+                                                  not retrying. Call
+                                                  ``release_depth()``
+                                                  + ``acquire_depth()``
+                                                  to retry.
         """
         with self._lock:
             self._depth_refcount += 1
             if self._depth_refcount > 1:
+                # Refcount > 1 -> someone else already opened (or is
+                # opening) the camera. Just bump the count.
                 return self._depth_open_ok, self._depth_open_msg
-            try:
-                self._depth.open()
-                self._depth_open_ok = True
-                self._depth_open_msg = "depth ready"
-            except Exception as exc:
-                log.warning("depth open failed: %s", exc)
-                self._depth_open_ok = False
-                self._depth_open_msg = f"depth: {exc}"
-                # Don't keep a dangling refcount on a failed open or
-                # the next release_depth would underflow our "close
-                # only on the last release" check.
+
+            # First reference. If a previous open already failed and
+            # left _depth_open_ok = False (and refcount went to 0),
+            # we'd have returned to here with refcount = 1 from the
+            # increment above. Be explicit about retrying: clear the
+            # error flag so we can attempt a fresh open.
+            self._depth_open_ok = False
+            self._depth_open_msg = "depth opening..."
+            self._depth_open_in_progress = True
+            self._depth_close_pending = False
+            self._depth_open_thread = threading.Thread(
+                target=self._depth_open_worker,
+                name="DepthOpen",
+                daemon=True,
+            )
+            self._depth_open_thread.start()
+            return True, self._depth_open_msg
+
+    def _depth_open_worker(self) -> None:
+        """Background-thread body for ``acquire_depth()``.
+
+        Holds NO locks across the actual ``_depth.open()`` call
+        (which is the blocking part). Locks are taken only to
+        publish state + decide whether to close immediately.
+        """
+        try:
+            self._depth.open()
+            ok = True
+            msg = "depth ready"
+        except Exception as exc:
+            log.warning("depth open failed: %s", exc)
+            ok = False
+            msg = f"depth: {exc}"
+
+        close_now = False
+        with self._lock:
+            self._depth_open_ok = ok
+            self._depth_open_msg = msg
+            self._depth_open_in_progress = False
+            self._depth_open_thread = None
+            if not ok:
+                # Failed open: drop the speculative refcount so the
+                # next acquire_depth() will retry instead of just
+                # bumping into the already-False cached state.
                 self._depth_refcount = 0
-            return self._depth_open_ok, self._depth_open_msg
+                self._depth_close_pending = False
+            elif self._depth_close_pending or self._depth_refcount <= 0:
+                # Open succeeded but everyone released while we were
+                # mid-open. Tear it back down.
+                close_now = True
+                self._depth_refcount = 0
+                self._depth_open_ok = False
+                self._depth_open_msg = "depth closed"
+                self._depth_close_pending = False
+        if close_now:
+            try:
+                self._depth.set_color_publish(False)
+            except Exception:
+                pass
+            try:
+                self._depth.close()
+            except Exception as exc:
+                log.warning("depth close after racy release failed: %s", exc)
+
+        # Refresh sensor health if autonomy is currently enabled -
+        # otherwise the Map screen's "Depth: opening..." pill stays
+        # stale until the next enable cycle.
+        with self._lock:
+            if self._enabled:
+                final_ok = ok and not close_now
+                final_msg = msg if not close_now else "depth closed"
+                self._health = SensorHealth(
+                    lidar=self._health.lidar,
+                    ultrasonic=self._health.ultrasonic,
+                    ir=self._health.ir,
+                    depth=(final_ok, final_msg),
+                )
+                health_payload = self._health.as_dict()
+            else:
+                health_payload = None
+
+        # Always notify, even on close-now, so any listener that
+        # cares ("we tried and failed" or "we transiently opened")
+        # can update its UI.
+        self.depth_open_changed.emit({
+            "ok": ok and not close_now,
+            "message": msg if not close_now else "depth closed",
+            "in_progress": False,
+        })
+        if health_payload is not None:
+            self.sensor_health_changed.emit(health_payload)
 
     def release_depth(self) -> None:
         """Drop one reference to the depth sensor, close on the last.
 
         Safe to call when refcount is already zero (no-op) so a
         Perception screen on_leave handler doesn't have to track its
-        own state.
+        own state. If an open is currently in flight, sets a flag so
+        the open-thread closes the pipeline immediately on completion
+        instead of leaving it spinning with no consumers.
         """
         with self._lock:
             if self._depth_refcount <= 0:
@@ -236,9 +353,15 @@ class AutonomyController(QObject):
             self._depth_refcount -= 1
             if self._depth_refcount > 0:
                 return
-            # Last reference - actually close. Disable colorization
-            # first so the worker thread doesn't try to apply cv2 to a
-            # frame that's about to be invalidated by close().
+            # Last reference - actually close. If an open is in
+            # flight, defer the close to the open-worker (it'll see
+            # _depth_close_pending and tear down on completion).
+            if self._depth_open_in_progress:
+                self._depth_close_pending = True
+                return
+            # Disable colorization first so the worker thread doesn't
+            # try to apply cv2 to a frame that's about to be
+            # invalidated by close().
             try:
                 self._depth.set_color_publish(False)
             except Exception:

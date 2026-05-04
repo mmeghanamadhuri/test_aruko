@@ -363,6 +363,7 @@ class PerceptionScreen(QWidget):
             self._autonomy.enabled_changed.connect(self._on_autonomy_enabled)
             self._autonomy.sensor_health_changed.connect(self._on_sensor_health)
             self._autonomy.goto_state_changed.connect(self._on_goto_state)
+            self._autonomy.depth_open_changed.connect(self._on_depth_open_changed)
         except Exception:
             log.debug("PerceptionScreen: AutonomyController signals unavailable")
         if self._grid is not None:
@@ -391,9 +392,12 @@ class PerceptionScreen(QWidget):
             log.warning("slam.start failed: %s", exc)
 
         # 3) Depth - acquire through the autonomy controller's
-        # refcount, then turn on colorization. Done in this order so
-        # that even if open() fails we don't leave colorization on
-        # for some other future caller.
+        # refcount. NOTE: acquire_depth() is now non-blocking - it
+        # returns immediately and the actual `pipeline.start()` runs
+        # on a worker thread. We get the real outcome via the
+        # `depth_open_changed` signal -> `_on_depth_open_changed`.
+        # That keeps the Qt main thread responsive during the
+        # 1-3 s (occasionally tens-of-seconds) RealSense init.
         if not self._holds_depth:
             try:
                 ok, msg = self._autonomy.acquire_depth()
@@ -405,6 +409,10 @@ class PerceptionScreen(QWidget):
                 self._depth_open_ok = False
                 self._depth_open_msg = msg
                 log.warning("autonomy.acquire_depth failed: %s", exc)
+            # First-paint of the pill - either "opening..." (success
+            # path while open thread runs) or an immediate failure
+            # message. The signal handler will update it again when
+            # the worker thread finishes.
             self._update_depth_pill(self._depth_open_ok, self._depth_open_msg)
 
         try:
@@ -412,8 +420,11 @@ class PerceptionScreen(QWidget):
         except Exception:
             pass
 
-        # Start the depth poll loop AFTER acquire so we don't generate
-        # a flurry of "no frame yet" placeholder paints.
+        # Start the depth poll loop. It gracefully no-ops while
+        # frames aren't arriving yet (returns None from
+        # latest_depth_visualization), so it's safe to start here
+        # even before the open thread has actually opened the
+        # pipeline.
         self._depth_timer.start()
 
         # Sync footer + chip state with current reality in case the
@@ -588,6 +599,24 @@ class PerceptionScreen(QWidget):
         else:
             self._depth_chip.setText("Depth -")
             self._depth_chip.set_kind(Pill.KIND_NEUTRAL)
+
+    def _on_depth_open_changed(self, payload: dict) -> None:
+        """Background depth open finished. Update the pill to either
+        'opening' -> 'Live' (poll loop will paint frames as they
+        arrive) or to the failure message.
+        """
+        ok = bool(payload.get("ok"))
+        msg = str(payload.get("message") or "")
+        self._depth_open_ok = ok
+        self._depth_open_msg = msg
+        # Don't clobber the "Live" pill that _poll_depth has already
+        # set on the first frame - that's the successful end state.
+        if ok:
+            # If frames haven't arrived yet, leave the pill at
+            # "opening". Once the first frame lands, _poll_depth
+            # flips it to "Live".
+            return
+        self._update_depth_pill(False, msg)
 
     # ------------------------------------------------------------------
     # Depth poll loop
