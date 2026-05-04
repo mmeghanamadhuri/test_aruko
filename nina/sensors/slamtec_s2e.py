@@ -34,13 +34,28 @@ Bring-up gotchas worth knowing about (see also
   * `pyrplidarsdk` builds a C extension on install; on Jetson aarch64
     the wheel is provided but you still need `python3-dev` for the
     nanobind build path the install script falls back to.
+
+**GIL / GUI freeze:** The published `pyrplidarsdk` wheel binds the
+Slamtec SDK without releasing CPython's GIL around `connect()` /
+`get_scan_data()`. Those calls block for hundreds of ms per sweep on
+blocking ``grabScanDataHq`` timeouts. When the slam reader runs in a
+``threading.Thread`` inside the *same* interpreter as Qt, the GIL
+serialises everything → the Map / Perception screens appear frozen
+for seconds or indefinitely. **Mitigation (default ON):** we run the
+SDK in a separate interpreter via ``multiprocessing`` ``spawn``, and
+the parent only unpickles scan batches off a Queue (I/O releases the
+GIL). Set ``NINA_SLAMTEC_S2E_SUBPROCESS=0`` to force the legacy
+in-process driver (useful for embedded debuggers that can't follow a
+child process).
 """
 
 from __future__ import annotations
 
 import logging
 import math
+import multiprocessing
 import os
+import queue
 import threading
 import time
 from typing import List, Optional, Tuple
@@ -65,6 +80,82 @@ DEFAULT_MAX_RANGE_MM = int(os.environ.get("NINA_LIDAR_MAX_RANGE_MM", "28000"))
 # a comfortable margin that still lets us see things right at the
 # bumper.
 DEFAULT_MIN_RANGE_MM = int(os.environ.get("NINA_LIDAR_MIN_RANGE_MM", "100"))
+
+
+def _use_s2e_subprocess() -> bool:
+    """True unless operator opts out with NINA_SLAMTEC_S2E_SUBPROCESS=0.
+
+    Default ON: pyrplidarsdk's blocking C++ calls hold the GIL and freeze
+    Qt when the reader shares the interpreter with the GUI.
+    """
+    v = os.environ.get("NINA_SLAMTEC_S2E_SUBPROCESS", "1").strip().lower()
+    return v not in ("0", "false", "no", "off")
+
+
+def _s2e_scan_child_main(cmd_q, data_q, host: str, port: int) -> None:
+    # noqa: D401 - imperative name for multiprocessing spawn pickle
+    """Slamtec SDK loop (separate interpreter — does NOT share Qt's GIL)."""
+    import queue as std_queue
+
+    try:
+        import pyrplidarsdk  # type: ignore
+    except Exception as exc:
+        data_q.put(("status", "error", f"import pyrplidarsdk: {exc}"))
+        return
+
+    drv = pyrplidarsdk.RplidarDriver(ip_address=host, udp_port=port)
+    if not drv.connect():
+        data_q.put(("status", "error", "connect() returned False"))
+        return
+    try:
+        info = drv.get_device_info()
+        if info is not None:
+            print(
+                f"[SlamtecS2E child] model={info.model} fw={info.firmware_version} "
+                f"hw={info.hardware_version} sn={info.serial_number}",
+                flush=True,
+            )
+    except Exception:
+        pass
+    if not drv.start_scan():
+        data_q.put(("status", "error", "start_scan() returned False"))
+        return
+
+    data_q.put(("status", "ready"))
+    idle = 0.002
+    while True:
+        try:
+            cmd = cmd_q.get_nowait()
+            if cmd == "stop":
+                break
+        except std_queue.Empty:
+            pass
+        try:
+            batch = drv.get_scan_data()
+        except Exception as exc:
+            try:
+                data_q.put_nowait(("exc", str(exc)))
+            except Exception:
+                pass
+            time.sleep(idle)
+            continue
+        if batch:
+            try:
+                data_q.put(("batch", batch), timeout=0.25)
+            except Exception:
+                # Parent saturated — drop frame (better than blocking child).
+                pass
+        else:
+            time.sleep(idle)
+
+    try:
+        drv.stop_scan()
+    except Exception:
+        pass
+    try:
+        drv.disconnect()
+    except Exception:
+        pass
 
 
 def _import_sdk():
@@ -123,7 +214,12 @@ class SlamtecS2E:
         self._max_range_mm = int(max_range_mm)
         self._min_range_mm = int(min_range_mm)
 
-        self._driver = None  # pyrplidarsdk.RplidarDriver | None
+        self._driver = None  # pyrplidarsdk.RplidarDriver | None (in-process)
+        self._subprocess_mode = False
+        self._mp_ctx = None
+        self._mp_proc: Optional[multiprocessing.Process] = None
+        self._mp_cmd_q = None  # multiprocessing.Queue | None
+        self._mp_data_q = None
         self._thread: Optional[threading.Thread] = None
         self._stop_evt = threading.Event()
         self._lock = threading.Lock()
@@ -148,6 +244,13 @@ class SlamtecS2E:
     # ------------------------------------------------------------------
 
     def open(self) -> None:
+        if _use_s2e_subprocess():
+            self._open_subprocess()
+        else:
+            self._open_inprocess()
+
+    def _open_inprocess(self) -> None:
+        self._subprocess_mode = False
         try:
             sdk = _import_sdk()
         except Exception as exc:
@@ -207,13 +310,104 @@ class SlamtecS2E:
             f"connected on udp://{self._host}:{self._udp_port}"
         )
 
+    def _open_subprocess(self) -> None:
+        """Run pyrplidarsdk in a spawned interpreter (see module doc)."""
+        self._terminate_subprocess()
+        self._subprocess_mode = True
+        self._driver = None
+        self._sweep_acc.clear()
+        self._angle_scale_to_deg = None
+        try:
+            ctx = multiprocessing.get_context("spawn")
+        except Exception as exc:
+            self._subprocess_mode = False
+            self._message = f"multiprocessing spawn unavailable: {exc}"
+            raise RuntimeError(self._message) from exc
+
+        self._mp_ctx = ctx
+        self._mp_cmd_q = ctx.Queue()
+        self._mp_data_q = ctx.Queue(maxsize=8)
+        self._mp_proc = ctx.Process(
+            target=_s2e_scan_child_main,
+            args=(self._mp_cmd_q, self._mp_data_q, self._host, self._udp_port),
+            name="SlamtecS2EScan",
+            daemon=True,
+        )
+        self._mp_proc.start()
+
+        deadline = time.monotonic() + 45.0
+        err_msg: Optional[str] = None
+        while time.monotonic() < deadline:
+            try:
+                msg = self._mp_data_q.get(timeout=0.5)
+            except queue.Empty:
+                if self._mp_proc is None or not self._mp_proc.is_alive():
+                    code = (
+                        self._mp_proc.exitcode
+                        if self._mp_proc is not None else None
+                    )
+                    err_msg = (
+                        f"lidar scan process exited early (exitcode={code})"
+                    )
+                    break
+                continue
+            if msg[0] == "status":
+                if msg[1] == "ready":
+                    err_msg = None
+                    break
+                if msg[1] == "error":
+                    err_msg = str(msg[2])
+                    break
+        else:
+            err_msg = "timeout waiting for lidar scan subprocess (45s)"
+
+        if err_msg:
+            self._terminate_subprocess()
+            self._subprocess_mode = False
+            self._message = err_msg
+            raise RuntimeError(err_msg)
+
+        self._stop_evt.clear()
+        self._thread = threading.Thread(
+            target=self._run_subprocess,
+            name="SlamtecS2E-Parent",
+            daemon=True,
+        )
+        self._thread.start()
+        self._connected = True
+        self._message = (
+            f"connected (subprocess) on udp://{self._host}:{self._udp_port}"
+        )
+
+    def _terminate_subprocess(self) -> None:
+        q = self._mp_cmd_q
+        self._mp_cmd_q = None
+        if q is not None:
+            try:
+                q.put_nowait("stop")
+            except Exception:
+                pass
+        proc = self._mp_proc
+        self._mp_proc = None
+        self._mp_data_q = None
+        self._mp_ctx = None
+        if proc is not None:
+            proc.join(timeout=3.0)
+            if proc.is_alive():
+                log.warning("S2E scan child ignored stop; terminating")
+                proc.terminate()
+                proc.join(timeout=2.0)
+
     def close(self) -> None:
         self._stop_evt.set()
         thread = self._thread
         self._thread = None
         if thread is not None:
             thread.join(timeout=2.0)
-        if self._driver is not None:
+        if self._subprocess_mode:
+            self._terminate_subprocess()
+            self._subprocess_mode = False
+        elif self._driver is not None:
             try:
                 self._driver.stop_scan()
             except Exception as exc:
@@ -316,6 +510,60 @@ class SlamtecS2E:
                     time.sleep(idle_sleep)
                     continue
 
+            self._ingest(angles, ranges, qualities)
+
+    def _run_subprocess(self) -> None:
+        """Parent-side reader: unpickle scan batches (GIL released on queue I/O)."""
+        assert self._mp_data_q is not None
+        data_q = self._mp_data_q
+        proc = self._mp_proc
+        FAULT_BUDGET = 20
+        consecutive_errors = 0
+        while not self._stop_evt.is_set():
+            try:
+                msg = data_q.get(timeout=0.35)
+            except queue.Empty:
+                if proc is not None and not proc.is_alive():
+                    self._message = "S2E scan subprocess exited"
+                    self._connected = False
+                    log.warning("S2E scan subprocess died mid-run")
+                    return
+                continue
+            if msg[0] == "exc":
+                consecutive_errors += 1
+                if consecutive_errors >= FAULT_BUDGET:
+                    self._message = (
+                        f"S2E scan subprocess fault ({consecutive_errors}x): "
+                        f"{msg[1]}"
+                    )
+                    self._connected = False
+                    log.warning(self._message)
+                    return
+                if consecutive_errors == 1:
+                    log.debug(
+                        "S2E subprocess grab error (%s); retrying", msg[1]
+                    )
+                time.sleep(0.005)
+                continue
+            if msg[0] != "batch":
+                continue
+            consecutive_errors = 0
+            batch = msg[1]
+            try:
+                angles, ranges, qualities = batch
+            except Exception:
+                if isinstance(batch, list) and batch and len(batch[0]) >= 2:
+                    angles = [m[0] for m in batch]
+                    ranges = [m[1] for m in batch]
+                    qualities = [
+                        m[2] if len(m) > 2 else 0 for m in batch
+                    ]
+                else:
+                    log.warning(
+                        "S2E: unexpected scan_data shape from child: %r",
+                        type(batch),
+                    )
+                    continue
             self._ingest(angles, ranges, qualities)
 
     def _ingest(self, angles, ranges, qualities) -> None:

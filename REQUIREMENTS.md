@@ -539,6 +539,7 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_LIDAR_MODEL` | `s2e` | Lidar driver to load. `s2e` = Slamtec S2E (Ethernet/UDP, ~30 m, default), `a1` = legacy RPLIDAR A1M8 (USB-serial, ~12 m), `auto` = probe S2E first then fall back to A1. |
 | `NINA_LIDAR_HOST` | `192.168.11.2` | Slamtec S2E IP address. The factory default; change only if you've reflashed the lidar's IP through the Slamtec SDK or RoboStudio. |
 | `NINA_LIDAR_UDP_PORT` | `8089` | UDP port the S2E listens on (factory default). |
+| `NINA_SLAMTEC_S2E_SUBPROCESS` | `1` | `1` (default) runs `pyrplidarsdk` in a separate **spawned** Python process and pipes scan batches back to Nina. The published wheel holds the **GIL** during blocking `connect()` / `get_scan_data()` calls; doing that in a `thread` inside the same interpreter as **Qt freezes the Map / Perception UI** for seconds. Set to `0` only for low-level debugging (single-process, GDB-friendly) — expect the GUI to stall whenever the lidar blocks. |
 | `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device (only used when `NINA_LIDAR_MODEL=a1`). |
 | `NINA_LIDAR_BAUD` | `115200` | RPLIDAR A1 baud rate (only used when `NINA_LIDAR_MODEL=a1`). |
 | `NINA_LIDAR_BINS` | `400` (S2E) | Bin count for the per-revolution scan vector. The S2E publishes ~32k samples/s at 10 Hz so 400 bins ≈ 0.9° angular resolution. The A1 driver hard-codes 360. |

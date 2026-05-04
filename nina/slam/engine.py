@@ -121,11 +121,13 @@ class SlamEngine:
         self._fallback_reason = ""
 
         self._lock = threading.RLock()
-        self._mapbytes = bytearray(self._map_size_px * self._map_size_px)
-        # Pre-fill with "unknown" (127) so the screen has a sensible
-        # baseline before the first scan lands.
-        for i in range(len(self._mapbytes)):
-            self._mapbytes[i] = 127
+        # Pre-fill with "unknown" (127). A naïve Python for-loop over
+        # 10^6 elements blocks the main thread for half a second on a
+        # Jetson during SlamEngine construction (first Map open) -
+        # repeat the allocation in C via bytes/repeat instead.
+        self._mapbytes = bytearray([127]) * (
+            self._map_size_px * self._map_size_px
+        )
         self._pose = SlamPose(0.0, 0.0, 0.0)
         self._updated_at = 0.0
         self._scans_processed = 0
@@ -204,8 +206,8 @@ class SlamEngine:
         # is enough. Reset our buffers so a fresh open() starts clean.
         with self._lock:
             self._slam = None
-            for i in range(len(self._mapbytes)):
-                self._mapbytes[i] = 127
+            n = len(self._mapbytes)
+            self._mapbytes[:] = b"\x7f" * n
             self._pose = SlamPose(0.0, 0.0, 0.0)
             self._updated_at = 0.0
             self._scans_processed = 0
