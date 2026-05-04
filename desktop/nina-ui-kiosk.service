@@ -55,6 +55,20 @@ Environment=NINA_NAV_REMOTE_BAUD=115200
 Environment=NINA_NAV_INVERT_LEFT=1
 Environment=NINA_NAV_INVERT_RIGHT=0
 
+# Lidar selection. Current builds ship with the Slamtec RPLIDAR S2E
+# (Ethernet/UDP, ~30 m). Override to `a1` for legacy bots running
+# the old USB-serial RPLIDAR A1M8, or to `auto` for fleet images that
+# need to support both. The factory in
+# nina.sensors.lidar_factory.build_lidar reads this on startup and
+# also picks SLAM map sizing defaults that match the chosen lidar's
+# range, so changing this one var is the only thing the operator has
+# to do when swapping hardware. See
+# scripts/install-slamtec-s2e-jetson.sh for the host-side network
+# bring-up.
+Environment=NINA_LIDAR_MODEL=s2e
+Environment=NINA_LIDAR_HOST=192.168.11.2
+Environment=NINA_LIDAR_UDP_PORT=8089
+
 ExecStart=__EXEC__
 
 # Restart on transient failure so a one-off Qt / camera hiccup doesn't

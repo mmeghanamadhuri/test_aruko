@@ -43,7 +43,21 @@ ultralytics>=8.0.0
 # that source unavailable and the pilot keeps running on whatever
 # remains.
 #
-# Lidar (SLAMTEC RPLIDAR A1M8) - USB serial:
+# Lidar - two drivers, one shipping default and one legacy fallback:
+#
+#   * Slamtec RPLIDAR S2E (Ethernet / UDP) - the current production
+#     lidar. Driven through pyrplidarsdk, a nanobind wrapper around
+#     Slamtec's official C++ rplidar_sdk that supports both serial
+#     and UDP transports. Wheels exist for Linux x86_64 and aarch64;
+#     the Jetson install script (scripts/install-slamtec-s2e-jetson.sh)
+#     handles the JetPack 6 PEP 668 dance.
+#   * Slamtec RPLIDAR A1M8 (USB serial) - legacy bots only. Selected
+#     via NINA_LIDAR_MODEL=a1.
+#
+# Both are listed as optional - the lidar factory degrades gracefully
+# when neither package is installed (Map screen pill goes amber and
+# the autonomy controller keeps running on whatever sensors remain).
+pyrplidarsdk>=0.1.2; python_version >= "3.10"
 rplidar>=0.9.1
 # 2D occupancy-grid SLAM (CoreSLAM port; no ROS dep, runs on Nano).
 # BreezySLAM is GitHub-only (no PyPI release), so we install from the

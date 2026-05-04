@@ -155,15 +155,28 @@ log "Smoke-testing the install"
 import sys
 try:
     from breezyslam.algorithms import RMHC_SLAM
-    from breezyslam.sensors import RPLidarA1
+    # `Laser` is the configurable base; Nina builds one of these
+    # at runtime with the parameters of whichever lidar is wired
+    # up (Slamtec S2E by default, A1M8 fallback). The smoke test
+    # uses S2E-ish numbers because that's what the current build
+    # ships with; both models still work, this is just sanity.
+    from breezyslam.sensors import Laser
 except Exception as exc:
     print(f"  IMPORT FAILED: {exc}")
     sys.exit(1)
 
 try:
-    laser = RPLidarA1()
+    laser = Laser(
+        scan_size=400,
+        scan_rate_hz=10.0,
+        detection_angle_degrees=360.0,
+        distance_no_detection_mm=28000,
+        detection_margin=0,
+        offset_mm=0,
+    )
     slam = RMHC_SLAM(laser, 200, 5.0)
-    print(f"  RMHC_SLAM constructed: map=200x200 px, world=5 m")
+    print(f"  RMHC_SLAM constructed: map=200x200 px, world=5 m, "
+          f"laser=Slamtec-S2E-shaped (400 samples / 10 Hz / 28 m)")
 except Exception as exc:
     print(f"  CONSTRUCT FAILED: {exc}")
     sys.exit(1)

@@ -26,13 +26,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 @pytest.fixture
 def clean_env(monkeypatch: pytest.MonkeyPatch):
-    """Strip every NINA_AUTO_* / NINA_SLAM_* / NINA_DEPTH_* env var so
-    we test the *built-in* defaults, not whatever the dev box has set
-    in its shell. The autonomy bring-up doc tells operators to set
-    these in `desktop/nina-ui-kiosk.service`; we want the in-code
-    defaults to be safe even if the unit file is missing."""
+    """Strip every NINA_AUTO_* / NINA_SLAM_* / NINA_DEPTH_* /
+    NINA_LIDAR_* env var so we test the *built-in* defaults, not
+    whatever the dev box has set in its shell. The autonomy
+    bring-up doc tells operators to set these in
+    `desktop/nina-ui-kiosk.service`; we want the in-code defaults
+    to be safe even if the unit file is missing."""
     for key in list(os.environ):
-        if key.startswith(("NINA_AUTO_", "NINA_SLAM_", "NINA_DEPTH_")):
+        if key.startswith((
+            "NINA_AUTO_", "NINA_SLAM_", "NINA_DEPTH_", "NINA_LIDAR_",
+        )):
             monkeypatch.delenv(key, raising=False)
     yield
 
@@ -114,15 +117,17 @@ def test_tick_rate_fast_enough_for_walking_speed(clean_env) -> None:
 
 
 def test_slam_world_fits_indoor_lidar_range(clean_env) -> None:
-    """Default world MUST be small enough that a typical 4-5 m room
-    actually fills a usable fraction of the rendered map. The
-    RPLIDAR A1 only reliably ranges ~6 m indoors, so a 20 m world
-    means most of the grid stays painted unknown-grey. The
-    Map / Perception lidar pane reads 'almost nothing' in that
-    case. Cap the default at 10 m so the room fills > 25% of the
-    rendered grid."""
+    """Default world MUST be small enough that a typical room
+    actually fills a usable fraction of the rendered map - but
+    big enough to use the active lidar's range. The Slamtec S2E
+    (current default) reliably ranges ~25 m indoors, so a 12 m
+    world keeps an 8 m hallway loop visible end-to-end while
+    still letting walls render as multi-pixel features. The cap
+    at 16 m guards against accidental bumps that would push
+    typical rooms back into the 'tiny central patch' failure
+    mode the A1-era default fixed."""
     s = load_settings(REPO_ROOT)
-    assert s.slam.map_size_meters <= 10.0, (
+    assert s.slam.map_size_meters <= 16.0, (
         f"map_size_meters={s.slam.map_size_meters} is too large; the "
         "rendered map looks empty because typical rooms only fill a "
         "small central patch. See REQUIREMENTS.md §5.3."
@@ -143,6 +148,55 @@ def test_slam_resolution_fine_enough_for_walls(clean_env) -> None:
         "render as sub-pixel features after letterboxing into the "
         "Perception card"
     )
+
+
+def test_slam_laser_model_matches_active_lidar(clean_env) -> None:
+    """The BreezySLAM laser model parameters must match the physical
+    lidar's effective range or the particle filter mis-weights long
+    returns. The current build defaults to the Slamtec S2E (~28 m
+    effective indoors, ~10 Hz, ~400 samples per sweep). If the
+    factory defaults drift back to the A1-era 12 m / 5.5 Hz / 360
+    samples without updating settings.py's branch, this test
+    screams."""
+    s = load_settings(REPO_ROOT)
+    # The S2E branch sets these; the A1 branch sets different
+    # numbers but is opt-in via NINA_LIDAR_MODEL=a1 (cleared by
+    # clean_env) so we land on the S2E defaults.
+    assert s.lidar.model == "s2e", (
+        f"default lidar model is {s.lidar.model!r}; the build is "
+        "supposed to ship configured for the Slamtec S2E now"
+    )
+    assert s.slam.laser_max_range_mm >= 20000, (
+        f"laser_max_range_mm={s.slam.laser_max_range_mm} is shorter "
+        "than the S2E's effective indoor range; BreezySLAM will "
+        "clip valid mid-range returns"
+    )
+    assert 8.0 <= s.slam.laser_scan_rate_hz <= 20.0, (
+        f"laser_scan_rate_hz={s.slam.laser_scan_rate_hz} is outside "
+        "the S2E's typical 10-15 Hz envelope"
+    )
+    assert s.slam.laser_scan_size >= 360, (
+        f"laser_scan_size={s.slam.laser_scan_size}; BreezySLAM's "
+        "Markov filter needs at least ~1 deg angular resolution"
+    )
+
+
+def test_a1_legacy_path_still_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Operators with the legacy A1M8 lidar set NINA_LIDAR_MODEL=a1.
+    The branch must keep producing the proven 8 m / 800 px / 12 m
+    laser-model defaults so existing bots don't suddenly start
+    seeing the S2E-tuned numbers (which would clip A1 returns at
+    28 m even though the A1 can't see that far)."""
+    for key in list(os.environ):
+        if key.startswith(("NINA_AUTO_", "NINA_SLAM_", "NINA_DEPTH_", "NINA_LIDAR_")):
+            monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NINA_LIDAR_MODEL", "a1")
+    s = load_settings(REPO_ROOT)
+    assert s.lidar.model == "a1"
+    assert s.slam.map_size_meters == 8.0
+    assert s.slam.map_size_pixels == 800
+    assert s.slam.laser_max_range_mm == 12000
+    assert s.slam.laser_scan_size == 360
 
 
 # ---------------------------------------------------------------------

@@ -15,6 +15,7 @@ Distances are reported in **millimetres** throughout the stack so
 SLAM / autonomy don't need unit conversions.
 """
 
+from nina.sensors.lidar_factory import build_lidar, configured_model, model_label
 from nina.sensors.types import (
     DepthFrame,
     IRReading,
@@ -29,4 +30,7 @@ __all__ = [
     "LidarScan",
     "SensorHealth",
     "UltrasonicReading",
+    "build_lidar",
+    "configured_model",
+    "model_label",
 ]

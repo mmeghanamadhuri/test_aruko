@@ -354,10 +354,18 @@ which fuses four sensor channels via `obstacle_field.fuse()`:
 
 | Sensor | Physical role | Software path |
 |---|---|---|
-| RPLIDAR A1M8 | 360° static-obstacle layer | `nina.sensors.rplidar_a1.RPLidarA1` → `SlamWorker` → `bundle.lidar` |
+| Slamtec S2E lidar (default) | 360° long-range static-obstacle layer (~30 m, dToF, Ethernet/UDP) | `nina.sensors.slamtec_s2e.SlamtecS2E` → `SlamWorker` → `bundle.lidar` |
+| RPLIDAR A1M8 (legacy) | 360° short-range static-obstacle layer (~12 m, USB-serial) | `nina.sensors.rplidar_a1.RPLidarA1` → `SlamWorker` → `bundle.lidar` |
 | RealSense D435 | Forward volumetric layer (low obstacles, drop-offs) | `nina.sensors.realsense_d435.RealSenseD435` → `AutonomyController._depth` → `bundle.depth` |
 | HC-SR04 ring (later) | Sub-30 cm and glass/mirror coverage | `nina.sensors.hcsr04.HCSR04Array` |
 | GP2Y0E02B IR (later) | Cliff / table-edge detection | `nina.sensors.gp2y0e02b.GP2Y0E02B` |
+
+The active lidar is selected at startup by the
+`nina.sensors.lidar_factory.build_lidar` factory based on the
+`NINA_LIDAR_MODEL` env var (default `s2e`). The `auto` mode probes the
+S2E first and falls back to the A1 driver if `pyrplidarsdk` isn't
+installed — useful when one disk image needs to run on both lidar
+generations.
 
 The RGB camera + face / object detection (YuNet + YOLOv8) is **not**
 fed into autonomy today — those run on the Vision tab for operator
@@ -369,14 +377,26 @@ toward a person", "approach the dog bowl") would mean wiring
 
 See §1.1 for the recommended height stack. Quick checklist:
 
-- [ ] LiDAR on top, USB cable routed clear of the scan plane
-      (otherwise the cable shows up as a phantom wall in the SLAM map)
+- [ ] LiDAR on top. For the **Slamtec S2E** (default): both the 12 V
+      power barrel jack and the Ethernet cable need to be routed
+      clear of the scan plane — the S2E sees ~25 m indoors so a
+      cable that loops above the optical centre will paint a
+      half-room phantom wall on the map. For the **legacy A1**:
+      same advice, except the cable is USB-serial and 12 V isn't
+      involved.
 - [ ] RGB camera at face height, looking straight forward
 - [ ] D435 below the RGB camera, **30–50 cm above the floor**, tilted
       **10–15° down** (use a small bracket — vertical-mount is fine)
 - [ ] D435 plugged into a **USB 3** port (blue inside) on the Jetson.
       USB 2 limits depth to 480p @ 6 fps and the autonomy tick rate
       starves.
+- [ ] (S2E only) The Jetson's wired Ethernet port is plugged into
+      the lidar's Ethernet adapter board. The S2E ships configured
+      for IP `192.168.11.2` so the Jetson side has to be in the
+      same subnet — `scripts/install-slamtec-s2e-jetson.sh` handles
+      this automatically. If you're running both wired LAN and the
+      lidar, plug the lidar into a separate USB-Ethernet dongle
+      and let that dongle hold the 192.168.11.10 static IP.
 
 #### 5.3.2 Install pyrealsense2 on the Jetson
 
@@ -445,6 +465,46 @@ rasterised scans in fallback mode).
 
 #### 5.3.4 Verify the lidar separately
 
+For the **Slamtec S2E** (default), run the bring-up script — it sets
+up the host's Ethernet IP, pings the lidar, and runs an end-to-end
+driver smoke test in one shot:
+
+```bash
+cd ~/Nvidia-jetson-platform
+./scripts/install-slamtec-s2e-jetson.sh
+```
+
+It will:
+
+1. apt-install build deps + ping/iproute helpers,
+2. pip-install `pyrplidarsdk` (PyPI; with the `--break-system-packages`
+   PEP 668 fallback for JetPack 6),
+3. configure your wired interface to `192.168.11.10/24` (via nmcli
+   when NetworkManager is active, else a `systemd-networkd` drop-in),
+4. `ping -c 3 192.168.11.2` so a cable / power problem is loud,
+5. open the device through `pyrplidarsdk.RplidarDriver` and pull
+   3 s of scan data, printing the model / firmware / serial number
+   on success.
+
+If you'd rather poke the device by hand:
+
+```bash
+ping -c 3 192.168.11.2     # default S2E IP
+python3 -c "
+from nina.sensors.slamtec_s2e import SlamtecS2E
+import time
+l = SlamtecS2E()
+l.open()
+time.sleep(2)
+print(l.read())
+l.close()
+"
+```
+
+Should print a `LidarScan` object with several hundred returns.
+
+For the **legacy A1M8** (only when `NINA_LIDAR_MODEL=a1`):
+
 ```bash
 ls -l /dev/ttyUSB0    # RPLIDAR A1 default port
 sudo usermod -aG dialout $USER && newgrp dialout    # if not already
@@ -458,8 +518,6 @@ print(l.read())
 l.close()
 "
 ```
-
-Should print a `LidarScan` object with several hundred returns.
 
 #### 5.3.5 Environment variables that gate the sensors
 
@@ -478,10 +536,20 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_DEPTH_MIN_CLUSTER_PX` | 50 | The forward / left / right region "min" requires at least this many pixels at-or-closer than the reported distance before the autonomy treats it as a real obstacle. Single-pixel IR splash from a reflective floor used to hijack `forward_min_mm` (bot spun in place even on an empty hallway); 50 px ≈ 5×10 cluster, comfortably above the noise floor and small enough to still catch a chair leg at typical cruise distance. |
 | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Vertical % of the depth image discarded from the **top** before the forward / left / right cone min is computed. Defaults skip direct overhead glare. (Was 25% — too aggressive: chest-high tabletops at 1–2 m were masked out, so the bot drove into them.) |
 | `NINA_DEPTH_BOT_SKIP_PCT` | 35 | Vertical % discarded from the **bottom**. Defaults skip the floor right in front of the bot — without this mask a tilted-down D435 reads the floor at ~480 mm and the autonomy spins in place forever (see §5.3.6). |
-| `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device. |
+| `NINA_LIDAR_MODEL` | `s2e` | Lidar driver to load. `s2e` = Slamtec S2E (Ethernet/UDP, ~30 m, default), `a1` = legacy RPLIDAR A1M8 (USB-serial, ~12 m), `auto` = probe S2E first then fall back to A1. |
+| `NINA_LIDAR_HOST` | `192.168.11.2` | Slamtec S2E IP address. The factory default; change only if you've reflashed the lidar's IP through the Slamtec SDK or RoboStudio. |
+| `NINA_LIDAR_UDP_PORT` | `8089` | UDP port the S2E listens on (factory default). |
+| `NINA_LIDAR_PORT` | `/dev/ttyUSB0` | RPLIDAR A1 serial device (only used when `NINA_LIDAR_MODEL=a1`). |
+| `NINA_LIDAR_BAUD` | `115200` | RPLIDAR A1 baud rate (only used when `NINA_LIDAR_MODEL=a1`). |
+| `NINA_LIDAR_BINS` | `400` (S2E) | Bin count for the per-revolution scan vector. The S2E publishes ~32k samples/s at 10 Hz so 400 bins ≈ 0.9° angular resolution. The A1 driver hard-codes 360. |
+| `NINA_LIDAR_MAX_RANGE_MM` | `28000` | (S2E) Distance returns past this are treated as "no return" — clips multipath reflections in indoor rooms. The S2E's published max is 30 m; we clip at 28 m by default. |
+| `NINA_LIDAR_MIN_RANGE_MM` | `100` | (S2E) Distance returns closer than this are treated as the lidar seeing its own housing / the bot's own structure. |
 | `NINA_LIDAR_DISABLE` | unset | `1` skips lidar; SLAM and autonomy both degrade gracefully. |
-| `NINA_SLAM_METERS` | 8 | Side length (m) of the square SLAM world. The RPLIDAR A1 only reliably ranges ~6 m indoors, so a tighter world means typical rooms fill more of the rendered map. (Was 20 m — most of the Map / Perception lidar pane painted unknown-grey because rooms only filled a tiny central patch.) |
-| `NINA_SLAM_PIXELS` | 800 | Square map resolution. With the 8 m default world this is 10 mm/px. |
+| `NINA_SLAM_METERS` | 12 (S2E) / 8 (A1) | Side length (m) of the square SLAM world. The S2E reliably ranges ~25 m indoors so a 12 m world covers a typical hallway loop without overflowing the BreezySLAM particle filter. (Was 8 m on the A1 path; that stays the A1 default because the A1's 6 m range can't fill anything bigger.) |
+| `NINA_SLAM_PIXELS` | 1000 (S2E) / 800 (A1) | Square map resolution. With the 12 m default world this is 12 mm/px — fine enough to render walls as multi-pixel features after letterboxing into the Perception card. |
+| `NINA_SLAM_LASER_MAX_MM` | 28000 (S2E) / 12000 (A1) | The `distance_no_detection_mm` parameter passed to BreezySLAM's Laser model. Must match the physical lidar's effective range or the particle filter mis-weights long returns. |
+| `NINA_SLAM_LASER_SCAN_SIZE` | 400 (S2E) / 360 (A1) | The `scan_size` parameter passed to BreezySLAM's Laser model. Drives the resampling cadence the SlamWorker uses before calling `slam.update()`. |
+| `NINA_SLAM_LASER_SCAN_RATE_HZ` | 10 (S2E) / 5.5 (A1) | The `scan_rate_hz` parameter passed to BreezySLAM's Laser model. Used by the Markov-chain particle filter to gauge expected motion between sweeps. |
 | `NINA_AUTO_TICK_HZ` | 8 | Autonomy decision rate. (Was 5 Hz — at 15% PWM the bot coasts a few cm per 200 ms tick, enough to overshoot a turn decision; 8 Hz halves that.) |
 | `NINA_AUTO_CRUISE_PCT` | 15 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
 | `NINA_AUTO_TURN_PCT` | 16 | Turn-in-place speed % during obstacle avoidance. |
@@ -548,8 +616,9 @@ particularly mirror-finish floor, raise the floor:
 If the breakdown shows `lidar=120` (or similar low value) the lidar
 itself is reading something close in its forward sector — most
 commonly the lidar is mounted with 0° pointing **at the bot's body**
-instead of away from it. Rotate the RPLIDAR until the cable comes
-out the side opposite the bot's "front".
+instead of away from it. Rotate the lidar until the cable bundle
+(power + Ethernet on the S2E, USB-serial on the A1) comes out the
+side opposite the bot's "front".
 
 **Troubleshooting: "the bot got too close to people / banged into a table"**
 
@@ -871,7 +940,9 @@ support.
 │   ├── controllers/        navigation_manager (local Jetson GPIO),
 │   │                       remote_navigation_manager (serial to Pi bridge),
 │   │                       dynamixel_manager, action_runner
-│   ├── sensors/            rplidar_a1, hcsr04, gp2y0e02b, realsense_d435
+│   ├── sensors/            slamtec_s2e (default), rplidar_a1 (legacy),
+│   │                       hcsr04, gp2y0e02b, realsense_d435,
+│   │                       lidar_factory (model dispatch)
 │   ├── slam/               BreezySLAM engine
 │   ├── navigation/         autonomous_pilot + obstacle field
 │   ├── app/                CLI entry points (main.py, nav_bridge_test.py, …)

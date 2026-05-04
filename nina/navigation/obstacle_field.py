@@ -11,7 +11,8 @@ can ask one question:
 
 Sources:
 
-  * Lidar (head-mounted RPLIDAR A1) - long-range, 360 deg coverage.
+  * Lidar (head-mounted Slamtec S2E by default; legacy RPLIDAR A1M8
+    selectable via NINA_LIDAR_MODEL=a1) - long-range, 360 deg coverage.
     Drives the sector minimums for "forward / left / right / rear".
 
   * Depth camera (chassis-front D435) - tightens the forward cone with

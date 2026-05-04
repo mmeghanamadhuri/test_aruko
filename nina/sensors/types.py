@@ -12,12 +12,18 @@ from typing import List, Optional, Tuple
 
 @dataclass
 class LidarScan:
-    """One full 360-degree sweep from the RPLIDAR A1.
+    """One full 360-degree sweep from the active 2D lidar.
+
+    Drivers using this type today: the Slamtec S2E (`SlamtecS2E`,
+    Ethernet/UDP, 400-bin default) and the legacy RPLIDAR A1M8
+    (`RPLidarA1`, USB-serial, 360-bin default). The SLAM engine and
+    autonomy fusion code are bin-count agnostic - they convert idx
+    -> angle on the fly.
 
     `distances_mm` is laid out so index `i` corresponds to angle
-    `i * (360 / len(distances_mm))` degrees (typically 360 entries =
-    1-degree resolution). A value of 0 means "no return" / out of
-    range, which is the convention BreezySLAM expects.
+    `i * (360 / len(distances_mm))` degrees (typically 360 or 400
+    entries = ~1-degree resolution). A value of 0 means "no return"
+    / out of range, which is the convention BreezySLAM expects.
     """
 
     distances_mm: List[int]

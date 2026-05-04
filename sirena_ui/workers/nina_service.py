@@ -109,11 +109,18 @@ class NinaService:
         """Lazy singleton for the lidar + SLAM worker.
 
         Created on first access so the GUI doesn't pay the BreezySLAM
-        import / RPLIDAR USB-serial probe cost until the user opens
-        the Map screen or enables autonomous mode.
+        import / lidar probe cost until the user opens the Map screen
+        or enables autonomous mode. The actual lidar driver is
+        chosen by `nina.sensors.lidar_factory.build_lidar` from
+        `LidarSettings.model` (S2E by default; A1 selectable for
+        legacy bots) so the worker never has to know which physical
+        scanner is plugged in.
         """
         if self._slam is None:
-            self._slam = SlamWorker(self.settings.slam)
+            self._slam = SlamWorker(
+                self.settings.slam,
+                lidar_settings=self.settings.lidar,
+            )
         return self._slam
 
     @property

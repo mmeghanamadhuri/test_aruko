@@ -533,7 +533,7 @@ screen.
 
 | Role            | Part            | Mount                                          |
 | --------------- | --------------- | ---------------------------------------------- |
-| 360° lidar      | RPLIDAR A1M8    | Head, USB serial (`/dev/ttyUSB0`)              |
+| 360° lidar      | Slamtec RPLIDAR S2E (default) / A1M8 (legacy) | Head; S2E speaks UDP at `192.168.11.2:8089`, A1 speaks USB-serial at `/dev/ttyUSB0`. The `nina.sensors.lidar_factory.build_lidar` factory picks the driver from `NINA_LIDAR_MODEL` |
 | Depth camera    | Intel RealSense D435 | Front of chassis, ~10° downtilt, USB 3    |
 | IR cliff        | Sharp GP2Y0E02B | Front bumper, downward, I²C bus 1, addr `0x40` |
 | Ultrasonic ring | 4× HC-SR04      | Chassis FL/FR/RL/RR, BCM GPIO                  |
@@ -642,7 +642,7 @@ sirena_ui/                       nina/
        │                           dynamixel_manager.py    (DXL bus)
        ├── drive_controller.py
        ├── vision_worker.py        sensors/
-       ├── slam_worker.py    ────► rplidar_a1.py
+       ├── slam_worker.py    ────► lidar_factory.py ─► slamtec_s2e.py / rplidar_a1.py
        ├── autonomy_controller.py  hcsr04.py
        │                           gp2y0e02b.py
        ├── playback_worker.py      realsense_d435.py
@@ -739,7 +739,7 @@ mockup.
 | Home     | Live status pills + manifest                  | Quick-action tiles deep-link into every screen |
 | Drive    | Live BLDCs (`NavigationManager` local OR `RemoteNavigationManager` via Pi bridge) | Sim fallback when backend isn't reachable     |
 | Vision   | Live USB cam + YuNet + YOLOv8 (TensorRT FP16) | `Person tracking` is next-iteration            |
-| Map      | Live RPLIDAR + HC-SR04 + IR + D435 + SLAM     | `safe wander` autonomy V1                      |
+| Map      | Live Slamtec S2E (or A1) + HC-SR04 + IR + D435 + SLAM | `safe wander` autonomy V1                |
 | Actions  | Live Dynamixel record / playback + gTTS audio | Manifest is the source of truth                |
 | Settings | General pane is live                          | Other 8 categories are scaffolds + stubs       |
 | Health   | Live donut + Dynamixel rows                   | Non-DXL rows wait on subsystem integrations    |

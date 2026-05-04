@@ -297,9 +297,17 @@ class MapScreen(QWidget):
             self._slam_pill.set_kind(Pill.KIND_OK)
 
         if not connected and running:
+            model = status.get("lidar_model") or ""
+            if "S2E" in model.upper() or model == "":
+                hint = (
+                    "Plug the Slamtec S2E into the Jetson Ethernet port and "
+                    "verify `ping 192.168.11.2` (default lidar IP). See "
+                    "scripts/install-slamtec-s2e-jetson.sh."
+                )
+            else:
+                hint = "Connect the RPLIDAR A1 to /dev/ttyUSB0 to start mapping."
             self._grid.set_placeholder(
-                f"Lidar simulation: {message}\n"
-                "Connect the RPLIDAR A1 to /dev/ttyUSB0 to start mapping."
+                f"Lidar simulation: {message}\n{hint}"
             )
 
     # ------------------------------------------------------------------

@@ -215,10 +215,21 @@ def _vision_row(service: NinaService) -> HealthRow:
 
 
 def _lidar_row(service: NinaService) -> HealthRow:
+    # The label reflects whichever lidar the build is configured for
+    # (S2E by default, A1 on legacy bots) so the operator sees the
+    # actual scanner model in the Health table without us having to
+    # ask the worker. We import lazily so this module stays import-
+    # cheap on dev hosts that don't have nina.sensors on the path.
+    try:
+        from nina.sensors.lidar_factory import model_label
+        label = f"Lidar ({model_label()})"
+    except Exception:
+        label = "Lidar"
+
     slam = getattr(service, "_slam", None)
     if slam is None:
         return HealthRow(
-            "lidar", "Lidar (RPLIDAR A1)", "\u25A6",
+            "lidar", label, "\u25A6",
             "Not opened yet (open Map tab or enable Autonomous mode)",
             STATUS_PENDING,
         )
@@ -227,23 +238,28 @@ def _lidar_row(service: NinaService) -> HealthRow:
         connected = bool(st.get("lidar_connected", False))
         msg = str(st.get("lidar_message", "") or "")
         running = bool(st.get("running", False))
+        # Worker-reported label takes precedence (it knows which
+        # driver actually opened, which matters in 'auto' mode).
+        worker_model = str(st.get("lidar_model", "") or "")
+        if worker_model:
+            label = f"Lidar ({worker_model})"
     except Exception as exc:
         return HealthRow(
-            "lidar", "Lidar (RPLIDAR A1)", "\u25A6",
+            "lidar", label, "\u25A6",
             f"status query failed: {exc}", STATUS_ERROR,
         )
     if not running:
         return HealthRow(
-            "lidar", "Lidar (RPLIDAR A1)", "\u25A6",
+            "lidar", label, "\u25A6",
             msg or "stopped", STATUS_PENDING,
         )
     if not connected:
         return HealthRow(
-            "lidar", "Lidar (RPLIDAR A1)", "\u25A6",
+            "lidar", label, "\u25A6",
             msg or "Lidar not detected", STATUS_ERROR,
         )
     return HealthRow(
-        "lidar", "Lidar (RPLIDAR A1)", "\u25A6",
+        "lidar", label, "\u25A6",
         msg or "scanning", STATUS_OK,
     )
 

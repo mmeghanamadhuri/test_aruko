@@ -65,13 +65,42 @@ class AutonomySettings:
 
 
 @dataclass(frozen=True)
+class LidarSettings:
+    """Lidar transport + model configuration.
+
+    The factory in `nina.sensors.lidar_factory.build_lidar` reads
+    these to decide which physical lidar driver to instantiate. Two
+    are supported:
+
+      ``model='s2e'``  - SLAMTEC RPLIDAR S2E (Ethernet / UDP). Uses
+                          `host` + `udp_port`. ~30 m range, ~10 Hz scan
+                          rate, ~32 kHz sample rate. CURRENT default.
+      ``model='a1'``   - SLAMTEC RPLIDAR A1M8 (USB-serial). Uses
+                          `serial_port` + `baudrate`. ~12 m range,
+                          ~5.5 Hz scan rate. Legacy bring-up.
+      ``model='auto'`` - try S2E first, fall back to A1.
+
+    `host`/`serial_port` only matter for the matching transport; the
+    other one is ignored.
+    """
+    model: str
+    host: str
+    udp_port: int
+    serial_port: str
+    baudrate: int
+
+
+@dataclass(frozen=True)
 class SlamSettings:
     """BreezySLAM map / pose configuration."""
-    map_size_pixels: int                 # square map; default 800
+    map_size_pixels: int                 # square map; default 1000
     map_size_meters: float               # physical extent of the map
     update_hz: float                     # SLAM update rate (cap)
     hole_width_mm: int                   # smallest passable opening
     random_seed: int
+    laser_max_range_mm: int              # detection envelope of the lidar (drives BreezySLAM laser model)
+    laser_scan_size: int                 # samples per sweep (laser model)
+    laser_scan_rate_hz: float            # rev/sec (laser model)
 
 
 @dataclass(frozen=True)
@@ -86,6 +115,7 @@ class NinaSettings:
     navigation: NavigationSettings
     autonomy: AutonomySettings
     slam: SlamSettings
+    lidar: LidarSettings
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
@@ -153,20 +183,64 @@ def load_settings(repo_root: Path) -> NinaSettings:
         backoff_duration_ms=int(os.environ.get("NINA_AUTO_BACKOFF_MS", "500")),
     )
 
+    lidar = LidarSettings(
+        # 's2e' is the current shipping default (Slamtec S2E,
+        # Ethernet / UDP). Set NINA_LIDAR_MODEL=a1 for the legacy
+        # USB-serial RPLIDAR A1M8 bring-up, or =auto to probe S2E
+        # first and fall through to A1 on failure.
+        model=os.environ.get("NINA_LIDAR_MODEL", "s2e").strip().lower(),
+        host=os.environ.get("NINA_LIDAR_HOST", "192.168.11.2"),
+        udp_port=int(os.environ.get("NINA_LIDAR_UDP_PORT", "8089")),
+        # A1-only fields. Ignored when model='s2e'.
+        serial_port=os.environ.get("NINA_LIDAR_PORT", "/dev/ttyUSB0"),
+        baudrate=int(os.environ.get("NINA_LIDAR_BAUD", "115200")),
+    )
+
+    # Default world size is now sized for the S2E (effective ~25 m
+    # indoors). With a 12 m square world at 1000 px we get
+    # 12 mm/px - still above the wall-resolution floor (15 mm/px,
+    # see test_slam_resolution_fine_enough_for_walls) and gives a
+    # meaningful map of an 8 m hallway without flooding RAM. The
+    # earlier A1-era default of 8 m / 800 px was chosen because the
+    # A1's 6 m range left a 20 m world looking empty; the S2E sees
+    # walls at 25 m so we let the world grow.
+    if lidar.model == "a1":
+        # Legacy A1 path: keep the proven 8 m / 800 px sizing - the
+        # A1 won't fill a bigger world anyway.
+        slam_pixels_default = "800"
+        slam_meters_default = "8"
+        slam_max_range_mm_default = "12000"
+        slam_scan_size_default = "360"
+        slam_scan_rate_default = "5.5"
+    else:
+        # S2E (or auto - same defaults). 12 mm/px keeps walls > 1
+        # pixel after letterboxing into the Perception card.
+        slam_pixels_default = "1000"
+        slam_meters_default = "12"
+        # The S2E's published max is 30 m but multipath inside small
+        # rooms makes returns past ~28 m unreliable; clip there.
+        slam_max_range_mm_default = "28000"
+        # 400 samples/rev is the S2E's typical compressed-mode output
+        # at 10 Hz. BreezySLAM resamples internally, so this is
+        # effectively a hint about angular resolution.
+        slam_scan_size_default = "400"
+        slam_scan_rate_default = "10"
+
     slam = SlamSettings(
-        map_size_pixels=int(os.environ.get("NINA_SLAM_PIXELS", "800")),
-        # 8 m world (was 20 m) at 800 px = 10 mm/px. The RPLIDAR A1
-        # only ranges ~6 m reliably indoors, so a 20 m world meant a
-        # typical 4-5 m room mapped to a tiny ~200x200 patch in the
-        # centre of an 800x800 grid - 6% of the rendered view, with
-        # the other 94% painted unknown-grey. Operators reported the
-        # Map / Perception lidar pane as "almost nothing showing".
-        # Tightening to 8 m / 10 mm-per-px makes the same room fill
-        # half the view AND doubles the wall-pixel resolution.
-        map_size_meters=float(os.environ.get("NINA_SLAM_METERS", "8")),
+        map_size_pixels=int(os.environ.get("NINA_SLAM_PIXELS", slam_pixels_default)),
+        map_size_meters=float(os.environ.get("NINA_SLAM_METERS", slam_meters_default)),
         update_hz=float(os.environ.get("NINA_SLAM_HZ", "5")),
         hole_width_mm=int(os.environ.get("NINA_SLAM_HOLE_MM", "600")),
         random_seed=int(os.environ.get("NINA_SLAM_SEED", "0xdeadbeef"), 0),
+        laser_max_range_mm=int(
+            os.environ.get("NINA_SLAM_LASER_MAX_MM", slam_max_range_mm_default)
+        ),
+        laser_scan_size=int(
+            os.environ.get("NINA_SLAM_LASER_SCAN_SIZE", slam_scan_size_default)
+        ),
+        laser_scan_rate_hz=float(
+            os.environ.get("NINA_SLAM_LASER_SCAN_RATE_HZ", slam_scan_rate_default)
+        ),
     )
 
     return NinaSettings(
@@ -180,4 +254,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         navigation=navigation,
         autonomy=autonomy,
         slam=slam,
+        lidar=lidar,
     )

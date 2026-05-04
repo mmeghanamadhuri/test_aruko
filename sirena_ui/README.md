@@ -354,7 +354,9 @@ The non-UI side of the SLAM / autonomy stack lives under `nina/`:
 nina/
   sensors/
     types.py              # LidarScan / UltrasonicReading / IRReading / DepthFrame
-    rplidar_a1.py         # SLAMTEC RPLIDAR A1M8 USB-serial driver
+    slamtec_s2e.py        # SLAMTEC RPLIDAR S2E Ethernet/UDP driver (default)
+    rplidar_a1.py         # SLAMTEC RPLIDAR A1M8 USB-serial driver (legacy)
+    lidar_factory.py      # Picks the right lidar driver from NINA_LIDAR_MODEL
     hcsr04.py             # HC-SR04 ultrasonic ring (BCM GPIO)
     gp2y0e02b.py          # Sharp GP2Y0E02B IR cliff sensor (I2C)
     realsense_d435.py     # Intel RealSense D435 depth camera

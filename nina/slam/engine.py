@@ -1,7 +1,12 @@
 """BreezySLAM-based 2D SLAM engine.
 
 Inputs:
-  * `LidarScan` objects from `nina.sensors.rplidar_a1.RPLidarA1`.
+  * `LidarScan` objects from any driver in `nina.sensors`. The
+    SlamWorker wires up the right one via
+    `nina.sensors.lidar_factory.build_lidar()` based on
+    ``NINA_LIDAR_MODEL`` - currently the Slamtec S2E (UDP) by
+    default, with the legacy RPLIDAR A1M8 (USB-serial) selectable
+    for older bots.
 
 Outputs:
   * `SlamPose(x_mm, y_mm, theta_deg)` - robot pose in the global map frame.
@@ -17,6 +22,15 @@ If BreezySLAM isn't installed (developer Mac, etc.) the engine falls
 back to a "passthrough" mode that still tracks scan deltas and
 publishes a stub grid built from the raw lidar - enough for the UI to
 show *something* useful while keeping the SLAM API stable.
+
+A note on the laser model: BreezySLAM ships a stock `RPLidarA1`
+sensor descriptor with a 12 m max-detection envelope. For the S2E
+that envelope is wrong (range ~30 m, sample rate ~32 kHz, scan rate
+~10 Hz) - using the A1 model with S2E data confuses the Markov-chain
+particle filter because returns at 15-20 m get clipped to "no
+detection". We build a custom `breezyslam.sensors.Laser` subclass
+matching whatever `SlamSettings.laser_*` reports for the active
+lidar so the SLAM math stays consistent with the physical sensor.
 """
 
 from __future__ import annotations
@@ -82,16 +96,25 @@ class SlamEngine:
 
     def __init__(
         self,
-        map_size_pixels: int = 800,
-        map_size_meters: float = 20.0,
+        map_size_pixels: int = 1000,
+        map_size_meters: float = 12.0,
         hole_width_mm: int = 600,
         random_seed: int = 0xdeadbeef,
+        laser_max_range_mm: int = 28000,
+        laser_scan_size: int = 400,
+        laser_scan_rate_hz: float = 10.0,
     ) -> None:
         self._map_size_px = int(map_size_pixels)
         self._map_size_m = float(map_size_meters)
         self._scale_mm_per_px = (self._map_size_m * 1000.0) / float(self._map_size_px)
         self._hole_width_mm = int(hole_width_mm)
         self._seed = int(random_seed) & 0x7FFFFFFF
+        # Laser model parameters. Defaults match the Slamtec S2E
+        # (current production lidar). The A1M8 path passes
+        # 12000 / 360 / 5.5 here.
+        self._laser_max_range_mm = int(laser_max_range_mm)
+        self._laser_scan_size = int(laser_scan_size)
+        self._laser_scan_rate_hz = float(laser_scan_rate_hz)
 
         self._slam = None
         self._fallback = False
@@ -114,7 +137,7 @@ class SlamEngine:
     def open(self) -> None:
         try:
             from breezyslam.algorithms import RMHC_SLAM  # type: ignore
-            from breezyslam.sensors import RPLidarA1  # type: ignore
+            from breezyslam.sensors import Laser  # type: ignore
         except Exception as exc:
             # Surface a fix-it command in the pill / tooltip itself,
             # not just in the launch log. Operators were seeing
@@ -143,7 +166,24 @@ class SlamEngine:
             return
 
         try:
-            laser = RPLidarA1()
+            # BreezySLAM's `Laser` constructor takes:
+            #   (scan_size, scan_rate_hz, detection_angle_deg,
+            #    distance_no_detection_mm,
+            #    detection_margin=0, offset_mm=0)
+            # The S2E sweeps a full 360 deg, has no significant
+            # detection margin (the dToF firmware hides the blind
+            # zone), and is mounted at the lidar's optical centre
+            # so offset is 0. `distance_no_detection_mm` is used by
+            # BreezySLAM to know the maximum reportable range; for
+            # the S2E that's ~28 m as configured by the laser model.
+            laser = Laser(
+                scan_size=self._laser_scan_size,
+                scan_rate_hz=self._laser_scan_rate_hz,
+                detection_angle_degrees=360.0,
+                distance_no_detection_mm=self._laser_max_range_mm,
+                detection_margin=0,
+                offset_mm=0,
+            )
             self._slam = RMHC_SLAM(
                 laser,
                 self._map_size_px,
@@ -260,13 +300,15 @@ class SlamEngine:
             self._scans_processed += 1
 
 
-def lidar_to_distance_array(scan: Optional[LidarScan], n_bins: int = 360) -> List[int]:
+def lidar_to_distance_array(scan: Optional[LidarScan], n_bins: int = 400) -> List[int]:
     """Resample a LidarScan to a fixed-size distance array (mm).
 
     BreezySLAM expects the array length to match the laser model's
-    `scan_size`. The default RPLidarA1 model uses 360 samples; if a
-    scan was binned at a different resolution upstream, we down/up
-    sample here.
+    `scan_size`. We default to 400 samples to match the Slamtec S2E
+    laser model the engine builds at open(); the legacy A1 path
+    should pass `n_bins=360` so the array length matches the A1
+    laser model. If a scan was binned at a different resolution
+    upstream, we down/up sample here.
     """
     if scan is None or not scan.distances_mm:
         return [0] * n_bins

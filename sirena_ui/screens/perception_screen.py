@@ -443,9 +443,16 @@ class PerceptionScreen(QWidget):
             self._lidar_chip.setText("Lidar sim")
             self._lidar_chip.set_kind(Pill.KIND_WARN)
             if self._grid is not None:
+                model = status.get("lidar_model") or ""
+                if "S2E" in model.upper() or model == "":
+                    hint = (
+                        "Plug the Slamtec S2E into the Jetson Ethernet port "
+                        "and verify `ping 192.168.11.2`."
+                    )
+                else:
+                    hint = "Connect the RPLIDAR A1 to /dev/ttyUSB0."
                 self._grid.set_placeholder(
-                    "Lidar simulation - no scans yet.\n"
-                    "Connect the RPLIDAR A1 to /dev/ttyUSB0."
+                    f"Lidar simulation - no scans yet.\n{hint}"
                 )
         else:
             self._lidar_chip.setText("Lidar -")

@@ -1,19 +1,22 @@
 """Qt facade over the SLAM engine.
 
-Owns the RPLIDAR A1 driver and the BreezySLAM engine, runs a
-background thread that pulls scans from the lidar, feeds them to the
-engine, and emits Qt signals for the UI:
+Owns the active lidar driver (Slamtec S2E by default; legacy RPLIDAR
+A1M8 selectable via ``NINA_LIDAR_MODEL=a1``) and the BreezySLAM
+engine, runs a background thread that pulls scans from the lidar,
+feeds them to the engine, and emits Qt signals for the UI:
 
     snapshot_changed(dict)   # SlamSnapshot serialised
     status_changed(dict)     # connection / health / fallback flags
     pose_changed(dict)       # x_mm, y_mm, theta_deg, updated_at
 
 The lidar is also exposed through `latest_scan()` so the AutonomyController
-can read the same scans without opening a second serial connection.
+can read the same scans without opening a second connection (a duplicate
+UDP session on the S2E would either be refused by the device or
+desynchronise the scan stream).
 
 Like the rest of the stack, this worker degrades gracefully:
 
-  * RPLIDAR not present       -> lidar.connected = False, no SLAM updates
+  * Lidar not present         -> lidar.connected = False, no SLAM updates
   * BreezySLAM not installed  -> engine runs in fallback rasteriser mode
 """
 
@@ -27,8 +30,8 @@ from typing import Optional
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from nina.config.settings import SlamSettings
-from nina.sensors.rplidar_a1 import RPLidarA1
+from nina.config.settings import LidarSettings, SlamSettings
+from nina.sensors.lidar_factory import LidarLike, build_lidar, model_label
 from nina.sensors.types import LidarScan
 from nina.slam.engine import (
     SlamEngine,
@@ -64,18 +67,36 @@ class SlamWorker(QObject):
     def __init__(
         self,
         slam_settings: SlamSettings,
-        lidar: Optional[RPLidarA1] = None,
+        lidar_settings: Optional[LidarSettings] = None,
+        lidar: Optional[LidarLike] = None,
         engine: Optional[SlamEngine] = None,
         parent=None,
     ) -> None:
         super().__init__(parent)
-        self._lidar = lidar or RPLidarA1()
+        # `lidar_settings` is optional purely to keep callers that
+        # don't care about the hardware variant (most tests) working
+        # without ceremony. When omitted we fall back to the env-var
+        # driven default in `build_lidar()`.
+        self._lidar_settings = lidar_settings
+        self._lidar_model = (
+            (lidar_settings.model if lidar_settings is not None else None)
+            or "auto"
+        )
+        self._lidar = lidar or build_lidar(self._lidar_model)
+        self._lidar_label = model_label(self._lidar_model)
+        # The laser model parameters live on SlamSettings now; pass
+        # them through so the engine builds a BreezySLAM Laser that
+        # actually matches whichever lidar is plugged in.
         self._engine = engine or SlamEngine(
             map_size_pixels=slam_settings.map_size_pixels,
             map_size_meters=slam_settings.map_size_meters,
             hole_width_mm=slam_settings.hole_width_mm,
             random_seed=slam_settings.random_seed,
+            laser_max_range_mm=slam_settings.laser_max_range_mm,
+            laser_scan_size=slam_settings.laser_scan_size,
+            laser_scan_rate_hz=slam_settings.laser_scan_rate_hz,
         )
+        self._slam_scan_size = int(slam_settings.laser_scan_size)
         self._update_period = 1.0 / max(0.5, float(slam_settings.update_hz))
         self._running = False
         self._stop_evt = threading.Event()
@@ -85,6 +106,7 @@ class SlamWorker(QObject):
         self._status = {
             "lidar_connected": False,
             "lidar_message": "idle",
+            "lidar_model": self._lidar_label,
             "slam_fallback": False,
             "slam_message": "",
             "running": False,
@@ -171,9 +193,11 @@ class SlamWorker(QObject):
             self._lidar.open()
             with self._lock:
                 self._status["lidar_connected"] = True
-                self._status["lidar_message"] = "connected"
+                self._status["lidar_message"] = (
+                    f"{self._lidar_label} connected"
+                )
         except Exception as exc:
-            log.warning("RPLIDAR open failed: %s", exc)
+            log.warning("%s open failed: %s", self._lidar_label, exc)
             with self._lock:
                 self._status["lidar_connected"] = False
                 self._status["lidar_message"] = f"sim - {exc}"
@@ -203,9 +227,12 @@ class SlamWorker(QObject):
             scan = self._lidar.read()
             if scan is not None:
                 bins = self._engine._map_size_px  # noqa: SLF001 - private but stable
-                # BreezySLAM's RPLidarA1 expects 360 samples; if the
-                # lidar binned at a different resolution, resample.
-                resampled = lidar_to_distance_array(scan, n_bins=360)
+                # BreezySLAM's Laser scan_size is configured per
+                # lidar (S2E: 400, A1: 360). Resample the driver's
+                # bin count to whatever the engine was built with.
+                resampled = lidar_to_distance_array(
+                    scan, n_bins=self._slam_scan_size
+                )
                 if any(resampled):
                     feed_scan = LidarScan(
                         distances_mm=resampled,
