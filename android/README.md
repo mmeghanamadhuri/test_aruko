@@ -33,3 +33,11 @@ gradle wrapper --gradle-version 8.7
 After **Build → Build APK(s)** (release): outputs go to `app/build/outputs/apk/release/app-release.apk`. Release builds use the **debug signing config** so you can install on any device without a Play Console key (internal use only). Scripts: [`scripts/build-companion-apk.ps1`](../scripts/build-companion-apk.ps1) / [`scripts/build-companion-apk.sh`](../scripts/build-companion-apk.sh) if `gradlew` exists.
 
 See also [`docs/COMPANION_APP.md`](../docs/COMPANION_APP.md) and [`docs/ANDROID_SIRENA_PARITY.md`](../docs/ANDROID_SIRENA_PARITY.md) (desktop vs companion feature matrix).
+
+## Jetson dependencies (not built into the APK)
+
+Map / SLAM / autonomy / vision require **`nina-link`** on the robot with **`sirena_ui/requirements-headless.txt`** installed into **`.venv-link`** (plus systemd bridge env vars). Minimal pip (`requirements-link.txt`) is enough for Wi‑Fi + pairing only.
+
+Quick path on the Jetson from repo root:  
+`./scripts/install-sirena-companion-jetson.sh --with-sirena-headless`  
+(or `./scripts/update-nina-link-jetson.sh --sirena-headless --restart` after a normal install). Details: **COMPANION_APP.md**, **ANDROID_SIRENA_PARITY.md** § Jetson `.venv-link`.

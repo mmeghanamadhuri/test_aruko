@@ -21,3 +21,19 @@ pyserial>=3.5
 #
 # Optional: companion POST /v1/actions/audio/generate (gTTS) on the Jetson:
 #   pip install gTTS
+#
+# ---------------------------------------------------------------------------
+# Full companion parity (Map SLAM, Perception, autonomy, vision) needs the
+# same Python stack as Sirena UI *without* PyQt5. From repo root on the Jetson:
+#   ./scripts/update-nina-link-jetson.sh --sirena-headless --restart
+# or:
+#   ./.venv-link/bin/pip install -r sirena_ui/requirements-headless.txt
+# BreezySLAM compiles a C extension — on aarch64 also:
+#   sudo apt install -y build-essential python3-dev
+#   # then either pip install the git URL from requirements-headless, or:
+#   ./scripts/install-breezyslam-jetson.sh   # read script: targets system python;
+#   for nina-link’s venv, prefer pip install -r sirena_ui/requirements-headless.txt
+# rplidar / pyrplidarsdk: listed in requirements-headless (Lidar A1 vs Slamtec S2E).
+# RealSense (depth): on Jetson aarch64 build librealsense + pyrealsense2 per Intel docs
+# (PyPI wheel is often x86-only; see requirements-headless markers).
+# ---------------------------------------------------------------------------

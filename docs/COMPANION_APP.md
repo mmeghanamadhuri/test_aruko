@@ -226,6 +226,8 @@ The companion **MainActivity** is locked to **landscape** (`sensorLandscape` in 
 - **`{"detail":"Not Found"}` on `/v1/robot/...`**: Check spelling — the path is **`/v1/robot/capabilities`** (not `capabilites`).
 - **`503`** on **`POST /v1/actions/play`**: Action bridge off in the running process — set `NINA_LINK_ENABLE_ACTION_BRIDGE=1` in systemd and **`sudo systemctl restart nina-link`**.
 - **`500`** / **`ModuleNotFoundError: No module named 'serial'`** when playing/recording: the **`.venv-link`** used by systemd needs **PySerial**. From repo root: **`./.venv-link/bin/pip install -r requirements-link.txt`** (includes `pyserial`) or activate first, then **`pip install -r requirements-link.txt`** — then **`sudo systemctl restart nina-link`**.
+- **`No module named 'rplidar'`**, **`breezyslam`**, or SLAM stuck in simulation on the **tablet Map** screen: **`requirements-link.txt` does not include lidar/SLAM.** Install the headless Sirena stack into the **same** venv the service uses: **`./scripts/update-nina-link-jetson.sh --sirena-headless --restart`** (or **`pip install -r sirena_ui/requirements-headless.txt`**). For BreezySLAM’s C extension: **`sudo apt install -y build-essential python3-dev`** first. One-shot for new robots: **`./scripts/install-sirena-companion-jetson.sh --with-sirena-headless`**.
+- **Drive shows “BLDC not connected” / Jetson.GPIO**: hardware path — confirm you run **on the Jetson**, **`nina-link.service`** uses **`/.venv-link/bin/python`**, user can access GPIO/UART (**`dialout`** etc.), and **desktop Drive** is not holding the bus. Not fixed by pip alone.
 - **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
 ## Jetson: one-shot companion install (robot side)
@@ -235,9 +237,11 @@ From the **repo root on the Jetson** (single script — runs the full nina-link 
 ```bash
 chmod +x scripts/install-sirena-companion-jetson.sh
 ./scripts/install-sirena-companion-jetson.sh
+# Map / SLAM / autonomy / full vision (same pip set as Sirena UI without PyQt5):
+./scripts/install-sirena-companion-jetson.sh --with-sirena-headless
 ```
 
-Equivalent manual steps: `./scripts/install-nina-link-jetson.sh --all` then `./scripts/update-nina-link-jetson.sh --install-dropin --restart --verify` (same pieces as the recommended Jetson install section at the top of this doc).
+Equivalent manual steps: `./scripts/install-nina-link-jetson.sh --all` then `./scripts/update-nina-link-jetson.sh --install-dropin --restart --verify` (same pieces as the recommended Jetson install section at the top of this doc). Append **`--sirena-headless`** on that update step (or use **`--with-sirena-headless`** above) so **`rplidar`**, **BreezySLAM**, vision, and sensors match desktop **`sirena_ui/requirements-headless.txt`** inside **`.venv-link`**.
 
 ## Android: build a shareable APK
 

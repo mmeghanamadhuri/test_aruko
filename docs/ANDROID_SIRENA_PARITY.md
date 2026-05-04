@@ -33,3 +33,20 @@ Charcoal strip dots: **Bus** (link reachability), **Wi‑Fi** (daemon session re
 - JVM unit test: `JsonCleanStringTest` (JSON helpers used across the HTTP client).
 
 Run unit tests in Android Studio (**test** source set) or `./gradlew test` when the Gradle wrapper is present.
+
+## Jetson: `.venv-link` + systemd (why SLAM / autonomy / drive fail)
+
+The tablet only sends HTTP; **everything substantive runs on the Jetson** inside **`nina-link`**, using **`REPO_ROOT/.venv-link/bin/python`**.
+
+| Symptom in the app | Typical Jetson cause |
+|-------------------|----------------------|
+| **`No module named 'rplidar'`**, SLAM shows simulation | **`requirements-link.txt` alone is not enough.** Install the headless Sirena stack into the same venv: `./scripts/update-nina-link-jetson.sh --sirena-headless --restart` or `./.venv-link/bin/pip install -r sirena_ui/requirements-headless.txt`, then **`sudo systemctl restart nina-link`**. BreezySLAM needs build deps: **`sudo apt install -y build-essential python3-dev`**. |
+| **Autonomy request failed** | Autonomy imports **`rplidar`**, **`breezyslam`**, sensors, etc. Fix venv as above; enable **`NINA_LINK_ENABLE_AUTONOMY_BRIDGE`** (already in `install-nina-link-jetson.sh` / recommended **`bridges.conf`** drop-in). Check **`journalctl -u nina-link -e`**. |
+| **BLDC not connected / Jetson.GPIO** | **Not a pip package:** navigation expects **GPIO access on the real Jetson** (not a dev PC). User/group **`dialout`**, **no desktop Drive UI** holding the bus, and valid **`NavigationManager`** wiring. Message comes from lazy NavigationManager init when hardware/sim cannot arm. |
+| **Vision / depth missing** | **`opencv-python-headless`** etc. from **`--sirena-headless`**; RealSense on aarch64 often needs a **built** `pyrealsense2`, not only pip (see `requirements-headless` markers). |
+
+**One-shot (robot + tablet provisioning):**  
+[`scripts/install-sirena-companion-jetson.sh`](../scripts/install-sirena-companion-jetson.sh)  
+Add **`--with-sirena-headless`** after `git pull` for SLAM/vision/sensor parity with desktop.
+
+Repo docs that drive Jetson + Android behaviour together: **[`docs/COMPANION_APP.md`](COMPANION_APP.md)** (tablet URL, `_venv-link`, troubleshooting), **[`sirena_ui/requirements-headless.txt`](../sirena_ui/requirements-headless.txt)** (exact pip set), **[`requirements-link.txt`](../requirements-link.txt)** (minimal daemon).

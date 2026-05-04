@@ -9,6 +9,8 @@
 # Run on the Jetson from the repo root (after git clone or copy):
 #   chmod +x scripts/install-sirena-companion-jetson.sh
 #   ./scripts/install-sirena-companion-jetson.sh
+# Install SLAM / vision / sensor pip deps into .venv-link (same set as sirena_ui headless):
+#   ./scripts/install-sirena-companion-jetson.sh --with-sirena-headless
 #
 # Requires: same prerequisites as install-nina-link-jetson.sh (python3-venv, nmcli, sudo).
 # -----------------------------------------------------------------------------
@@ -19,6 +21,23 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 INSTALL="${REPO_ROOT}/scripts/install-nina-link-jetson.sh"
 UPDATE="${REPO_ROOT}/scripts/update-nina-link-jetson.sh"
+
+WITH_HEADLESS=0
+for arg in "$@"; do
+    case "${arg}" in
+        --with-sirena-headless)
+            WITH_HEADLESS=1
+            ;;
+        -h|--help)
+            grep '^#' "$0" | grep -v '^#!' | sed 's/^# \{0,1\}//'
+            exit 0
+            ;;
+        *)
+            printf 'Unknown option: %s (use --help)\n' "${arg}" >&2
+            exit 2
+            ;;
+    esac
+done
 
 say() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 ok()  { printf '  [\033[32mOK\033[0m] %s\n' "$*"; }
@@ -32,17 +51,22 @@ if [[ ! -f "${INSTALL}" ]]; then
 fi
 chmod +x "${INSTALL}" "${UPDATE}" 2>/dev/null || true
 
-say "Step 1/3 — Install nina-link (venv, pip, systemd)"
+say "Step 1 — Install nina-link (venv, pip, systemd)"
 "${INSTALL}" --all
 
-say "Step 2/3 — Enable HTTP bridges + restart (companion features)"
+say "Step 2 — Enable HTTP bridges + restart (companion features)"
 if [[ ! -f "${UPDATE}" ]]; then
     warn "Missing ${UPDATE} — install bridges manually: docs/COMPANION_APP.md"
     exit 1
 fi
 "${UPDATE}" --install-dropin --restart --verify
 
-say "Step 3/3 — Firewall (optional)"
+if [[ "${WITH_HEADLESS}" -eq 1 ]]; then
+    say "Step 3 — sirena_ui/requirements-headless.txt → .venv-link (SLAM, lidar, vision, sensors)"
+    "${UPDATE}" --sirena-headless --restart --verify
+fi
+
+say "Step firewall — optional UFW 8787/tcp"
 if command -v ufw >/dev/null 2>&1; then
     SUDO=(sudo)
     if [[ "$(id -u)" -eq 0 ]]; then
