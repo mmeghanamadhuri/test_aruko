@@ -516,7 +516,34 @@ screen.
 - **Autonomous mode** toggle (mirrored on Drive). Turning it on:
   1. Starts the SLAM worker (lidar + BreezySLAM).
   2. Opens the HC-SR04 ring, the IR cliff sensor and the D435.
-  3. Spawns the `AutonomousPilot` reactive controller (5 Hz default).
+  3. Spawns the `AutonomousPilot` reactive controller (5 Hz default)
+     for the wander stack.
+- **Go to point** card. Press `Tap on map` to arm click-to-set-goal,
+  then tap a free-ish cell on the occupancy grid. The
+  `OccupancyGridView` widget translates the click to world mm,
+  `AutonomyController.set_goal()` swaps the active pilot to
+  `GotoPilot`, and the pilot:
+  1. Plans an A* path on the BreezySLAM bytemap with the bot's
+     footprint dilated as wall buffer (`NINA_GOTO_INFLATE_MM`).
+  2. Follows the path with a pure-pursuit lookahead
+     (`NINA_GOTO_LOOKAHEAD_MM`), turning in place when the
+     heading error exceeds `NINA_GOTO_HEAD_DEG` and driving
+     forward otherwise.
+  3. Re-runs `obstacle_field.fuse()` every tick and aborts +
+     replans whenever the live sensors disagree with the planner
+     (e.g. a person walks in, an unmapped chair below the lidar
+     plane). The same cliff / e-stop layer the wander pilot uses
+     gates forward motion.
+  4. Stops on arrival and stays put (no auto-resume to wander).
+- The Go to point card surfaces the pilot's state pill
+  (`planning / driving / turning / replanning / avoiding / arrived
+  / unreachable / stuck / lost`) plus the live distance-to-goal,
+  and renders the planned waypoints as a dashed red polyline on
+  the occupancy grid with a flag pin at the goal.
+- The Perception screen's lidar pane shares the same widget; when
+  autonomy is ON, taps on that pane also fire `set_goal()` so the
+  operator can reuse the screen they were already on for sensor
+  triage.
 - **Mapping** action row: **Start mapping** (SLAM only, no driving),
   **Save map** (PGM dump of the current grid), **Clear** (reset and
   replay live scans into a fresh map).
@@ -526,6 +553,9 @@ screen.
 - **Pilot** card: last decision + reason from `AutonomousPilot`
   (`cruising · forward clear 1.4 m`, `turning right · left blocked
   280 mm`, `e-stop · cliff alarm`, `idle`).
+- **Goto pilot** card (when goto is active): planner waypoints
+  remaining, current state, and reason — surfaced verbatim from
+  `GotoPilot.GotoState` so log lines and UI lines line up.
 - Top pill explains any degraded state in plain English (`SLAM
   fallback - breezyslam not installed`).
 

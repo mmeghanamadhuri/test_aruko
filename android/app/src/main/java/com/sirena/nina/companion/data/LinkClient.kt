@@ -359,6 +359,35 @@ class LinkClient {
             )
         }
 
+    /**
+     * POST /v1/autonomy/goal — arm the goto pilot to drive to (x, y) mm.
+     * World frame = SLAM map frame: origin at map centre, +x right, +y forward.
+     * Caller converts a tap on the occupancy bitmap to mm using the snapshot's
+     * scale + width/height before invoking this.
+     */
+    suspend fun setAutonomyGoal(
+        baseUrl: String,
+        bearer: String?,
+        xMm: Double,
+        yMm: Double,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            post(
+                "$baseUrl/v1/autonomy/goal",
+                bearer,
+                JSONObject().put("x_mm", xMm).put("y_mm", yMm).toString(),
+            )
+        }
+
+    /** DELETE /v1/autonomy/goal — cancel an in-flight goto. */
+    suspend fun clearAutonomyGoal(
+        baseUrl: String,
+        bearer: String?,
+    ): JSONObject =
+        withContext(Dispatchers.IO) {
+            delete("$baseUrl/v1/autonomy/goal", bearer)
+        }
+
     private fun get(url: String, bearer: String? = null): JSONObject {
         val req = Request.Builder()
             .url(url)

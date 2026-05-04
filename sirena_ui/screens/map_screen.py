@@ -144,6 +144,36 @@ class MapScreen(QWidget):
         self._autonomy_status.setWordWrap(True)
         card.add(self._autonomy_status)
 
+        # ---- Goto-point controls --------------------------------
+        card.add(SectionLabel("Go to point"))
+        goto_row = QHBoxLayout()
+        goto_row.setSpacing(8)
+        card.add_layout(goto_row)
+        self._goto_btn = QPushButton("Tap on map: OFF")
+        self._goto_btn.setObjectName("secondaryButton")
+        self._goto_btn.setCursor(Qt.PointingHandCursor)
+        self._goto_btn.setCheckable(True)
+        self._goto_btn.toggled.connect(self._on_goto_toggle)
+        goto_row.addWidget(self._goto_btn)
+
+        self._goto_cancel_btn = QPushButton("Cancel")
+        self._goto_cancel_btn.setObjectName("secondaryButton")
+        self._goto_cancel_btn.setCursor(Qt.PointingHandCursor)
+        self._goto_cancel_btn.setEnabled(False)
+        self._goto_cancel_btn.clicked.connect(self._on_goto_cancel)
+        goto_row.addWidget(self._goto_cancel_btn)
+
+        self._goto_pill = Pill("Goto idle", Pill.KIND_NEUTRAL)
+        card.add(self._goto_pill)
+
+        self._goto_status = MutedLabel(
+            "Tap on the map to send Nina to a point. She'll plan a "
+            "path on the SLAM grid, drive there with reactive obstacle "
+            "avoidance, and stop on arrival."
+        )
+        self._goto_status.setWordWrap(True)
+        card.add(self._goto_status)
+
         # ---- Mapping-only controls (SLAM without autonomy) ----
         card.add(SectionLabel("Mapping"))
         row1 = QHBoxLayout()
@@ -217,6 +247,12 @@ class MapScreen(QWidget):
         self._autonomy.enabled_changed.connect(self._on_autonomy_enabled)
         self._autonomy.pilot_state_changed.connect(self._on_pilot_state)
         self._autonomy.sensor_health_changed.connect(self._on_sensor_health)
+        self._autonomy.goto_state_changed.connect(self._on_goto_state)
+        self._autonomy.mode_changed.connect(self._on_autonomy_mode)
+
+        # The grid widget emits world-mm coords when goto-mode is
+        # armed and the operator clicks on a free cell.
+        self._grid.goal_clicked.connect(self._on_goal_clicked)
 
     # ------------------------------------------------------------------
     # Lifecycle hooks
@@ -440,6 +476,7 @@ class MapScreen(QWidget):
             self._slam.start()
         finally:
             self._grid.clear()
+            self._grid.clear_goal()
             self._grid.set_placeholder(
                 "Map cleared. Drive Nina around to rebuild it."
             )
@@ -450,3 +487,141 @@ class MapScreen(QWidget):
         self._map_btn.setChecked(running)
         self._map_btn.setText("Stop mapping" if running else "Start mapping")
         self._map_btn.blockSignals(False)
+
+    # ------------------------------------------------------------------
+    # Goto handlers
+    # ------------------------------------------------------------------
+
+    def _on_goto_toggle(self, on: bool) -> None:
+        # The toggle ARMS click-to-set-goal on the grid. Actually
+        # starting the goto pilot happens when the operator clicks
+        # on a free cell (`_on_goal_clicked`). This split avoids the
+        # "I clicked but autonomy was off and now the bot lurched"
+        # foot-gun.
+        self._grid.set_clickable(on)
+        self._goto_btn.setText(
+            f"Tap on map: {'ARMED' if on else 'OFF'}"
+        )
+        if on:
+            self._goto_pill.setText("Tap a point to start")
+            self._goto_pill.set_kind(Pill.KIND_WARN)
+            self._goto_status.setText(
+                "Tap on a free (light) area of the map to send Nina there."
+            )
+        else:
+            self._goto_pill.setText("Goto idle")
+            self._goto_pill.set_kind(Pill.KIND_NEUTRAL)
+            self._goto_status.setText(
+                "Tap on the map to send Nina to a point. She'll plan a "
+                "path on the SLAM grid, drive there with reactive obstacle "
+                "avoidance, and stop on arrival."
+            )
+
+    def _on_goto_cancel(self) -> None:
+        try:
+            result = self._autonomy.clear_goal()
+        except Exception as exc:
+            log.exception("autonomy.clear_goal: %s", exc)
+            return
+        self._grid.clear_goal()
+        self._goto_cancel_btn.setEnabled(False)
+        msg = result.get("message") if isinstance(result, dict) else ""
+        self._goto_status.setText(msg or "Goto cancelled.")
+        self._goto_pill.setText("Goto cancelled")
+        self._goto_pill.set_kind(Pill.KIND_NEUTRAL)
+
+    def _on_goal_clicked(self, x_mm: float, y_mm: float) -> None:
+        # Reflect the click immediately on the map (hollow ring) so
+        # the operator gets feedback even before the planner runs.
+        self._grid.set_goal(x_mm, y_mm)
+        try:
+            result = self._autonomy.set_goal(x_mm, y_mm)
+        except Exception as exc:
+            log.exception("autonomy.set_goal failed: %s", exc)
+            from PyQt5.QtWidgets import QMessageBox
+            QMessageBox.critical(
+                self,
+                "Goto failed",
+                f"Could not arm goto: {exc}",
+            )
+            return
+        if not isinstance(result, dict) or not result.get("ok"):
+            self._goto_pill.setText("Goto refused")
+            self._goto_pill.set_kind(Pill.KIND_ERROR)
+            self._goto_status.setText(
+                str((result or {}).get("message", "unknown failure"))
+            )
+            return
+        self._goto_pill.setText("Goto: planning")
+        self._goto_pill.set_kind(Pill.KIND_OK)
+        self._goto_cancel_btn.setEnabled(True)
+        self._goto_status.setText(
+            f"Goal set to ({x_mm:.0f}, {y_mm:.0f}) mm. "
+            "Planning route…"
+        )
+
+    def _on_goto_state(self, state: dict) -> None:
+        # Update overlays + pill text from the GotoPilot state stream.
+        # The grid widget's flag already shows the click; here we
+        # paint the planner's path and (if the click landed on a
+        # wall) the snapped goal pin.
+        wp = state.get("waypoints_mm") or []
+        path = [(w["x"], w["y"]) for w in wp]
+        if path:
+            self._grid.set_path(path)
+        snapped = state.get("snapped_goal_mm")
+        goal = state.get("goal_mm")
+        if goal is not None:
+            self._grid.set_goal(
+                goal["x"], goal["y"],
+                snapped_x_mm=(snapped["x"] if snapped else None),
+                snapped_y_mm=(snapped["y"] if snapped else None),
+            )
+
+        st = str(state.get("state") or "idle")
+        reason = str(state.get("reason") or "")
+        dist = state.get("distance_to_goal_mm")
+        dist_str = (
+            f"{dist:.0f} mm to goal"
+            if isinstance(dist, (int, float)) else ""
+        )
+
+        kind = Pill.KIND_OK
+        terminal = st in ("arrived", "unreachable", "stuck", "lost",
+                          "cancelled", "error")
+        if st in ("unreachable", "stuck", "lost", "error"):
+            kind = Pill.KIND_ERROR
+        elif st in ("avoiding", "replanning"):
+            kind = Pill.KIND_WARN
+        elif st == "arrived":
+            kind = Pill.KIND_OK
+        self._goto_pill.setText(f"Goto: {st}")
+        self._goto_pill.set_kind(kind)
+
+        bits = [reason]
+        if dist_str:
+            bits.append(dist_str)
+        self._goto_status.setText(" · ".join([b for b in bits if b]))
+
+        if terminal:
+            self._goto_cancel_btn.setEnabled(False)
+            # On any terminal state, disarm the click overlay so a
+            # stray follow-up tap doesn't fire a fresh goto.
+            self._goto_btn.blockSignals(True)
+            self._goto_btn.setChecked(False)
+            self._goto_btn.setText("Tap on map: OFF")
+            self._goto_btn.blockSignals(False)
+            self._grid.set_clickable(False)
+            if st != "arrived":
+                # Keep the overlay visible on failure so the operator
+                # can see WHERE the planner gave up; the next tap
+                # auto-clears it.
+                pass
+            else:
+                # On arrival, fade out the path but keep the flag
+                # visible until the next click.
+                self._grid.set_path([])
+
+    def _on_autonomy_mode(self, mode: str) -> None:
+        if mode == "idle":
+            self._goto_cancel_btn.setEnabled(False)

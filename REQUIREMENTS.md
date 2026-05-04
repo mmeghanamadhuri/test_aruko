@@ -556,6 +556,17 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. (Was 700 mm — at walking speed the BLDCs coasted to within 50–60 cm of people before stopping; 1200 mm leaves the bot ~1 m of buffer for braking.) |
 | `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Per-side clearance for forward to be allowed. |
 | `NINA_AUTO_ESTOP_MM` | 600 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; reverse only engaged once the bot was already 30 cm away.) |
+| `NINA_GOTO_ARRIVAL_MM` | 250 | Distance from the goal under which `GotoPilot` reports `arrived` and stops. Set to roughly half the chassis width so the bot doesn't pursue the exact tap pixel forever. |
+| `NINA_GOTO_INFLATE_MM` | 250 | Footprint inflation in mm. The A* planner dilates every wall pixel by this radius so the resulting path leaves a Nina-shaped buffer. Bump for narrower bots, lower for tight rooms only after rehearsal. |
+| `NINA_GOTO_CRUISE_PCT` | 15 | Goto forward speed (matches `NINA_AUTO_CRUISE_PCT` so a wander → goto handoff doesn't change pace). |
+| `NINA_GOTO_TURN_PCT` | 16 | Goto in-place spin speed. |
+| `NINA_GOTO_HEAD_DEG` | 18.0 | Heading-error deadband. Inside this window the pilot drives forward (still steering), outside it turns in place. Wider than the wander pilot's implicit binary so noisy SLAM headings don't flip the pilot into spin during normal driving. |
+| `NINA_GOTO_LOOKAHEAD_MM` | 600 | Pure-pursuit lookahead distance. Larger = smoother arcs, smaller = tighter follow at the cost of wobble. |
+| `NINA_GOTO_REPLAN_SEC` | 3.0 | Periodic replan cadence even if everything looks fine. As the SLAM map grows the optimal path may shorten — this picks that up. |
+| `NINA_GOTO_STUCK_SEC` | 5.0 | Stuck-detection window in seconds. |
+| `NINA_GOTO_STUCK_MM` | 50 | If the pose moved < this many mm in the stuck window, the pilot reports `stuck` and stops. |
+| `NINA_GOTO_TICK_HZ` | 8 | Goto control loop rate. Matches the wander pilot's `NINA_AUTO_TICK_HZ`. |
+| `NINA_GOTO_UNKNOWN_COST` | 1.5 | A* cost multiplier for grey/unknown grid cells. >1 nudges the planner to prefer mapped corridors but still routes into unexplored space when needed. |
 
 #### 5.3.6 First autonomy run
 
@@ -576,6 +587,46 @@ All optional; defaults work for the recommended hardware. Set in
 6. Hit the on-screen **E-STOP** (or the `Esc` key) any time. The
    pilot stops the wheels and engages the brake within one tick
    (`AutonomySettings.tick_hz`, default 5 Hz → ≤ 200 ms).
+
+#### 5.3.7 First goto-point run
+
+1. Drive Nina around the room first with the manual D-pad until
+   the SLAM grid has filled in — at least the immediate corridors
+   the bot will use. The A* planner refuses to route into a wall,
+   and an empty grey grid is a wall by default until something
+   useful gets carved out (an unknown cell on the planner edge
+   between the bot and the goal still routes through, just at the
+   `NINA_GOTO_UNKNOWN_COST` premium).
+2. Open the **Map** screen and press **Tap on map** in the
+   Go to point card. The button toggles to `ARMED`, the cursor
+   becomes a pointing-finger hand, and the pill reads
+   "Tap a point to start".
+3. Tap a free-ish (light-coloured) cell on the occupancy grid.
+   Nina:
+   1. Plans an A* path with the bot's footprint dilated as wall
+      buffer (`NINA_GOTO_INFLATE_MM`).
+   2. Renders the planned waypoints as a dashed red polyline plus
+      a flag pin at the goal.
+   3. Turns in place to align with the path lookahead, then drives
+      forward, replanning every `NINA_GOTO_REPLAN_SEC` and
+      whenever the live obstacle field disagrees with the path.
+   4. Reports `arrived` and stops on its own once it's within
+      `NINA_GOTO_ARRIVAL_MM` of the goal. **Stop-and-stay** is
+      the default — the bot stays put until the operator either
+      taps a new goal, presses **Cancel goto**, or toggles
+      autonomy off.
+4. If the click landed on a wall, the planner snaps the goal to
+   the nearest free cell (`snap_radius_mm = 1500` by default).
+   The map pin renders as a hollow ring at the click and a filled
+   flag at the snapped goal so the operator sees both.
+5. **Cancel goto** stops the goto pilot. If autonomy was OFF when
+   the goto arm-tap fired, autonomy also turns off; if autonomy
+   was already ON in wander mode before the tap, the bot returns
+   to wander.
+6. The same flow works from the Android companion when
+   `NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1` on the Jetson — see
+   `docs/COMPANION_APP.md` for the `POST /v1/autonomy/goal` and
+   `DELETE /v1/autonomy/goal` REST endpoints.
 
 **Troubleshooting: "the bot just spins, never moves forward"**
 

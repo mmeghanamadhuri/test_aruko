@@ -136,6 +136,7 @@ class NinaService:
                 drive=self.drive,
                 slam=self.slam,
                 settings=self.settings.autonomy,
+                goto_settings=self.settings.goto,
             )
         return self._autonomy
 

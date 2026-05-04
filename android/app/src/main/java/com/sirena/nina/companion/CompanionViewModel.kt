@@ -774,6 +774,26 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    /** POST /v1/autonomy/goal — arm goto with the given world-mm coordinates. */
+    suspend fun postAutonomyGoal(xMm: Double, yMm: Double): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.setAutonomyGoal(url, bearer, xMm, yMm)
+        } catch (_: Exception) {
+            null
+        }
+
+    /** DELETE /v1/autonomy/goal — cancel an in-flight goto. */
+    suspend fun deleteAutonomyGoal(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            val bearer = prefs.bearerToken.first()
+            client.clearAutonomyGoal(url, bearer)
+        } catch (_: Exception) {
+            null
+        }
+
     fun sessionClaim(onResult: (String?) -> Unit) {
         viewModelScope.launch {
             try {

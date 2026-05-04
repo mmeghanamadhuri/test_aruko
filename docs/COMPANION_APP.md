@@ -269,6 +269,8 @@ Share the **`.apk`** file; on each device allow **Install unknown apps** for the
 - `GET /v1/actions/record/status` / `POST /v1/actions/record/start` — when `NINA_LINK_ENABLE_RECORD_BRIDGE=1`.
 - `GET /v1/vision/status` / `GET /v1/vision/stream` (MJPEG) / `POST /v1/vision/options` / `POST /v1/vision/open` / `POST /v1/vision/stop` — when `NINA_LINK_ENABLE_VISION_BRIDGE=1`.
 - `GET /v1/media/file?relative=audio/foo.mp3` — when `NINA_LINK_ENABLE_ACTIONS_STATIC=1` (path must stay under `nina/actions/`).
+- `GET /v1/autonomy/status` / `POST /v1/autonomy/enabled` — when `NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1`. Status returns the merged blob `{ "enabled", "mode": "idle"|"wander"|"goto", "health", "pilot", "goto", "last_pilot" }`. Enabled toggles wander.
+- `POST /v1/autonomy/goal` / `DELETE /v1/autonomy/goal` — same bridge flag. Body for POST is `{ "x_mm": <float>, "y_mm": <float> }` in the SLAM map frame (origin = map centre, +x right, +y forward). The Jetson plans an A* path on the live BreezySLAM grid (with footprint inflation), follows it with reactive obstacle avoidance, and stops on arrival. DELETE cancels the in-flight goto; if the goto turned autonomy on, autonomy also turns off.
 - `POST /v1/session/claim` / `POST /v1/session/release` — if `NINA_LINK_SESSION_SCRIPT` is set.
 
 ## Android vs desktop Sirena UI

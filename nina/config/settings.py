@@ -104,6 +104,34 @@ class SlamSettings:
 
 
 @dataclass(frozen=True)
+class GotoSettings:
+    """Tunables for the goto-point pilot.
+
+    Goto navigation is goal-directed (vs the wander pilot's
+    obstacle-only reactive behaviour). The pilot plans an A* path on
+    the live BreezySLAM occupancy grid, follows it with pure-pursuit,
+    and re-runs the planner whenever the reactive obstacle layer
+    vetoes a path step. All distances are millimetres, speeds are
+    percent (0..100).
+
+    `footprint_radius_mm` is dilated into the planner's "occupied"
+    layer so paths leave a Nina-shaped buffer to walls. Set this
+    larger than half the bot's body width to be safe.
+    """
+    arrival_radius_mm: int                 # within this -> 'arrived'
+    footprint_radius_mm: int               # planner inflation around walls
+    cruise_speed_pct: int                  # straight-line speed
+    turn_speed_pct: int                    # in-place spin speed
+    heading_deadband_deg: float            # |heading_err| <= this -> drive forward
+    lookahead_mm: int                      # pure-pursuit lookahead distance
+    replan_period_sec: float               # automatic replans, even if path looks fine
+    stuck_window_sec: float                # window we look back over for "is the bot moving?"
+    stuck_motion_mm: int                   # if pose moved < this in window -> 'stuck'
+    tick_hz: float                         # control loop rate
+    unknown_pixel_cost: float              # A* extra cost per unknown grey pixel (>=1.0)
+
+
+@dataclass(frozen=True)
 class NinaSettings:
     serial_port: str
     baudrate: int
@@ -116,6 +144,7 @@ class NinaSettings:
     autonomy: AutonomySettings
     slam: SlamSettings
     lidar: LidarSettings
+    goto: GotoSettings
 
 
 def load_settings(repo_root: Path) -> NinaSettings:
@@ -243,6 +272,48 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
     )
 
+    goto = GotoSettings(
+        # 250 mm -> roughly Nina's chassis half-width. The pilot
+        # transitions to 'arrived' once the bot is inside this radius
+        # of the goal, which keeps it from oscillating on the spot
+        # trying to land on the exact pixel the operator tapped.
+        arrival_radius_mm=int(os.environ.get("NINA_GOTO_ARRIVAL_MM", "250")),
+        # Footprint inflation: A* treats every wall pixel as
+        # "wall + this many mm of buffer" so the planner never
+        # picks a route the bot physically can't take. Default
+        # 250 mm = ~half-body width. Bump for wider bots / tighter
+        # safety margins.
+        footprint_radius_mm=int(os.environ.get("NINA_GOTO_INFLATE_MM", "250")),
+        # Match the wander pilot's 15 % cruise so a goto handoff
+        # doesn't change the bot's perceived "speed" mid-run.
+        cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "15")),
+        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "16")),
+        # 18 deg deadband: inside this we drive forward (still with
+        # a small heading correction); outside, we turn in place.
+        # Wider than the wander pilot's implicit binary so we don't
+        # flip into in-place spin during normal forward driving on a
+        # noisy SLAM heading estimate.
+        heading_deadband_deg=float(os.environ.get("NINA_GOTO_HEAD_DEG", "18.0")),
+        # 600 mm pure-pursuit lookahead. Longer = smoother arc,
+        # shorter = tighter follow but more wobble.
+        lookahead_mm=int(os.environ.get("NINA_GOTO_LOOKAHEAD_MM", "600")),
+        # Periodic replan even if everything looks fine - the SLAM
+        # map keeps growing and the optimal path may shorten as
+        # walls fill in.
+        replan_period_sec=float(os.environ.get("NINA_GOTO_REPLAN_SEC", "3.0")),
+        # 5 s window x 50 mm of motion = "the bot is genuinely stuck".
+        # The wander pilot's reactive veto would otherwise mask a
+        # locked-rotor / dead-driver scenario.
+        stuck_window_sec=float(os.environ.get("NINA_GOTO_STUCK_SEC", "5.0")),
+        stuck_motion_mm=int(os.environ.get("NINA_GOTO_STUCK_MM", "50")),
+        # Same 8 Hz as the wander pilot's tick.
+        tick_hz=float(os.environ.get("NINA_GOTO_TICK_HZ", "8")),
+        # Unknown-grey pixels cost slightly more than known-free
+        # ones in the planner, so A* will prefer mapped corridors
+        # but still happily route into unmapped rooms when needed.
+        unknown_pixel_cost=float(os.environ.get("NINA_GOTO_UNKNOWN_COST", "1.5")),
+    )
+
     return NinaSettings(
         serial_port=os.environ.get("NINA_DXL_PORT", "/dev/ttyUSB0"),
         baudrate=int(os.environ.get("NINA_DXL_BAUD", "222222")),
@@ -255,4 +326,5 @@ def load_settings(repo_root: Path) -> NinaSettings:
         autonomy=autonomy,
         slam=slam,
         lidar=lidar,
+        goto=goto,
     )

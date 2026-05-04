@@ -1,23 +1,28 @@
-"""Qt facade over `AutonomousPilot`.
+"""Qt facade over `AutonomousPilot` (wander) and `GotoPilot` (goto).
 
 Owns the short-range sensors (HC-SR04 ring, GP2Y0E02B IR, RealSense
-D435 depth) and the pilot itself. Lidar scans come from the running
-`SlamWorker` so we don't open the serial port twice.
+D435 depth) and exactly one pilot at a time. Lidar scans come from
+the running `SlamWorker` so we don't open the serial port twice.
 
 Public surface:
 
     enabled_changed(bool)
-    pilot_state_changed(dict)   # PilotState as a dict
+    pilot_state_changed(dict)   # PilotState as a dict (wander mode)
+    goto_state_changed(dict)    # GotoState as a dict (goto mode)
     sensor_health_changed(dict) # SensorHealth dict for the Map screen pills
 
     set_enabled(on: bool)
     is_enabled() -> bool
     state() -> dict
+    set_goal(x_mm, y_mm)        # arms goto mode (turns autonomy on if off)
+    clear_goal()                # back to wander, or off if started by goto
+    current_mode() -> 'wander' | 'goto' | 'idle'
 
 `set_enabled(True)` opens whichever sensors are available, starts the
-pilot, and disables any subsystems that fail to come up (the pilot
-keeps running on whatever sensors did open). `set_enabled(False)`
-stops the pilot, closes the sensors, and parks the wheels.
+wander pilot by default, and disables any subsystems that fail to come
+up (the pilot keeps running on whatever sensors did open).
+`set_enabled(False)` stops the active pilot, closes the sensors, and
+parks the wheels.
 """
 
 from __future__ import annotations
@@ -28,11 +33,18 @@ from typing import Callable, List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, pyqtSignal
 
-from nina.config.settings import AutonomySettings
+from nina.config.settings import AutonomySettings, GotoSettings
 from nina.navigation.autonomous_pilot import (
     AutonomousPilot,
     PilotState,
     SensorBundle,
+)
+from nina.navigation.goto_pilot import (
+    GotoPilot,
+    GotoPose,
+    GotoSensorBundle,
+    GotoSnapshot,
+    GotoState,
 )
 from nina.sensors.gp2y0e02b import GP2Y0E02B
 from nina.sensors.hcsr04 import HCSR04Array
@@ -46,6 +58,13 @@ from nina.sensors.types import (
 )
 from sirena_ui.workers.drive_controller import DriveController
 from sirena_ui.workers.slam_worker import SlamWorker
+
+
+# Mode constants (string values so they round-trip cleanly through
+# Qt signals + the link-daemon HTTP surface without enum gymnastics).
+MODE_IDLE = "idle"
+MODE_WANDER = "wander"
+MODE_GOTO = "goto"
 
 
 log = logging.getLogger("sirena_ui.autonomy")
@@ -65,13 +84,16 @@ def _pilot_state_to_dict(state: PilotState) -> dict:
 class AutonomyController(QObject):
     enabled_changed = pyqtSignal(bool)
     pilot_state_changed = pyqtSignal(dict)
+    goto_state_changed = pyqtSignal(dict)
     sensor_health_changed = pyqtSignal(dict)
+    mode_changed = pyqtSignal(str)        # 'idle' | 'wander' | 'goto'
 
     def __init__(
         self,
         drive: DriveController,
         slam: SlamWorker,
         settings: AutonomySettings,
+        goto_settings: Optional[GotoSettings] = None,
         ultrasonics: Optional[HCSR04Array] = None,
         ir: Optional[GP2Y0E02B] = None,
         depth: Optional[RealSenseD435] = None,
@@ -81,15 +103,49 @@ class AutonomyController(QObject):
         self._drive = drive
         self._slam = slam
         self._settings = settings
+        # Goto settings are optional so older tests / CLI tools that
+        # build an AutonomyController without a NinaSettings don't
+        # have to know the goto knobs exist. When omitted we fall
+        # back to whatever load_settings() picks up from env vars.
+        if goto_settings is None:
+            from nina.config.settings import load_settings
+            from pathlib import Path
+            try:
+                goto_settings = load_settings(
+                    Path(__file__).resolve().parents[2]
+                ).goto
+            except Exception:
+                # Last-resort defaults so a controller can still
+                # construct in a hostile environment (no repo root,
+                # no env vars). Tests stub this out anyway.
+                goto_settings = GotoSettings(
+                    arrival_radius_mm=250,
+                    footprint_radius_mm=250,
+                    cruise_speed_pct=15,
+                    turn_speed_pct=16,
+                    heading_deadband_deg=18.0,
+                    lookahead_mm=600,
+                    replan_period_sec=3.0,
+                    stuck_window_sec=5.0,
+                    stuck_motion_mm=50,
+                    tick_hz=8.0,
+                    unknown_pixel_cost=1.5,
+                )
+        self._goto_settings = goto_settings
         self._ultras = ultrasonics or HCSR04Array()
         self._ir = ir or GP2Y0E02B()
         self._depth = depth or RealSenseD435()
 
         self._lock = threading.RLock()
         self._enabled = False
+        self._mode: str = MODE_IDLE
         self._pilot: Optional[AutonomousPilot] = None
+        self._goto_pilot: Optional[GotoPilot] = None
+        self._goto_started_autonomy = False  # if True, clear_goal also disables autonomy
+        self._sensor_bundle: Optional[SensorBundle] = None
         self._health = SensorHealth()
         self._opened: List[Callable[[], None]] = []
+        self._last_goto_state: Optional[dict] = None
 
         # Reference count for the depth sensor so the Perception screen
         # can keep it open for visualization while autonomy is OFF, and
@@ -109,13 +165,27 @@ class AutonomyController(QObject):
     def is_enabled(self) -> bool:
         return self._enabled
 
+    def current_mode(self) -> str:
+        with self._lock:
+            return self._mode
+
     def state(self) -> dict:
         with self._lock:
             pilot = self._pilot
+            goto = self._goto_pilot
+            mode = self._mode
+            last_goto = (
+                dict(self._last_goto_state)
+                if self._last_goto_state else None
+            )
             payload = {
                 "enabled": self._enabled,
+                "mode": mode,
                 "health": self._health.as_dict(),
                 "pilot": _pilot_state_to_dict(pilot.state()) if pilot else None,
+                "goto": (
+                    goto.state().as_dict() if goto else last_goto
+                ),
                 "sim": self._is_simulation_summary(),
             }
         return payload
@@ -232,6 +302,114 @@ class AutonomyController(QObject):
         else:
             self._disable()
 
+    def set_goal(self, x_mm: float, y_mm: float) -> dict:
+        """Arm the goto pilot to drive to (x_mm, y_mm).
+
+        Behaviour:
+          * Autonomy off  -> opens the sensor stack, switches to
+                             goto mode, starts the goto pilot.
+                             ``clear_goal`` will then also turn
+                             autonomy off (mirrors the operator's
+                             original "tap to start" intent).
+          * Autonomy on, mode=wander
+                          -> stops wander, switches to goto, starts
+                             the goto pilot. ``clear_goal`` returns
+                             to wander.
+          * Autonomy on, mode=goto
+                          -> updates the in-flight goal. The pilot
+                             discards its old waypoints and replans.
+
+        Returns a dict with ``ok`` + ``mode`` + ``message`` so the
+        caller (Map screen / link daemon / Android) can surface a
+        precise reason for any refusal.
+        """
+        try:
+            x = float(x_mm)
+            y = float(y_mm)
+        except (TypeError, ValueError):
+            return {"ok": False, "message": "goal coords must be numeric"}
+
+        with self._lock:
+            was_enabled = self._enabled
+            already_goto = self._goto_pilot is not None
+            mode = self._mode
+
+        if not was_enabled:
+            # We started this autonomy session because of the goto
+            # request, so clear_goal should also unwind it.
+            try:
+                self._enable(initial_mode=MODE_GOTO)
+            except Exception as exc:
+                log.exception("set_goal: enable failed")
+                return {"ok": False, "message": f"enable failed: {exc}"}
+            with self._lock:
+                self._goto_started_autonomy = True
+            self._spawn_goto_pilot(x, y)
+            return {"ok": True, "mode": MODE_GOTO, "message": "goto armed"}
+
+        # Already on. If currently in wander, swap pilots.
+        if mode == MODE_WANDER and not already_goto:
+            self._stop_wander_pilot()
+            with self._lock:
+                self._mode = MODE_GOTO
+                self._goto_started_autonomy = False
+            self.mode_changed.emit(MODE_GOTO)
+            self._spawn_goto_pilot(x, y)
+            return {"ok": True, "mode": MODE_GOTO, "message": "switched to goto"}
+
+        # Already in goto: update in flight (the pilot handles this
+        # internally via start() being idempotent).
+        if already_goto:
+            self._goto_pilot.start(x, y)  # type: ignore[union-attr]
+            return {"ok": True, "mode": MODE_GOTO, "message": "goal updated"}
+
+        # Defensive: enabled but no pilot at all (mid-handoff race).
+        with self._lock:
+            self._mode = MODE_GOTO
+        self.mode_changed.emit(MODE_GOTO)
+        self._spawn_goto_pilot(x, y)
+        return {"ok": True, "mode": MODE_GOTO, "message": "goto armed"}
+
+    def clear_goal(self) -> dict:
+        """Cancel an in-flight goto.
+
+        If goto was the reason autonomy turned on (``set_goal`` while
+        autonomy was off), this also disables autonomy. Otherwise we
+        revert to the wander pilot.
+        """
+        with self._lock:
+            goto = self._goto_pilot
+            started_us = self._goto_started_autonomy
+            mode = self._mode
+
+        if goto is None and mode != MODE_GOTO:
+            return {
+                "ok": True,
+                "mode": mode,
+                "message": "no active goto",
+            }
+
+        self._stop_goto_pilot()
+
+        if started_us:
+            self._disable()
+            return {
+                "ok": True,
+                "mode": MODE_IDLE,
+                "message": "goto cleared, autonomy off",
+            }
+
+        # Fall back to wander.
+        self._spawn_wander_pilot()
+        with self._lock:
+            self._mode = MODE_WANDER
+        self.mode_changed.emit(MODE_WANDER)
+        return {
+            "ok": True,
+            "mode": MODE_WANDER,
+            "message": "goto cleared, returned to wander",
+        }
+
     def shutdown(self) -> None:
         try:
             self.set_enabled(False)
@@ -242,8 +420,8 @@ class AutonomyController(QObject):
     # Internal lifecycle
     # ------------------------------------------------------------------
 
-    def _enable(self) -> None:
-        log.info("Autonomy enabling - opening sensors")
+    def _enable(self, initial_mode: str = MODE_WANDER) -> None:
+        log.info("Autonomy enabling - opening sensors (mode=%s)", initial_mode)
         self._opened.clear()
 
         # SLAM worker (and lidar) - if not already running, kick it on.
@@ -280,14 +458,19 @@ class AutonomyController(QObject):
                 depth=(depth_ok, depth_msg),
             )
 
-        bundle = SensorBundle(
+        # Bundles get cached so set_goal mid-flight can build a goto
+        # pilot from the same already-open sensor stack without
+        # reaching back into the open flags.
+        wander_bundle = SensorBundle(
             lidar=lambda: self._slam.latest_scan(),
             ultrasonics=lambda: self._safe_read_ultras(ultra_ok),
             ir=lambda: self._safe_read_ir(ir_ok),
             depth=lambda: self._safe_read_depth(depth_ok),
         )
+        with self._lock:
+            self._sensor_bundle = wander_bundle
 
-        # Make sure the brake is released before the pilot starts
+        # Make sure the brake is released before either pilot starts
         # issuing wheel commands.
         try:
             self._drive.set_brake(False)
@@ -295,27 +478,37 @@ class AutonomyController(QObject):
         except Exception as exc:
             log.warning("drive.ensure_hardware: %s", exc)
 
-        pilot = AutonomousPilot(self._drive, bundle, self._settings)
-        pilot.add_listener(self._on_pilot_state)
-        pilot.start()
-
         with self._lock:
-            self._pilot = pilot
             self._enabled = True
+            self._mode = initial_mode
+
+        if initial_mode == MODE_WANDER:
+            self._spawn_wander_pilot()
 
         self.sensor_health_changed.emit(self._health.as_dict())
+        self.mode_changed.emit(initial_mode)
         self.enabled_changed.emit(True)
 
     def _disable(self) -> None:
         log.info("Autonomy disabling - stopping pilot + sensors")
         with self._lock:
-            pilot = self._pilot
+            wander = self._pilot
+            goto = self._goto_pilot
             self._pilot = None
+            self._goto_pilot = None
             self._enabled = False
+            self._mode = MODE_IDLE
+            self._goto_started_autonomy = False
+            self._sensor_bundle = None
 
-        if pilot is not None:
+        if wander is not None:
             try:
-                pilot.stop()
+                wander.stop()
+            except Exception:
+                pass
+        if goto is not None:
+            try:
+                goto.stop()
             except Exception:
                 pass
 
@@ -360,7 +553,99 @@ class AutonomyController(QObject):
             )
 
         self.sensor_health_changed.emit(self._health.as_dict())
+        self.mode_changed.emit(MODE_IDLE)
         self.enabled_changed.emit(False)
+
+    # ------------------------------------------------------------------
+    # Pilot lifecycle (wander + goto helpers)
+    # ------------------------------------------------------------------
+
+    def _spawn_wander_pilot(self) -> None:
+        with self._lock:
+            bundle = self._sensor_bundle
+        if bundle is None:
+            log.warning("_spawn_wander_pilot: no sensor bundle yet")
+            return
+        pilot = AutonomousPilot(self._drive, bundle, self._settings)
+        pilot.add_listener(self._on_pilot_state)
+        pilot.start()
+        with self._lock:
+            self._pilot = pilot
+
+    def _stop_wander_pilot(self) -> None:
+        with self._lock:
+            pilot = self._pilot
+            self._pilot = None
+        if pilot is not None:
+            try:
+                pilot.stop()
+            except Exception:
+                log.exception("wander pilot.stop")
+        try:
+            self._drive.stop()
+        except Exception:
+            pass
+
+    def _spawn_goto_pilot(self, goal_x_mm: float, goal_y_mm: float) -> None:
+        with self._lock:
+            wander_bundle = self._sensor_bundle
+        if wander_bundle is None:
+            log.warning("_spawn_goto_pilot: no sensor bundle yet")
+            return
+
+        # Goto pilot needs SLAM pose + grid AND the same reactive
+        # sensor stream the wander pilot uses. We build a thin
+        # GotoSensorBundle that wraps both.
+        def _pose_getter() -> Optional[GotoPose]:
+            p = self._slam.latest_pose()
+            if p is None:
+                return None
+            return GotoPose(
+                x_mm=p["x_mm"], y_mm=p["y_mm"],
+                theta_deg=p["theta_deg"],
+                updated_at=p.get("updated_at", 0.0),
+            )
+
+        def _snap_getter() -> Optional[GotoSnapshot]:
+            v = self._slam.latest_grid_view()
+            if v is None:
+                return None
+            return GotoSnapshot(
+                grid_bytes=v["grid_bytes"],
+                width=v["width"], height=v["height"],
+                scale_mm_per_px=v["scale_mm_per_px"],
+            )
+
+        bundle = GotoSensorBundle(
+            pose=_pose_getter,
+            snapshot=_snap_getter,
+            lidar=wander_bundle.lidar,
+            ultrasonics=wander_bundle.ultrasonics,
+            ir=wander_bundle.ir,
+            depth=wander_bundle.depth,
+        )
+
+        pilot = GotoPilot(
+            self._drive, bundle, self._goto_settings, self._settings
+        )
+        pilot.add_listener(self._on_goto_state)
+        pilot.start(goal_x_mm, goal_y_mm)
+        with self._lock:
+            self._goto_pilot = pilot
+
+    def _stop_goto_pilot(self) -> None:
+        with self._lock:
+            pilot = self._goto_pilot
+            self._goto_pilot = None
+        if pilot is not None:
+            try:
+                pilot.stop()
+            except Exception:
+                log.exception("goto pilot.stop")
+        try:
+            self._drive.stop()
+        except Exception:
+            pass
 
     # ------------------------------------------------------------------
     # Helpers
@@ -417,6 +702,41 @@ class AutonomyController(QObject):
             self.pilot_state_changed.emit(_pilot_state_to_dict(state))
         except Exception:
             pass
+
+    def _on_goto_state(self, state: GotoState) -> None:
+        payload = state.as_dict()
+        with self._lock:
+            self._last_goto_state = payload
+            terminal = state.state in (
+                "arrived", "unreachable", "stuck", "lost",
+                "cancelled", "error",
+            )
+            started_us = self._goto_started_autonomy
+        try:
+            self.goto_state_changed.emit(payload)
+        except Exception:
+            pass
+
+        if terminal and not state.running:
+            # Stop-and-stay semantics (operator confirmed): on
+            # arrival (or any other terminal), we DON'T auto-resume
+            # wander. We do clean up so the controller is ready for
+            # another set_goal / set_enabled cycle.
+            self._stop_goto_pilot()
+            if started_us:
+                # The goto turned autonomy on; wind it back down.
+                self._disable()
+            else:
+                # Was wander before goto; stay enabled but idle the
+                # mode so the operator decides "back to wander or
+                # off". We mirror this in the UI by reopening the
+                # wander pilot only if the operator explicitly
+                # toggles autonomy (they can also re-tap to set a
+                # new goal from here).
+                with self._lock:
+                    self._mode = MODE_WANDER
+                self.mode_changed.emit(MODE_WANDER)
+                self._spawn_wander_pilot()
 
 
 def lidar_scan_signature(scan: Optional[LidarScan]) -> str:

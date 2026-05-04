@@ -160,6 +160,45 @@ class SlamWorker(QObject):
         with self._lock:
             return self._latest_snapshot
 
+    def latest_pose(self) -> Optional[dict]:
+        """Just the pose part of the latest snapshot, as a dict.
+
+        Used by the goto pilot which needs pose every tick but doesn't
+        want to copy the full grid bytes through `latest_snapshot()`.
+        Returns ``None`` when the SLAM worker hasn't produced a
+        snapshot yet (cold boot, lidar disconnected, etc.).
+        """
+        with self._lock:
+            snap = self._latest_snapshot
+        if snap is None:
+            return None
+        return {
+            "x_mm": snap.pose.x_mm,
+            "y_mm": snap.pose.y_mm,
+            "theta_deg": snap.pose.theta_deg,
+            "updated_at": snap.updated_at,
+        }
+
+    def latest_grid_view(self) -> Optional[dict]:
+        """Compact view of the SLAM grid for path planning.
+
+        Returns a dict with ``grid_bytes / width / height /
+        scale_mm_per_px`` so the goto planner can run A* without
+        importing `SlamSnapshot` or holding a snapshot reference
+        across replans. Returns ``None`` until the first scan has
+        been processed.
+        """
+        with self._lock:
+            snap = self._latest_snapshot
+        if snap is None:
+            return None
+        return {
+            "grid_bytes": snap.grid_bytes,
+            "width": snap.width,
+            "height": snap.height,
+            "scale_mm_per_px": snap.scale_mm_per_px,
+        }
+
     def status(self) -> dict:
         with self._lock:
             return dict(self._status)

@@ -119,6 +119,18 @@ class AutonomyEnabledBody(BaseModel):
     enabled: bool = True
 
 
+class AutonomyGoalBody(BaseModel):
+    """World-frame goal point (millimetres, origin = SLAM map centre).
+
+    The companion sends pixel + scale separately for sanity, but the
+    daemon only consumes the millimetre coords - the planner runs in
+    the same frame as the SLAM occupancy grid.
+    """
+
+    x_mm: float = Field(..., description="goal x in mm (origin = map centre, +x right)")
+    y_mm: float = Field(..., description="goal y in mm (origin = map centre, +y forward)")
+
+
 class RecordStartBody(BaseModel):
     """JSON may still use ``\"register\"`` for the manifest flag (alias)."""
 
@@ -426,7 +438,9 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "depth_bridge_enabled": cfg.enable_depth_bridge,
             "autonomy_status_endpoint": "/v1/autonomy/status",
             "autonomy_enabled_endpoint": "/v1/autonomy/enabled",
+            "autonomy_goal_endpoint": "/v1/autonomy/goal",
             "autonomy_bridge_enabled": cfg.enable_autonomy_bridge,
+            "autonomy_supports_goto": cfg.enable_autonomy_bridge,
             "manifest_path": str(cfg.actions_manifest_path),
             "session_script_configured": bool(cfg.session_script),
             "message": (
@@ -992,6 +1006,48 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 detail="Autonomy bridge disabled — set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1",
             )
         return autonomy_bridge.set_enabled(body.enabled)
+
+    @app.post("/v1/autonomy/goal")
+    def autonomy_goal_set_http(
+        body: AutonomyGoalBody,
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        """Arm the goto pilot to drive to (x_mm, y_mm).
+
+        World frame = SLAM map frame: origin at map centre, +x right,
+        +y forward. The companion gets the scale + pose from
+        ``/v1/slam/snapshot`` and converts a tap on the occupancy
+        bitmap to mm before POSTing here.
+        """
+        auth_mutate(authorization, request)
+        if not cfg.enable_autonomy_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=(
+                    "Autonomy bridge disabled — set "
+                    "NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1"
+                ),
+            )
+        return autonomy_bridge.set_goal(body.x_mm, body.y_mm)
+
+    @app.delete("/v1/autonomy/goal")
+    def autonomy_goal_clear_http(
+        request: Request,
+        authorization: Optional[str] = Header(None),
+    ) -> Dict[str, Any]:
+        """Cancel an in-flight goto.
+
+        If the goto was the reason autonomy turned on, this also
+        disables autonomy (mirrors the Qt facade).
+        """
+        auth_mutate(authorization, request)
+        if not cfg.enable_autonomy_bridge:
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Autonomy bridge disabled",
+            )
+        return autonomy_bridge.clear_goal()
 
     @app.post("/v1/session/claim")
     def session_claim_http(

@@ -323,6 +323,31 @@ class PerceptionScreen(QWidget):
     # Signal wiring
     # ------------------------------------------------------------------
 
+    def _on_goal_clicked(self, x_mm: float, y_mm: float) -> None:
+        try:
+            self._autonomy.set_goal(x_mm, y_mm)
+        except Exception as exc:
+            log.exception("perception goal click: %s", exc)
+
+    def _on_goto_state(self, state: dict) -> None:
+        if self._grid is None:
+            return
+        wp = state.get("waypoints_mm") or []
+        path = [(w["x"], w["y"]) for w in wp]
+        if path:
+            self._grid.set_path(path)
+        snapped = state.get("snapped_goal_mm")
+        goal = state.get("goal_mm")
+        if goal is not None:
+            self._grid.set_goal(
+                goal["x"], goal["y"],
+                snapped_x_mm=(snapped["x"] if snapped else None),
+                snapped_y_mm=(snapped["y"] if snapped else None),
+            )
+        st = str(state.get("state") or "")
+        if st == "arrived":
+            self._grid.set_path([])
+
     def _wire_signals(self) -> None:
         try:
             self._service.vision.frame_ready.connect(self._on_camera_frame)
@@ -337,8 +362,14 @@ class PerceptionScreen(QWidget):
         try:
             self._autonomy.enabled_changed.connect(self._on_autonomy_enabled)
             self._autonomy.sensor_health_changed.connect(self._on_sensor_health)
+            self._autonomy.goto_state_changed.connect(self._on_goto_state)
         except Exception:
             log.debug("PerceptionScreen: AutonomyController signals unavailable")
+        if self._grid is not None:
+            try:
+                self._grid.goal_clicked.connect(self._on_goal_clicked)
+            except Exception:
+                log.debug("PerceptionScreen: grid.goal_clicked unavailable")
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by MainWindow.navigate)
@@ -509,6 +540,13 @@ class PerceptionScreen(QWidget):
             f"Autonomous mode: {'ON' if on else 'OFF'}"
         )
         self._autonomy_btn.blockSignals(False)
+        # Lidar pane is click-to-set-goal whenever autonomy is on.
+        # When off, taps do nothing - same UX as the Map screen
+        # before the operator arms the Goto button there.
+        if self._grid is not None:
+            self._grid.set_clickable(bool(on))
+            if not on:
+                self._grid.clear_goal()
         self._auto_pill.setText(
             f"Autonomous: {'ON' if on else 'OFF'}"
         )
