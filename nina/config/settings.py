@@ -10,6 +10,12 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on", "y")
 
 
+# Upper bound for breakaway timing (seconds). Longer holds behave like
+# sustained drive at kick duty, not a start pulse. Env/clamped values
+# cannot exceed this.
+NAV_START_KICK_SEC_MAX = 1.0
+
+
 @dataclass(frozen=True)
 class NavigationSettings:
     """Tunables for the BLDC navigation manager.
@@ -36,7 +42,8 @@ class NavigationSettings:
     at PWM 0 and a new command requests motion: each non-zero side
     briefly runs at at least the kick duty to overcome static friction,
     then drops to the commanded speed. Set either to 0 to disable
-    (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC).
+    (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC). SEC is clamped
+    to at most NAV_START_KICK_SEC_MAX (default when unset = that max).
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -45,7 +52,7 @@ class NavigationSettings:
     invert_left_dir: bool
     invert_right_dir: bool
     start_kick_percent: int = 35
-    start_kick_sec: float = 0.06
+    start_kick_sec: float = NAV_START_KICK_SEC_MAX
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -184,7 +191,17 @@ def load_settings(repo_root: Path) -> NinaSettings:
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
         start_kick_percent=int(os.environ.get("NINA_NAV_START_KICK_PCT", "35")),
-        start_kick_sec=float(os.environ.get("NINA_NAV_START_KICK_SEC", "0.06")),
+        start_kick_sec=min(
+            NAV_START_KICK_SEC_MAX,
+            max(
+                0.0,
+                float(
+                    os.environ.get(
+                        "NINA_NAV_START_KICK_SEC", str(NAV_START_KICK_SEC_MAX)
+                    )
+                ),
+            ),
+        ),
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
         # 'remote' -> commands are sent over serial to a Raspberry Pi
         #             running pi_motor_bridge/motor_bridge.py.

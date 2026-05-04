@@ -18,7 +18,7 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_REMOTE_BAUD       # default 115200
     NINA_NAV_REMOTE_TIMEOUT_SEC# default 0.4
     NINA_NAV_START_KICK_PCT    # default 35; 0 = no breakaway pulse
-    NINA_NAV_START_KICK_SEC    # default 0.06; 0 = no breakaway pulse
+    NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
 """
 
 from __future__ import annotations

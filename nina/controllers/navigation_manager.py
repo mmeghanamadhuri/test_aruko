@@ -130,6 +130,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from nina.controllers.gpio_backend import GpioBackend, create_backend
+from nina.config.settings import NAV_START_KICK_SEC_MAX
 
 
 log = logging.getLogger("nina.navigation")
@@ -178,9 +179,10 @@ class NavigationConfig:
     invert_right_dir: bool = False         # flip if right wheel spins opposite of expected
     # When both wheels were at PWM 0, boost each moving side to at least this duty for
     # `start_kick_sec` to overcome static friction / JYQD cogging, then apply the command.
-    # Set either to 0 to disable (see NINA_NAV_START_KICK_*).
+    # Set either kick field to 0 to disable (see NINA_NAV_START_KICK_*). SEC default/cap
+    # matches `nina.config.settings.NAV_START_KICK_SEC_MAX` when using `load_settings`.
     start_kick_percent: int = 35
-    start_kick_sec: float = 0.06
+    start_kick_sec: float = 1.0
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -558,7 +560,7 @@ class NavigationManager:
         was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
         moving_now = ls > 0 or rs > 0
         kp = max(0, min(100, int(self.config.start_kick_percent)))
-        ks = max(0.0, float(self.config.start_kick_sec))
+        ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(self.config.start_kick_sec)))
 
         def _kick_duty(cmd: int) -> int:
             if cmd <= 0 or kp <= 0 or ks <= 0:

@@ -54,6 +54,8 @@ import time
 from dataclasses import dataclass
 from typing import Optional
 
+from nina.config.settings import NAV_START_KICK_SEC_MAX
+
 log = logging.getLogger("nina.navigation.remote")
 
 
@@ -294,7 +296,7 @@ class RemoteNavigationManager:
         was_rest = self._last_l_pwm == 0 and self._last_r_pwm == 0
         moving_now = ls > 0 or rs > 0
         kp = max(0, min(100, int(self.config.start_kick_percent)))
-        ks = max(0.0, float(self.config.start_kick_sec))
+        ks = max(0.0, min(NAV_START_KICK_SEC_MAX, float(self.config.start_kick_sec)))
 
         def _kick_duty(cmd: int) -> int:
             if cmd <= 0 or kp <= 0 or ks <= 0:
