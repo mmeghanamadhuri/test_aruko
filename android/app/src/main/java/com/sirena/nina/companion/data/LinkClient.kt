@@ -293,6 +293,11 @@ class LinkClient {
             get("$baseUrl/v1/vision/announce/status")
         }
 
+    suspend fun visionDetections(baseUrl: String): JSONObject =
+        withContext(Dispatchers.IO) {
+            get("$baseUrl/v1/vision/detections")
+        }
+
     suspend fun sessionClaim(baseUrl: String, bearer: String?): JSONObject =
         withContext(Dispatchers.IO) {
             post("$baseUrl/v1/session/claim", bearer, "{}")

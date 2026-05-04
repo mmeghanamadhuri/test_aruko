@@ -23,6 +23,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -65,6 +66,8 @@ fun SirenaVisionScreen(
     var enrollResult by remember { mutableStateOf("") }
     var announceLine by remember { mutableStateOf("") }
     var announceErr by remember { mutableStateOf("") }
+    var objectConfidence by remember { mutableStateOf(0.8f) }
+    var detectionsText by remember { mutableStateOf<List<String>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
     val streamRoot = daemonUrl?.trimEnd('/') ?: ""
@@ -75,6 +78,30 @@ fun SirenaVisionScreen(
             val st = vm.fetchVisionStatus()
             statusMsg = st?.optString("message") ?: ""
             delay(2000)
+        }
+    }
+
+    LaunchedEffect(visionOn, pipelineOn, objectOn) {
+        if (!visionOn || !pipelineOn || !objectOn) {
+            detectionsText = emptyList()
+            return@LaunchedEffect
+        }
+        while (true) {
+            val j = vm.fetchVisionDetections()
+            val arr = j?.optJSONArray("detections")
+            val rows = mutableListOf<String>()
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val label = o.optString("label")
+                    val conf = o.optDouble("confidence", 0.0)
+                    val identity = o.optString("identity").trim()
+                    val base = "$label ${(conf * 100).toInt()}%"
+                    rows.add(if (identity.isNotEmpty() && !identity.equals("null", ignoreCase = true)) "$base · $identity" else base)
+                }
+            }
+            detectionsText = rows.take(6)
+            delay(1200)
         }
     }
 
@@ -221,6 +248,23 @@ fun SirenaVisionScreen(
         Text("Pipeline", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         ToggleRow("Face detection", faceOn) { faceOn = it }
         ToggleRow("Object detection", objectOn) { objectOn = it }
+        Text("Object confidence ${(objectConfidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Slider(
+            value = objectConfidence,
+            onValueChange = { objectConfidence = it.coerceIn(0.5f, 0.99f) },
+            valueRange = 0.5f..0.99f,
+            enabled = visionOn && pipelineOn && objectOn,
+        )
+        Button(
+            onClick = {
+                scope.launch {
+                    vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = objectConfidence.toDouble())
+                }
+            },
+            enabled = visionOn && pipelineOn && objectOn,
+        ) {
+            Text("Apply confidence")
+        }
 
         Text("Face enrollment", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Card(
@@ -317,6 +361,17 @@ fun SirenaVisionScreen(
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (detectionsText.isEmpty()) {
+                    Text(
+                        "No detections yet.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    detectionsText.forEach {
+                        Text(it, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
                 Text(
                     "Bounding boxes are drawn on the Jetson stream when toggles are on (same pipeline as Sirena UI).",
                     style = MaterialTheme.typography.bodySmall,

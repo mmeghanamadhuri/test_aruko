@@ -716,6 +716,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             null
         }
 
+    suspend fun fetchVisionDetections(): JSONObject? =
+        try {
+            val url = prefs.baseUrl.first()
+            client.visionDetections(url)
+        } catch (_: Exception) {
+            null
+        }
+
     fun sessionClaim(onResult: (String?) -> Unit) {
         viewModelScope.launch {
             try {

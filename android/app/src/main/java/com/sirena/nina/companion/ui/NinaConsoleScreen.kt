@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -26,10 +27,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -40,6 +43,7 @@ import com.sirena.nina.companion.util.NinaLog
 import com.sirena.nina.companion.ui.sirena.SIRENA_NAV_ITEMS
 import com.sirena.nina.companion.ui.sirena.SIRENA_SETTINGS_CATEGORIES
 import com.sirena.nina.companion.ui.sirena.SirenaStatusFooter
+import org.json.JSONObject
 
 /**
  * Shell mirroring [sirena_ui.main_window] nav — same sections as the desktop robot UI,
@@ -86,6 +90,7 @@ fun NinaConsoleScreen(
             "home" to "Nina · Home",
             "drive" to "Nina · Drive",
             "vision" to "Nina · Vision",
+            "perception" to "Nina · Perception",
             "map" to "Nina · Map (SLAM)",
             "actions" to "Nina · Actions",
             "settings" to "Nina · Settings",
@@ -94,6 +99,20 @@ fun NinaConsoleScreen(
 
     val ready = state as? CompanionUiState.Ready
     val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
+    var robotCaps by remember { mutableStateOf<JSONObject?>(null) }
+    LaunchedEffect(ready?.url) {
+        val url = ready?.url
+        if (url.isNullOrBlank()) {
+            robotCaps = null
+            return@LaunchedEffect
+        }
+        robotCaps =
+            try {
+                vm.loadRobotCapabilities()
+            } catch (_: Exception) {
+                null
+            }
+    }
     val footerRight =
         when {
             ready != null ->
@@ -138,7 +157,7 @@ fun NinaConsoleScreen(
                 busConnected = jetsonLink.isOnline,
                 wifiOnline = ready != null,
                 batteryOk = false,
-                voiceReady = false,
+                voiceReady = robotCaps?.optBoolean("vision_bridge_enabled") == true,
                 rightLabel = footerRight,
             )
         },
@@ -192,6 +211,7 @@ private fun navIcon(key: String): ImageVector =
         "home" -> Icons.Default.Home
         "drive" -> Icons.Outlined.TwoWheeler
         "vision" -> Icons.Default.Visibility
+        "perception" -> Icons.Default.Sensors
         "map" -> Icons.Default.GridOn
         "actions" -> Icons.Default.Menu
         "settings" -> Icons.Default.Settings

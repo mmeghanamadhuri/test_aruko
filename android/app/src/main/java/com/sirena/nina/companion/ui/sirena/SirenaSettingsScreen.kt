@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -19,6 +20,7 @@ import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +28,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.StatusUi
@@ -33,7 +38,7 @@ import org.json.JSONObject
 
 /**
  * Category rail like desktop Settings — each section shows **live** Jetson data from
- * `GET /v1/robot/capabilities` and `GET /v1/status` where available. Wi‑Fi / pairing live under the main **Setup** tab.
+ * `GET /v1/robot/capabilities` and `GET /v1/status` where available. Use **Setup** for daemon URL / pairing if you prefer the full provisioning layout.
  */
 @Composable
 fun SirenaSettingsScreen(
@@ -105,9 +110,9 @@ fun SirenaSettingsScreen(
 
                 "network" -> {
                     SettingsLead(
-                        "Save Wi‑Fi, pairing PIN, bearer token, and daemon URL in the app Setup tab " +
-                            "(this screen is read-only status).",
+                        "Network controls are available here for parity with desktop Settings.",
                     )
+                    NetworkActionsCard(vm)
                     statusUi?.let { s ->
                         Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -280,6 +285,106 @@ fun SirenaSettingsScreen(
 @Composable
 private fun SettingsLead(text: String) {
     Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+}
+
+/** Same Jetson Wi‑Fi mutations as Setup — desktop Settings → Network parity for operators already in Nina console. */
+@Composable
+private fun NetworkActionsCard(vm: CompanionViewModel) {
+    var ssid by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var showPassword by remember { mutableStateOf(false) }
+    var feedback by remember { mutableStateOf<String?>(null) }
+    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text("Jetson Wi‑Fi actions", fontWeight = FontWeight.SemiBold)
+            Text(
+                "These calls mirror **Setup** — they change NetworkManager profiles on the robot over HTTP.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedTextField(
+                value = ssid,
+                onValueChange = { ssid = it },
+                label = { Text("Home SSID") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Password") },
+                singleLine = true,
+                visualTransformation =
+                    if (showPassword) {
+                        VisualTransformation.None
+                    } else {
+                        PasswordVisualTransformation()
+                    },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                TextButton(onClick = { showPassword = !showPassword }) {
+                    Text(if (showPassword) "Hide" else "Show")
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        feedback = null
+                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = false)
+                        feedback = "Save creds requested — check Setup / status if it failed."
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save creds")
+                }
+                Button(
+                    onClick = {
+                        feedback = null
+                        vm.saveHomeAndOptionallyConnect(ssid, password, connect = true)
+                        feedback = "Save & connect requested — join the same Wi‑Fi on the tablet when the Jetson moves to STA."
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Save & connect")
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = {
+                        feedback = null
+                        vm.connectJetsonHome(null)
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Connect saved")
+                }
+                OutlinedButton(
+                    onClick = {
+                        feedback = null
+                        vm.startApOnJetson()
+                    },
+                    modifier = Modifier.weight(1f),
+                ) {
+                    Text("Force AP")
+                }
+            }
+            OutlinedButton(
+                onClick = {
+                    feedback = null
+                    vm.refreshStatus()
+                    feedback = "Status refresh requested."
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text("Refresh link status")
+            }
+            feedback?.let {
+                Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
 }
 
 @Composable

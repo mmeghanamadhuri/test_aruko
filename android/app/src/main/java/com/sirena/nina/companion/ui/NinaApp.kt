@@ -64,7 +64,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.sirena.nina.companion.R
+import com.sirena.nina.companion.R      
 import com.sirena.nina.companion.CompanionUiState
 import com.sirena.nina.companion.CompanionViewModel
 import com.sirena.nina.companion.StatusUi
@@ -137,16 +137,14 @@ fun NinaApp(vm: CompanionViewModel) {
                 .fillMaxSize(),
         ) {
             when (tab) {
-                0 -> HomeTab(
-                    vm = vm,
-                    snack = snack,
-                    onOpenNinaConsole = { showNinaConsole = true },
-                    onOpenCarbotPlaceholder = {
-                        scope.launch {
-                            snack.showSnackbar("Carbot — coming soon.")
-                        }
-                    },
-                )
+                0 ->
+                    HomeTab(
+                        vm = vm,
+                        snack = snack,
+                        onOpenNinaConsole = { showNinaConsole = true },
+                        onGoNetworks = { tab = 1 },
+                        onGoSetup = { tab = 2 },
+                    )
                 1 -> NetworksTab(state = state, vm = vm, snack = snack)
                 2 -> SetupTab(vm = vm, snack = snack)
             }
@@ -175,9 +173,9 @@ private fun HomeTab(
     vm: CompanionViewModel,
     snack: SnackbarHostState,
     onOpenNinaConsole: () -> Unit,
-    onOpenCarbotPlaceholder: () -> Unit,
+    onGoNetworks: () -> Unit,
+    onGoSetup: () -> Unit,
 ) {
-    val scope = rememberCoroutineScope()
     val jetsonLink by vm.jetsonLink.collectAsStateWithLifecycle()
 
     Box(
@@ -244,18 +242,19 @@ private fun HomeTab(
             ) {
                 TextButton(
                     onClick = {
-                        NinaLog.tap("Home", "carbot_placeholder")
-                        onOpenCarbotPlaceholder()
+                        NinaLog.tap("Home", "networks_shortcut")
+                        onGoNetworks()
                     },
                 ) {
-                    Text("Carbot")
+                    Text("Networks")
                 }
                 TextButton(
                     onClick = {
-                        scope.launch { snack.showSnackbar("System — coming soon.") }
+                        NinaLog.tap("Home", "setup_shortcut")
+                        onGoSetup()
                     },
                 ) {
-                    Text("System")
+                    Text("Setup")
                 }
             }
         }

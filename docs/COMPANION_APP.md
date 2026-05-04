@@ -270,3 +270,7 @@ Share the **`.apk`** file; on each device allow **Install unknown apps** for the
 - `GET /v1/vision/status` / `GET /v1/vision/stream` (MJPEG) / `POST /v1/vision/options` / `POST /v1/vision/open` / `POST /v1/vision/stop` — when `NINA_LINK_ENABLE_VISION_BRIDGE=1`.
 - `GET /v1/media/file?relative=audio/foo.mp3` — when `NINA_LINK_ENABLE_ACTIONS_STATIC=1` (path must stay under `nina/actions/`).
 - `POST /v1/session/claim` / `POST /v1/session/release` — if `NINA_LINK_SESSION_SCRIPT` is set.
+
+## Android vs desktop Sirena UI
+
+For a maintained parity checklist (screens, API coverage, and known gaps such as SLAM/autonomy HTTP), see [`docs/ANDROID_SIRENA_PARITY.md`](ANDROID_SIRENA_PARITY.md).

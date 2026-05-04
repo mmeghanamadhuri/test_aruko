@@ -2,6 +2,11 @@
 # -----------------------------------------------------------------------------
 # Nina Link — one-shot Jetson install + diagnosis for the companion-app daemon
 #
+# The systemd unit enables **all HTTP bridges** used by the Android companion
+# (drive, actions, record, vision, static media) so tablet ↔ Jetson comms match
+# docs/COMPANION_APP.md without a separate drop-in. Optional vision ML deps:
+#   ./scripts/update-nina-link-jetson.sh --sirena-headless --restart --verify
+#
 # Usage (on the Jetson, from repo root):
 #   ./scripts/install-nina-link-jetson.sh --all
 #   ./scripts/uninstall-nina-link-jetson.sh --purge   # remove service + venv + state
@@ -109,6 +114,12 @@ Environment=NINA_LINK_WIFI_READY_POLL=2
 Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 Environment=NINA_LINK_HOST=0.0.0.0
 Environment=NINA_LINK_PORT=8787
+# Companion app (tablet): expose full HTTP API — same set as update-nina-link-jetson.sh drop-in
+Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
+Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1
+Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
 ExecStart=${PY} -m nina.link_daemon.main
 Restart=on-failure
 RestartSec=5
@@ -352,7 +363,14 @@ cat <<EOF
 
   Manual foreground run (no systemd):
     export PYTHONPATH=${REPO_ROOT}
+    export NINA_LINK_ENABLE_ROBOT_BRIDGE=1 NINA_LINK_ENABLE_ACTION_BRIDGE=1 NINA_LINK_ENABLE_RECORD_BRIDGE=1 NINA_LINK_ENABLE_VISION_BRIDGE=1 NINA_LINK_ENABLE_ACTIONS_STATIC=1
     ${PY} -m nina.link_daemon.main
+
+  Verify APIs after install (on Jetson):
+    curl -s http://127.0.0.1:8787/v1/robot/capabilities | head
+
+  Optional — vision / gTTS stack for MJPEG + detections (longer pip run):
+    ./scripts/update-nina-link-jetson.sh --sirena-headless --restart --verify
 
   Remove link daemon from this machine:
     ./scripts/uninstall-nina-link-jetson.sh --purge

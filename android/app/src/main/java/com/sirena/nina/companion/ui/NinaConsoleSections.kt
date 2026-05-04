@@ -17,6 +17,7 @@ import com.sirena.nina.companion.ui.sirena.SirenaDriveScreen
 import com.sirena.nina.companion.ui.sirena.SirenaHealthScreen
 import com.sirena.nina.companion.ui.sirena.SirenaHomeScreen
 import com.sirena.nina.companion.ui.sirena.SirenaMapScreen
+import com.sirena.nina.companion.ui.sirena.SirenaPerceptionScreen
 import com.sirena.nina.companion.ui.sirena.SirenaSettingsScreen
 import com.sirena.nina.companion.ui.sirena.SirenaVisionScreen
 import org.json.JSONObject
@@ -87,7 +88,13 @@ fun NinaConsoleSectionContent(
                 daemonUrl = daemonUrl,
                 caps = caps,
             )
-        "map" -> SirenaMapScreen()
+        "perception" ->
+            SirenaPerceptionScreen(
+                vm = vm,
+                daemonUrl = daemonUrl,
+                caps = caps,
+            )
+        "map" -> SirenaMapScreen(vm = vm, daemonUrl = daemonUrl, caps = caps)
         "actions" ->
             SirenaActionsScreen(
                 selectedTab = actionsSubtab,
