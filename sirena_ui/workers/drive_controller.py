@@ -96,13 +96,12 @@ MIN_SPEED_PCT = 15
 MAX_SPEED_PCT = 25
 
 # When manual drive begins from a full stop (`_active_drive` is None),
-# the BLDC path needs a reliable kick (same floor as the operator slider
-# minimum). Immediately after that start, drop to this lower duty so logs,
-# lidar, and bench observation can characterise motion at a crawl. The
-# cruise value is sent only to the nav layer — it is below MIN_SPEED_PCT
-# on purpose (UI clamp does not apply to hardware PWM).
-FROM_STOP_KICK_PCT = 15
-FROM_STOP_CRUISE_PCT = 5
+# apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
+# so logs, lidar, and bench observation can characterise motion at a lower
+# duty. The cruise value can be below MIN_SPEED_PCT; it is sent only to the
+# nav layer (UI clamp does not apply to hardware PWM).
+FROM_STOP_KICK_PCT = 25
+FROM_STOP_CRUISE_PCT = 10
 
 
 def _clamp_speed(pct: int) -> int:
