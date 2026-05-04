@@ -230,6 +230,32 @@ The companion **MainActivity** is locked to **landscape** (`sensorLandscape` in 
 - **Drive shows “BLDC not connected” / Jetson.GPIO**: hardware path — confirm you run **on the Jetson**, **`nina-link.service`** uses **`/.venv-link/bin/python`**, user can access GPIO/UART (**`dialout`** etc.), and **desktop Drive** is not holding the bus. Not fixed by pip alone.
 - **Opaque “Internal Server Error” from curl**: Prefer **`curl -sS ...`** alone per request, or separate commands with **`echo`** between them — pasting capabilities + play on one line can merge JSON bodies in the terminal. After updating nina-link, **`POST /v1/actions/play`** errors return JSON **`{"detail":"..."}`** with the real cause (venv module, busy serial port, etc.).
 
+## Jetson: verify bridges and USB (robot side)
+
+From repo root on the Jetson (prints **`/health`**, **`/v1/robot/capabilities`**, USB serial nodes, and recent **`journalctl`**):
+
+```bash
+chmod +x scripts/verify-nina-link-companion.sh
+./scripts/verify-nina-link-companion.sh
+# optional: ./scripts/verify-nina-link-companion.sh 10.42.0.1 8787
+```
+
+If LiDAR errors mention the wrong device, set **`NINA_LIDAR_PORT`** (e.g. `/dev/ttyACM0`) in **`/etc/systemd/system/nina-link.service.d/bridges.conf`** and **`sudo systemctl daemon-reload && sudo systemctl restart nina-link`**.
+
+### RealSense (`pyrealsense2`) on Jetson (aarch64)
+
+Intel does not ship a universal aarch64 wheel; `pip install pyrealsense2` inside **`.venv-link`** often fails or mismatches the installed **`librealsense2`** version. Follow **`REQUIREMENTS.md` § 5.3.2** (build/install librealsense + Python bindings so `python3 -c "import pyrealsense2"` works **using the same interpreter** as **`nina-link`**, i.e. **`REPO_ROOT/.venv-link/bin/python`**). Until import succeeds in that venv, the companion Perception depth pane will show **`pyrealsense2 not ins`** from the daemon.
+
+### Kiosk vs tablet (exclusive hardware)
+
+The PyQt kiosk and **`nina-link`** are **different processes**; both must not open the same USB camera, LiDAR, or RealSense at once. Configure on the Jetson:
+
+1. Copy **[`scripts/nina-link-session-helper.sh`](../scripts/nina-link-session-helper.sh)** to **`/usr/local/bin/nina-link-session-helper`** and **`chmod +x`**.
+2. In **`bridges.conf`**, set **`Environment=NINA_LINK_SESSION_SCRIPT=/usr/local/bin/nina-link-session-helper`** and **`Environment=NINA_SESSION_DESKTOP_USER=<login_that_runs_kiosk>`** (match **`systemctl --user status nina-ui-kiosk`**).
+3. Ensure **`sudo`** allows **`nina-link`** (usually root) to run **`sudo -u`** that user without a password for **`systemctl --user stop/start`**, or run a narrower sudoers rule for this script.
+
+The Android app **claims** on opening the full **Nina** console and **releases** when you leave it or when the process ends (best-effort), so the kiosk can restart. Manual **Session claim / release** under **Settings** still works for testing.
+
 ## Jetson: one-shot companion install (robot side)
 
 From the **repo root on the Jetson** (single script — runs the full nina-link installer, then adds the **HTTP bridge** drop-in, restarts the service, optionally opens **UFW 8787**, and prints URL hints):

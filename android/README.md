@@ -39,5 +39,5 @@ See also [`docs/COMPANION_APP.md`](../docs/COMPANION_APP.md) and [`docs/ANDROID_
 Map / SLAM / autonomy / vision require **`nina-link`** on the robot with **`sirena_ui/requirements-headless.txt`** installed into **`.venv-link`** (plus systemd bridge env vars). Minimal pip (`requirements-link.txt`) is enough for Wi‑Fi + pairing only.
 
 Quick path on the Jetson from repo root:  
-`./scripts/install-sirena-companion-jetson.sh --with-sirena-headless`  
-(or `./scripts/update-nina-link-jetson.sh --sirena-headless --restart` after a normal install). Details: **COMPANION_APP.md**, **ANDROID_SIRENA_PARITY.md** § Jetson `.venv-link`.
+`./scripts/install-sirena-companion-jetson.sh --with-sirena-headless`
+(or `./scripts/update-nina-link-jetson.sh --sirena-headless --restart` after a normal install). On the robot, **`./scripts/verify-nina-link-companion.sh`** checks `/health`, capabilities, USB nodes, and logs. Details: **COMPANION_APP.md**, **ANDROID_SIRENA_PARITY.md** § Jetson `.venv-link`.

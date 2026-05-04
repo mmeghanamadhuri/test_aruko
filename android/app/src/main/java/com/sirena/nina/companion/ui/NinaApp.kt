@@ -161,6 +161,10 @@ fun NinaApp(vm: CompanionViewModel) {
         }
     }
 
+    LaunchedEffect(showNinaConsole) {
+        vm.notifyRobotConsoleVisibility(showNinaConsole)
+    }
+
     LaunchedEffect(state) {
         if (state is CompanionUiState.Error) {
             snack.showSnackbar((state as CompanionUiState.Error).text)

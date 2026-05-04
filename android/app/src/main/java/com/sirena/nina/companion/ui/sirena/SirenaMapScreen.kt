@@ -505,12 +505,12 @@ fun SirenaMapScreen(
                                 onClick = { mappingOn = true },
                                 enabled = slamOn,
                                 modifier = Modifier.weight(1f),
-                            ) { Text("Start") }
+                            ) { Text("Start mapping") }
                             OutlinedButton(
                                 onClick = { mappingOn = false },
                                 enabled = slamOn,
                                 modifier = Modifier.weight(1f),
-                            ) { Text("Stop") }
+                            ) { Text("Stop mapping") }
                         }
                         Text(
                             "Mapping runs with the SLAM bridge; use Save on-robot if you add a file endpoint later.",

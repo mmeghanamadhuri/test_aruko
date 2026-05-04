@@ -12,6 +12,8 @@ This document tracks **functional and navigation parity** between the Jetpack Co
    - `sirena_ui/workers/health_collector.py` → `collect()` row order/labels → `SIRENA_HEALTH_SUBSYSTEM_LABELS` (reference for future full-table parity).
 3. **Machine-readable index** — [`android_sirena_parity.manifest.json`](android_sirena_parity.manifest.json) lists each screen, its desktop doc section, Android file(s), and typical HTTP paths. Bump `updated` (and `manifest_version` if the contract changes) when you add routes or screens.
 4. **HTTP** — new Jetson behaviour goes through [`nina/link_daemon/api.py`](../nina/link_daemon/api.py); extend [`LinkClient.kt`](../android/app/src/main/java/com/sirena/nina/companion/data/LinkClient.kt) and the relevant Composable / [`CompanionViewModel.kt`](../android/app/src/main/java/com/sirena/nina/companion/CompanionViewModel.kt).
+5. **Kiosk handoff** — with `NINA_LINK_SESSION_SCRIPT` on the Jetson, the app calls **`POST /v1/session/claim`** when the full **Nina** console opens and **`/v1/session/release`** when it closes (and on ViewModel clear), so `nina-link` can use USB/GPIO while the on-robot PyQt kiosk is stopped. See [`docs/COMPANION_APP.md`](COMPANION_APP.md) (Kiosk vs tablet) and [`scripts/nina-link-session-helper.sh`](../scripts/nina-link-session-helper.sh).
+6. **On-robot checks** — run [`scripts/verify-nina-link-companion.sh`](../scripts/verify-nina-link-companion.sh) on the Jetson for capabilities + USB nodes + logs.
 
 ## Shared HTTP surface
 
@@ -25,7 +27,7 @@ The companion talks to `nina-link` only (see [`nina/link_daemon/api.py`](../nina
 | Drive | `SirenaDriveScreen` | Momentary drive + E-stop + MJPEG preview via `/v1/vision/stream`. **Autonomous** toggle calls `POST /v1/autonomy/enabled` and polls `/v1/autonomy/status` (same as Map/desktop). HTTP drive is refused while autonomy holds the wheels. |
 | Vision | `SirenaVisionScreen` | Stream, face/object toggles, confidence + **Apply**, enrollment, announce; polling `/v1/vision/detections` for a short detection list. |
 | Perception | `SirenaPerceptionScreen` | Three-pane layout: SLAM occupancy (`/v1/slam/occupancy`), RGB MJPEG, depth MJPEG when bridges are enabled on the Jetson. |
-| Map | `SirenaMapScreen` | Occupancy bitmap + pose from `/v1/slam/snapshot` / occupancy bytes; autonomy toggle calls `/v1/autonomy/enabled`. **Tap-to-go**: pressing **Go to point** arms click-to-set-goal, taps on the bitmap fire `POST /v1/autonomy/goal` with the world-mm coordinates derived from the snapshot's `scale_mm_per_px`, and the screen overlays the dashed planner path + flag pin. **Cancel goto** clears via `DELETE /v1/autonomy/goal`. Same Jetson-side stack as the desktop Map screen — the Android UI is just a thin client. |
+| Map | `SirenaMapScreen` | Occupancy bitmap + pose from `/v1/slam/snapshot` / occupancy bytes; autonomy toggle calls `/v1/autonomy/enabled`. **Tap-to-go** / **Cancel goto** as in shared HTTP surface. **Start mapping** / **Stop mapping** labels match desktop `map_screen.py`. |
 | Actions | `SirenaActionsScreen` | Playback / Record / Audio aligned with link daemon. |
 | Settings | `SirenaSettingsScreen` | Same categories as desktop; **Network** includes Jetson Wi‑Fi actions (parity with Setup tab). |
 | Health | `SirenaHealthScreen` | Daemon `/health` + capabilities; full desktop hardware donut/table remains on-robot Sirena UI until bridged. |

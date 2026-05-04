@@ -172,7 +172,11 @@ Environment=NINA_LINK_ENABLE_ACTIONS_STATIC=1
 Environment=NINA_LINK_ENABLE_SLAM_BRIDGE=1
 Environment=NINA_LINK_ENABLE_DEPTH_BRIDGE=1
 Environment=NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1
+# LiDAR serial: default /dev/ttyUSB0 — set if your RPLIDAR is ttyACM0, etc.
+# Environment=NINA_LIDAR_PORT=/dev/ttyACM0
+# Kiosk handoff (copy scripts/nina-link-session-helper.sh to /usr/local/bin, chmod +x):
 # Environment=NINA_LINK_SESSION_SCRIPT=/usr/local/bin/nina-link-session-helper
+# Environment=NINA_SESSION_DESKTOP_USER=jetson
 EOF
     "${SUDO[@]}" systemctl daemon-reload
     ok "bridges.conf installed — edit file to disable features you do not want"

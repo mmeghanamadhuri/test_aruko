@@ -3,6 +3,7 @@ package com.sirena.nina.companion
 import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
+import kotlin.jvm.Volatile
 import androidx.lifecycle.viewModelScope
 import com.sirena.nina.companion.data.LinkApiException
 import com.sirena.nina.companion.data.LinkClient
@@ -21,6 +22,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -72,6 +74,13 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     private val client = LinkClient()
 
     private val appCtx get() = getApplication<Application>()
+
+    /**
+     * True after a successful session claim (kiosk stopped for nina-link).
+     * Used so we release on leaving the Nina console or process death.
+     */
+    @Volatile
+    private var robotConsoleSessionActive: Boolean = false
 
     /** Persisted daemon URL (normalized). */
     val savedDaemonUrl: Flow<String> = prefs.baseUrl
@@ -800,7 +809,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 val url = prefs.baseUrl.first()
                 val bearer = prefs.bearerToken.first()
                 client.sessionClaim(url, bearer)
+                robotConsoleSessionActive = true
                 onResult(null)
+            } catch (e: LinkApiException) {
+                if (e.code == 503) {
+                    onResult(null)
+                } else {
+                    onResult(e.message)
+                }
             } catch (e: Exception) {
                 onResult(e.message)
             }
@@ -816,8 +832,64 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 onResult(null)
             } catch (e: Exception) {
                 onResult(e.message)
+            } finally {
+                robotConsoleSessionActive = false
             }
         }
+    }
+
+    /**
+     * Opening the full Nina console should pause the on-robot kiosk so `nina-link` can open USB/GPIO
+     * (see `NINA_LINK_SESSION_SCRIPT` on the Jetson). Closing the console releases.
+     */
+    fun notifyRobotConsoleVisibility(visible: Boolean) {
+        viewModelScope.launch {
+            if (visible) {
+                if (robotConsoleSessionActive) return@launch
+                try {
+                    val url = prefs.baseUrl.first()
+                    val bearer = prefs.bearerToken.first()
+                    client.sessionClaim(url, bearer)
+                    robotConsoleSessionActive = true
+                    NinaLog.api("session_claim", "robot console opened")
+                } catch (e: LinkApiException) {
+                    if (e.code != 503) {
+                        NinaLog.warn("Session", e.message ?: "claim")
+                    }
+                } catch (e: Exception) {
+                    NinaLog.warn("Session", e.message ?: "claim")
+                }
+            } else {
+                if (!robotConsoleSessionActive) return@launch
+                try {
+                    val url = prefs.baseUrl.first()
+                    val bearer = prefs.bearerToken.first()
+                    client.sessionRelease(url, bearer)
+                    NinaLog.api("session_release", "robot console closed")
+                } catch (e: Exception) {
+                    NinaLog.warn("Session", e.message ?: "release")
+                } finally {
+                    robotConsoleSessionActive = false
+                }
+            }
+        }
+    }
+
+    override fun onCleared() {
+        if (robotConsoleSessionActive) {
+            runBlocking {
+                try {
+                    val url = prefs.baseUrl.first()
+                    val bearer = prefs.bearerToken.first()
+                    client.sessionRelease(url, bearer)
+                } catch (_: Exception) {
+                    // best-effort — process is dying
+                } finally {
+                    robotConsoleSessionActive = false
+                }
+            }
+        }
+        super.onCleared()
     }
 
     suspend fun mediaFileUrl(relativePath: String): String {
