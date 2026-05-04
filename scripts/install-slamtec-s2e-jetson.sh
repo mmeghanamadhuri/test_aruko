@@ -316,7 +316,33 @@ fi
 # fail we bail with the same diagnostic the GUI's Map tab would
 # eventually surface, just minutes earlier.
 
-log "Smoke-testing the Python driver"
+# --------------------------------------------------------------------
+# 6a) UDP receive buffer tuning
+# --------------------------------------------------------------------
+#
+# The S2E pumps scan data over UDP at ~3 MB/s in Boost mode. Linux's
+# default `net.core.rmem_max` (212 992 B) is below one full sweep,
+# so the kernel happily drops packets and the SDK returns
+# "Failed to grab scan data." even though the lidar is streaming.
+# We bump it to 8 MiB and persist it via /etc/sysctl.d so subsequent
+# boots stay good. This is harmless on a Jetson - that buffer is
+# only allocated on demand by sockets that actually use it.
+
+log "Tuning UDP receive buffers (net.core.rmem_max -> 8 MiB)"
+sudo tee /etc/sysctl.d/99-slamtec-s2e.conf >/dev/null <<'EOF'
+# Raised for SLAMTEC S2E lidar (UDP scan stream ~3 MB/s, default
+# 213 KB rmem_max drops sweep packets). Safe to leave on; the kernel
+# only allocates this when a socket asks for it.
+net.core.rmem_default = 1048576
+net.core.rmem_max     = 8388608
+EOF
+sudo sysctl --quiet -p /etc/sysctl.d/99-slamtec-s2e.conf || true
+
+# --------------------------------------------------------------------
+# 6b) Driver smoke test
+# --------------------------------------------------------------------
+
+log "Smoke-testing the Python driver (8 s window for motor spin-up)"
 "${PYTHON_EXEC}" - "${LIDAR_IP}" "${LIDAR_UDP_PORT}" <<'PY'
 import sys, time
 
@@ -341,23 +367,43 @@ if info is not None:
         f"hw={info.hardware_version} sn={info.serial_number}"
     )
 
+# Health: status 0 = OK, 1 = Warning, 2 = Error. We surface the
+# name, not the raw integer, so the operator doesn't need to grep
+# the SDK headers.
+_HEALTH_NAMES = {0: "OK", 1: "WARNING", 2: "ERROR"}
 health = drv.get_health()
-if health is not None and getattr(health, "status", 0) != 0:
-    print(
-        f"  WARN: health status={health.status} error={getattr(health, 'error_code', '?')}"
-    )
-    print("  the S2E reports a non-zero health code; consider sending")
-    print("  a reset (power-cycle the lidar).")
+if health is not None:
+    status = getattr(health, "status", 0)
+    name = _HEALTH_NAMES.get(status, f"UNKNOWN({status})")
+    err = getattr(health, "error_code", 0)
+    print(f"  health: {name} (status={status}, error_code={err})")
+    if status == 2:
+        print("  ERROR-state health: the firmware is in protection mode.")
+        print("  Power-cycle the lidar (12 V barrel jack) and re-run.")
+        sys.exit(1)
 
 if not drv.start_scan():
     print("  START_SCAN FAILED")
     sys.exit(1)
 
+# 8-s window. Motor spin-up on a cold S2E is 0.5-1.5 s, then the
+# SDK's grabScanDataHq() call blocks ~250 ms waiting for a complete
+# sweep to accumulate. So we expect 0 batches for the first ~1 s,
+# then ~30-50 batches for the remaining ~7 s.
 n_batches = 0
 n_points = 0
-deadline = time.monotonic() + 3.0
+n_empty = 0
+n_errors = 0
+deadline = time.monotonic() + 8.0
+warmed = False
+warmup_logged = False
 while time.monotonic() < deadline:
-    batch = drv.get_scan_data()
+    try:
+        batch = drv.get_scan_data()
+    except Exception as exc:
+        n_errors += 1
+        time.sleep(0.05)
+        continue
     if batch:
         try:
             angles, _ranges, _q = batch
@@ -365,16 +411,50 @@ while time.monotonic() < deadline:
             angles = batch
         n_batches += 1
         n_points += len(angles)
+        if not warmed:
+            warmed = True
+            print(f"  first sweep arrived at t={time.monotonic() - (deadline - 8.0):.1f}s")
+    else:
+        n_empty += 1
+        # During warmup pyrplidarsdk prints 'Error: Failed to grab
+        # scan data' on stderr for each empty grab. That's noise -
+        # tell the operator they're cosmetic so they don't panic.
+        if not warmed and not warmup_logged and n_empty >= 2:
+            print("  (warmup: 'Failed to grab scan data' lines above are normal")
+            print("   - the SDK's 250 ms grab times out until the motor is at speed)")
+            warmup_logged = True
     time.sleep(0.05)
 
 drv.stop_scan()
 drv.disconnect()
 
 if n_points == 0:
-    print("  GOT 0 POINTS in 3s; lidar reachable but not scanning")
+    print(f"  GOT 0 POINTS in 8 s ({n_empty} empty grabs, {n_errors} exceptions);")
+    print(f"  lidar is reachable but never streamed a complete sweep.")
+    print("")
+    print("  Most likely fixes (in priority order):")
+    print("   1. POWER-CYCLE THE LIDAR. Unplug the 12 V barrel jack for")
+    print("      ~5 s, plug it back in, wait for the head to spin up,")
+    print("      then re-run this script. Slamtec firmware can latch")
+    print("      into a half-armed state after a connection drops")
+    print("      during start_scan, and only a power cycle clears it.")
+    print("   2. Confirm 12 V is actually present at the barrel jack.")
+    print("      The S2E motor draws ~1 A; USB cannot power it.")
+    print("   3. Watch the wire: in another terminal run")
+    print(f"          sudo tcpdump -i any -n udp port {port} -c 20")
+    print("      then re-run this script. If tcpdump prints zero")
+    print("      packets the lidar's TX is dead (firmware / power).")
+    print("      If it prints packets but the smoke test still gets")
+    print("      0 points, the bottleneck is the host UDP buffer -")
+    print("      check `sysctl net.core.rmem_max` is 8388608.")
     sys.exit(1)
 
-print(f"  OK - {n_points} points across {n_batches} batches in 3s")
+rate_hz = n_batches / 8.0
+pts_per_batch = n_points / max(n_batches, 1)
+print(f"  OK - {n_points} points across {n_batches} batches in 8 s")
+print(f"       ~{rate_hz:.1f} batches/s, ~{pts_per_batch:.0f} pts/batch")
+if n_errors:
+    print(f"       (saw {n_errors} transient grab errors - normal during spin-up)")
 PY
 
 # --------------------------------------------------------------------

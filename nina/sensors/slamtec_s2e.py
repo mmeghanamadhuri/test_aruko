@@ -246,19 +246,56 @@ class SlamtecS2E:
         # Empty-batch backoff so we don't spin the CPU when the lidar
         # is mid-sweep and the SDK's get_scan_data() returns 0 points.
         idle_sleep = 0.005
+        # Cold-start of the S2E motor takes ~0.5-1.5 s after start_scan,
+        # during which `grabScanDataHq` returns SL_RESULT_OPERATION_TIMEOUT
+        # (which the wrapper raises as a Python exception or returns
+        # None for, depending on build). Don't kick the lidar offline
+        # on every transient warmup error - count consecutive failures
+        # and only give up after FAULT_BUDGET in a row, which means
+        # ~5 s of solid silence (FAULT_BUDGET * SDK timeout).
+        FAULT_BUDGET = 20
+        consecutive_errors = 0
         while not self._stop_evt.is_set():
             try:
                 batch = self._driver.get_scan_data()
             except Exception as exc:
-                self._message = f"scan loop error: {exc}"
-                self._connected = False
-                log.warning("S2E scan loop: %s", exc)
-                return
-
-            if not batch:
-                # nothing yet; let the lidar fill the queue
+                consecutive_errors += 1
+                if consecutive_errors >= FAULT_BUDGET:
+                    self._message = (
+                        f"scan loop error after {consecutive_errors} "
+                        f"consecutive failures: {exc}"
+                    )
+                    self._connected = False
+                    log.warning(
+                        "S2E scan loop giving up after %d errors: %s",
+                        consecutive_errors, exc,
+                    )
+                    return
+                # Transient: log once, keep going. The SDK prints its
+                # own 'Failed to grab scan data' on stderr per call;
+                # we don't double up.
+                if consecutive_errors == 1:
+                    log.debug(
+                        "S2E transient grab failure (%s); will retry "
+                        "up to %d times before giving up",
+                        exc, FAULT_BUDGET,
+                    )
                 time.sleep(idle_sleep)
                 continue
+
+            if not batch:
+                # nothing yet; let the lidar fill the queue. Empty
+                # batches are benign - the SDK can legitimately return
+                # three empty vectors when every point in the buffer
+                # was clipped (all-zero ranges, out-of-range, etc.).
+                # The SlamWorker above us already surfaces "no scans"
+                # as the 'Lidar sim' status pill, so we don't need to
+                # tear down the connection on quiet periods.
+                time.sleep(idle_sleep)
+                continue
+
+            # Got a real batch - clear the warmup-error counter.
+            consecutive_errors = 0
 
             try:
                 angles, ranges, qualities = batch
