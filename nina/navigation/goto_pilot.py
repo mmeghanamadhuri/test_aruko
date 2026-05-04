@@ -212,6 +212,8 @@ class GotoPilot:
 
         # Stuck detection: rolling samples of (t, x, y).
         self._motion_log: List[Tuple[float, float, float]] = []
+        # First tick forward fell below fwd_clear (goto veto); None if clear.
+        self._fwd_dead_end_since: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -237,6 +239,7 @@ class GotoPilot:
                 self._state.goal_mm = (float(goal_x_mm), float(goal_y_mm))
                 self._waypoints = []
                 self._next_replan_at = 0.0
+                self._fwd_dead_end_since = None
                 self._state.state = STATE_PLANNING
                 self._state.reason = "goal updated"
             else:
@@ -251,6 +254,7 @@ class GotoPilot:
                 self._path_index = 0
                 self._next_replan_at = 0.0
                 self._motion_log = []
+                self._fwd_dead_end_since = None
                 self._stop_evt.clear()
                 spawn_thread = True
 
@@ -419,6 +423,7 @@ class GotoPilot:
                 self._state.state = STATE_AVOIDING
                 self._state.reason = "cliff alarm"
                 self._state.last_action = "reverse"
+            self._fwd_dead_end_since = None
             self._reverse_briefly()
             self._waypoints = []  # force replan from the new pose
             self._path_index = 0
@@ -433,10 +438,19 @@ class GotoPilot:
                     f"forward {forward_mm} mm < {emin} mm e-stop"
                 )
                 self._state.last_action = "reverse"
+            self._fwd_dead_end_since = None
             self._reverse_briefly()
             self._waypoints = []
             self._path_index = 0
             return False
+
+        fwd_clear = self._auto.forward_clear_mm
+        _tn = time.monotonic()
+        _forward_veto = forward_mm is None or forward_mm < fwd_clear
+        if not _forward_veto:
+            self._fwd_dead_end_since = None
+        elif self._fwd_dead_end_since is None:
+            self._fwd_dead_end_since = _tn
 
         # (Re)plan if we don't have a path or the replan timer fired.
         now = time.monotonic()
@@ -548,21 +562,51 @@ class GotoPilot:
         # planner's path being non-empty AND the immediate forward
         # sector being clear by a comfortable margin (forward_clear_mm
         # from the wander tunables, not the e-stop floor).
-        fwd_clear = self._auto.forward_clear_mm
+        # forward_clear_mm
+        # from the wander tunables, not the e-stop floor).
         if forward_mm is not None and forward_mm < fwd_clear:
-            # Sensor sees something the path didn't predict. Replan
-            # from the next tick instead of marching into it.
-            with self._lock:
-                self._state.state = STATE_AVOIDING
-                self._state.reason = (
-                    f"forward {forward_mm} mm < {fwd_clear} mm clear; "
-                    "replanning"
+            side_clear = self._auto.side_clear_mm
+            lm = obstacle.min_mm(SECTOR_LEFT)
+            rm = obstacle.min_mm(SECTOR_RIGHT)
+            both_tight = (
+                lm is not None
+                and rm is not None
+                and lm < side_clear
+                and rm < side_clear
+            )
+            bsec = self._auto.fwd_blocked_backup_sec
+            blocked_long = (
+                bsec > 0.0
+                and self._fwd_dead_end_since is not None
+                and (_tn - self._fwd_dead_end_since) >= bsec
+            )
+            if both_tight or blocked_long:
+                self._fwd_dead_end_since = None
+                why = (
+                    "both sides < side_clear"
+                    if both_tight
+                    else f"forward blocked {bsec:.1f}s"
                 )
-                self._state.last_action = "stop"
-            try:
-                self._drive.stop()
-            except Exception:
-                pass
+                with self._lock:
+                    self._state.state = STATE_AVOIDING
+                    self._state.reason = (
+                        f"forward {forward_mm} mm < {fwd_clear} mm; "
+                        f"dead-end backoff ({why})"
+                    )
+                    self._state.last_action = "reverse"
+                self._reverse_briefly()
+            else:
+                with self._lock:
+                    self._state.state = STATE_AVOIDING
+                    self._state.reason = (
+                        f"forward {forward_mm} mm < {fwd_clear} mm clear; "
+                        "replanning"
+                    )
+                    self._state.last_action = "stop"
+                try:
+                    self._drive.stop()
+                except Exception:
+                    pass
             self._waypoints = []
             self._path_index = 0
             return False

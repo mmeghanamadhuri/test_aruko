@@ -62,6 +62,7 @@ class AutonomySettings:
     cliff_min_mm: int                    # IR reading below this = abort
     turn_duration_ms: int                # min time committed to a chosen turn
     backoff_duration_ms: int             # time to reverse before re-evaluating
+    fwd_blocked_backup_sec: float        # reverse when forward blocked this long (0=off)
 
 
 @dataclass(frozen=True)
@@ -209,16 +210,18 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # arm's-length.
         forward_clear_mm=int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "1200")),
         side_clear_mm=int(os.environ.get("NINA_AUTO_SIDE_CLEAR_MM", "450")),
-        # 600 mm (was 300 mm). Anything closer than 60 cm trips the
-        # emergency reverse, which actively decelerates the bot's
-        # forward momentum (drives BACK at cruise for backoff_ms).
-        # The old 300 mm only kicked in once the bot was already
-        # 30 cm away - too late to back out of a collision in
-        # progress at floor-walking speed.
-        emergency_stop_mm=int(os.environ.get("NINA_AUTO_ESTOP_MM", "600")),
+        # 850 mm. Between this and forward_clear_mm the pilot turns;
+        # at or inside this radius it reverses immediately (layer 2).
+        # 600 mm still let the bot coast into bump range before backoff;
+        # 850 matches ~1 m "personal space" when combined with
+        # forward_clear=1200 and the timed / dead-end backoff below.
+        emergency_stop_mm=int(os.environ.get("NINA_AUTO_ESTOP_MM", "850")),
         cliff_min_mm=int(os.environ.get("NINA_AUTO_CLIFF_MIN_MM", "60")),
         turn_duration_ms=int(os.environ.get("NINA_AUTO_TURN_MS", "350")),
         backoff_duration_ms=int(os.environ.get("NINA_AUTO_BACKOFF_MS", "500")),
+        fwd_blocked_backup_sec=float(
+            os.environ.get("NINA_AUTO_FWD_BLOCKED_BACKUP_SEC", "2.5")
+        ),
     )
 
     lidar = LidarSettings(

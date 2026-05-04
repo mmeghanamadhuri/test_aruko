@@ -73,15 +73,19 @@ def test_forward_clearance_leaves_room_to_brake(clean_env) -> None:
 
 
 def test_emergency_stop_actually_decelerates(clean_env) -> None:
-    """Emergency stop must trigger BEFORE the bot is bumper-deep in
-    the obstacle. The old 300 mm meant the bot was already 30 cm
-    away by the time reverse engaged - too late. 600 mm gives the
-    backoff window time to actually back the bot out."""
+    """Emergency stop must trigger with enough standoff that the
+    backoff window can move the bot before bumper contact. The old
+    300 mm default was too tight; 850 mm pairs with forward_clear=1200
+    and dead-end backoff so reverse is usable in real clutter."""
     s = load_settings(REPO_ROOT)
     assert s.autonomy.emergency_stop_mm >= 500, (
         f"emergency_stop_mm={s.autonomy.emergency_stop_mm} is too "
         "tight; reverse fires after the bot is already in collision "
         "range"
+    )
+    assert s.autonomy.emergency_stop_mm >= 800, (
+        f"emergency_stop_mm={s.autonomy.emergency_stop_mm}; below 800 "
+        "the bot still coasts into bump range before e-stop reverse"
     )
 
 
@@ -96,6 +100,14 @@ def test_emergency_below_forward_clear(clean_env) -> None:
         f"emergency_stop_mm ({s.autonomy.emergency_stop_mm}) must be "
         f"< forward_clear_mm ({s.autonomy.forward_clear_mm}); pilot "
         "decision layers depend on this ordering"
+    )
+
+
+def test_fwd_blocked_backup_sec_default(clean_env) -> None:
+    """Dead-end timeout should stay in a sensible band for indoor use."""
+    s = load_settings(REPO_ROOT)
+    assert 0.5 <= s.autonomy.fwd_blocked_backup_sec <= 10.0, (
+        f"fwd_blocked_backup_sec={s.autonomy.fwd_blocked_backup_sec}"
     )
 
 

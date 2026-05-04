@@ -5,10 +5,13 @@ Behaviour each tick (default 5 Hz):
     1. Build an ObstacleField from the latest sensor readings.
     2. If any cliff / emergency condition fires:
          - command an immediate stop, hold for one tick, then back off.
-    3. Else if forward is clear (>= forward_clear_mm) AND both side
-       margins are OK (>= side_clear_mm) - drive straight at cruise
-       speed.
-    4. Else - pick the side with more clearance, commit a brief turn
+    3. Else if forward is clear (>= forward_clear_mm) - drive straight at
+       cruise speed.
+    4. Else if forward stays blocked for `fwd_blocked_backup_sec`
+       *continuously* or *both* side sectors read tighter than
+       `side_clear_mm`, command the same brief reverse as the e-stop
+       layer (dead-end / corner backoff) and reset the timer.
+    5. Else - pick the side with more clearance, commit a brief turn
        (turn_duration_ms), and re-evaluate next tick.
 
 The pilot only ever talks to the wheels through `DriveController` so
@@ -116,6 +119,8 @@ class AutonomousPilot:
         # at least `turn_duration_ms` so we don't oscillate on the spot.
         self._commit_until: float = 0.0
         self._commit_action: str = ""
+        # Monotonic timestamp when forward first became !clear; None if clear.
+        self._fwd_blocked_since: Optional[float] = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -146,6 +151,9 @@ class AutonomousPilot:
                 last_reason="starting",
                 started_at=time.monotonic(),
             )
+            self._fwd_blocked_since = None
+            self._commit_until = 0.0
+            self._commit_action = ""
             self._stop_evt.clear()
 
         # Make sure the BLDCs are armed.
@@ -232,6 +240,7 @@ class AutonomousPilot:
 
         # Layer 1: emergency / cliff
         if obstacle.cliff_alarm:
+            self._fwd_blocked_since = None
             self._set_action("reverse", "cliff alarm")
             self._reverse_briefly()
             return
@@ -240,19 +249,56 @@ class AutonomousPilot:
         emin = self._settings.emergency_stop_mm
         forward = obstacle.forward_mm
         if forward is not None and forward < emin:
+            self._fwd_blocked_since = None
             self._set_action("reverse", f"forward {forward} mm < {emin}")
             self._reverse_briefly()
             return
 
-        # Layer 3: respect an in-flight turn commit
         now = time.monotonic()
+        fwd_clear = self._settings.forward_clear_mm
+        side_clear = self._settings.side_clear_mm
+        forward_not_clear = not obstacle.is_clear(SECTOR_FORWARD, fwd_clear)
+        if not forward_not_clear:
+            self._fwd_blocked_since = None
+        elif self._fwd_blocked_since is None:
+            self._fwd_blocked_since = now
+
+        left_m = obstacle.min_mm(SECTOR_LEFT)
+        right_m = obstacle.min_mm(SECTOR_RIGHT)
+        both_tight = (
+            left_m is not None
+            and right_m is not None
+            and left_m < side_clear
+            and right_m < side_clear
+        )
+        bsec = self._settings.fwd_blocked_backup_sec
+        blocked_long = (
+            bsec > 0.0
+            and self._fwd_blocked_since is not None
+            and (now - self._fwd_blocked_since) >= bsec
+        )
+        if forward_not_clear and (both_tight or blocked_long):
+            why = (
+                "both sides < side_clear"
+                if both_tight
+                else f"forward blocked {bsec:.1f}s"
+            )
+            self._fwd_blocked_since = None
+            self._set_action("reverse", f"dead-end backoff ({why})")
+            log.info(
+                "autonomy reverse reason=dead_end both_tight=%s blocked_long=%s",
+                both_tight,
+                blocked_long,
+            )
+            self._reverse_briefly()
+            return
+
+        # Layer 3: respect an in-flight turn commit
         if now < self._commit_until and self._commit_action in ("turn_left", "turn_right"):
             self._apply_action(self._commit_action)
             return
 
         # Layer 4: forward if clear
-        fwd_clear = self._settings.forward_clear_mm
-        side_clear = self._settings.side_clear_mm
         forward_ok = obstacle.is_clear(SECTOR_FORWARD, fwd_clear)
         if forward_ok:
             self._set_action(

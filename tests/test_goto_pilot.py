@@ -84,6 +84,7 @@ def _autonomy_settings(**over) -> AutonomySettings:
         cliff_min_mm=60,
         turn_duration_ms=100,
         backoff_duration_ms=50,
+        fwd_blocked_backup_sec=2.5,
     )
     base.update(over)
     return AutonomySettings(**base)

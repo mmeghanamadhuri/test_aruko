@@ -556,8 +556,9 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_AUTO_CRUISE_PCT` | 15 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
 | `NINA_AUTO_TURN_PCT` | 16 | Turn-in-place speed % during obstacle avoidance. |
 | `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. (Was 700 mm — at walking speed the BLDCs coasted to within 50–60 cm of people before stopping; 1200 mm leaves the bot ~1 m of buffer for braking.) |
-| `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Per-side clearance for forward to be allowed. |
-| `NINA_AUTO_ESTOP_MM` | 600 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; reverse only engaged once the bot was already 30 cm away.) |
+| `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Used for **dead-end detection**: when both side sectors read tighter than this (and forward is below `NINA_AUTO_FWD_CLEAR_MM`), wander and goto issue a brief reverse. |
+| `NINA_AUTO_ESTOP_MM` | 850 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; 600 mm still allowed bump-range coast-in; 850 mm under `NINA_AUTO_FWD_CLEAR_MM`=1200 leaves room for turn vs e-stop layering.) |
+| `NINA_AUTO_FWD_BLOCKED_BACKUP_SEC` | 2.5 | If forward stays below `NINA_AUTO_FWD_CLEAR_MM` for this many **continuous** seconds (wander or goto), issue the same brief reverse as e-stop — backs out of alcoves where turning never finds clearance. Set `0` to disable **timeout** backoff only (corners where **both** sides are tight still reverse immediately). |
 | `NINA_GOTO_ARRIVAL_MM` | 250 | Distance from the goal under which `GotoPilot` reports `arrived` and stops. Set to roughly half the chassis width so the bot doesn't pursue the exact tap pixel forever. |
 | `NINA_GOTO_INFLATE_MM` | 250 | Footprint inflation in mm — the bot's body half-width. The A* planner dilates every wall pixel by *at least* this radius so the resulting path leaves a Nina-shaped buffer. Bump for wider bots; for tighter safety margins use `NINA_GOTO_MIN_PASSAGE_MM` instead. |
 | `NINA_GOTO_MIN_PASSAGE_MM` | 610 | Minimum corridor width (between facing walls) the planner is allowed to route through, in mm. Default = **2 ft / 24 in / 610 mm**, the smallest passage Nina is supposed to thread in lab + corridor environments. The effective dilation is `max(NINA_GOTO_INFLATE_MM, ⌈min_passage / 2⌉)`, so this knob is the right place to express **operator policy** ("I want 3 ft of buffer in the showroom" → set to 914) rather than bot geometry. Set to 0 to disable the floor and fall back to footprint-only inflation. |
@@ -686,7 +687,7 @@ The defaults are tuned for indoor walking-speed wandering at 15 % PWM
 |---|---|---|---|
 | Stops too close to people / dogs | `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Bump to `1500` for an extra arm's length of buffer |
 | Bumps tabletops / desks (but lidar is fine) | `NINA_DEPTH_TOP_SKIP_PCT` | 10 | Lower to `5` — lets more of the upper image through; only do this if your room has no overhead halogens (those return as bright shorts) |
-| Reverses too rarely / cuts a corner | `NINA_AUTO_ESTOP_MM` | 600 | Bump to `800` so reverse fires earlier |
+| Reverses too rarely / cuts a corner | `NINA_AUTO_ESTOP_MM` | 850 | Try `900` so immediate reverse starts farther out; or lower `NINA_AUTO_FWD_BLOCKED_BACKUP_SEC` so dead-end timeout backoff fires sooner |
 | Reaction looks sluggish | `NINA_AUTO_TICK_HZ` | 8 | Push to `10` (more CPU; rarely needed on Orin NX) |
 
 If lidar reports the table fine but the bot still hits it, check

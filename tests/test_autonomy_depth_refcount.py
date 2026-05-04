@@ -183,6 +183,7 @@ def _autonomy_settings() -> AutonomySettings:
         cliff_min_mm=50,
         turn_duration_ms=600,
         backoff_duration_ms=400,
+        fwd_blocked_backup_sec=2.5,
     )
 
 
