@@ -43,12 +43,17 @@ class FaceFollowController(QObject):
         self._lost_ticks = 0
         self._frame_wh: Tuple[int, int] = (640, 480)
 
-        # ratio = face_area / reference_area; >1 means closer than at lock.
-        # Tight close_stop kept the bot "hunting" with turn nudges in the
-        # 0.88–1.08 band; 1.0 treats "at least as close as lock" as range-stop.
-        self._area_far = 0.90
-        self._area_close_stop = 1.0
-        self._area_close_back = 1.18
+        # ratio = face_area / reference_area. We inflate ref at lock so
+        # "1.0" is slightly farther than the raw bbox at first sight —
+        # roughly a ~1 ft standoff vs rushing to the lock-size snap.
+        # Bands leave a wide coast zone so momentum does not overrun into
+        # the subject; forward speed tapers as ratio nears `_area_far`.
+        self._ref_at_lock_ratio = 0.82
+        self._area_far = 0.68
+        self._area_close_stop = 0.88
+        self._area_close_back = 1.05
+        self._approach_taper_span = 0.14
+        self._approach_speed_floor = 0.34
         self._ang_dead = 0.11
         self._lost_max_ticks = 14
 
@@ -146,7 +151,9 @@ class FaceFollowController(QObject):
 
         area = float(max(1, _bbox_area(chosen)))
         if self._ref_area is None:
-            self._ref_area = area
+            # Inflate reference so the bot holds short of the first-seen
+            # distance (~1 ft + margin for decel vs bbox growth).
+            self._ref_area = area / max(0.5, min(0.95, float(self._ref_at_lock_ratio)))
             label = chosen.identity or chosen.label or "face"
             self.status_message.emit(f"Follow: locked {label} ({int(area)} px²)")
 
@@ -154,6 +161,20 @@ class FaceFollowController(QObject):
 
         base = float(MIN_SPEED_PCT)
         cruise = int(max(MIN_SPEED_PCT, min(MAX_SPEED_PCT, round(base * 0.7))))
+        if ratio < self._area_far:
+            span = max(1e-6, float(self._approach_taper_span))
+            tail = self._area_far - ratio
+            if tail < span:
+                w = max(0.0, min(1.0, tail / span))
+                cruise = max(
+                    MIN_SPEED_PCT,
+                    int(
+                        round(
+                            cruise
+                            * (self._approach_speed_floor + (1.0 - self._approach_speed_floor) * w)
+                        )
+                    ),
+                )
 
         # Distance policy: too far -> forward; cosy band -> hold; closer -> stop; very close -> back
         if ratio > self._area_close_back:

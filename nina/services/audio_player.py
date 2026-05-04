@@ -32,6 +32,10 @@ class AudioPlayer:
     def is_supported(self) -> bool:
         return any((self._aplay, self._mpg123, self._ffplay))
 
+    def can_play(self, audio_path: Path) -> bool:
+        """True if this path's format can be played (file may not exist yet)."""
+        return self._command_for(Path(audio_path)) is not None
+
     def play(self, audio_path: Path) -> Optional[subprocess.Popen]:
         """Start playback in the background. Returns the spawned process or None."""
         if audio_path is None:

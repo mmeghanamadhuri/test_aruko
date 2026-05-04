@@ -11,8 +11,8 @@ Design goals:
     same person we don't need internet (gTTS is a network call).
   * Synthesis runs on a background QThread so we never stall the
     Vision worker / GUI thread on the gTTS HTTP request.
-  * Playback uses the existing `AudioPlayer` (mpg123 / aplay /
-    ffplay), so no new system deps.
+  * Playback prefers cached MP3 via mpg123/ffplay; common Jetson images
+    have only `aplay` — without mpg123, greetings fall back to `espeak`.
 
 Public API:
 
@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import logging
 import re
+import shutil
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -96,6 +98,29 @@ class FaceGreeter(QObject):
         # QThread doesn't get garbage-collected mid-run.
         self._gen_workers: Dict[str, _GenerateClipWorker] = {}
 
+    def _playback_available(self) -> bool:
+        """MP3 via mpg123/ffplay, or espeak as a common Jetson fallback."""
+        if self._player.can_play(Path("_greet_probe.mp3")):
+            return True
+        return bool(shutil.which("espeak-ng") or shutil.which("espeak"))
+
+    @staticmethod
+    def _try_espeak(text: str) -> bool:
+        for exe_name in ("espeak-ng", "espeak"):
+            exe = shutil.which(exe_name)
+            if not exe:
+                continue
+            try:
+                subprocess.Popen(
+                    [exe, text],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return True
+            except OSError as exc:
+                log.debug("espeak not usable (%s): %s", exe, exc)
+        return False
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -109,10 +134,10 @@ class FaceGreeter(QObject):
         name = (name or "").strip()
         if not name:
             return
-        if not self._player.is_supported:
+        if not self._playback_available():
             log.warning(
-                "FaceGreeter: no audio player available "
-                "(install mpg123 / alsa-utils)"
+                "FaceGreeter: no MP3 player (mpg123/ffplay) or espeak; "
+                "install e.g. sudo apt install -y mpg123"
             )
             return
 
@@ -130,8 +155,16 @@ class FaceGreeter(QObject):
         if clip is not None:
             self._play_clip(clip, name)
             return
-        # First-time greeting: synthesise then play.
-        self._spawn_synthesis(name)
+        # First-time greeting: gTTS MP3 when possible, else espeak only.
+        if AudioGenerator.is_available() is None:
+            self._spawn_synthesis(name)
+            return
+        log.info("FaceGreeter: gTTS unavailable; using espeak for %s", name)
+        text = f"Hello {name}"
+        if self._try_espeak(text):
+            self.spoken.emit(name)
+        else:
+            self.reset_cooldown(name)
 
     def reset_cooldown(self, name: Optional[str] = None) -> None:
         """Forget the last-greeted timestamp(s).
@@ -175,21 +208,36 @@ class FaceGreeter(QObject):
         with self._lock:
             self._gen_workers.pop(name, None)
         if path_obj is None:
-            # Synthesis failed -- clear the cooldown so the next
-            # recognition tries again instead of going silent forever.
-            self.reset_cooldown(name)
+            text = f"Hello {name}"
+            if self._try_espeak(text):
+                self.spoken.emit(name)
+            else:
+                self.reset_cooldown(name)
             return
         path = Path(path_obj)
         if path.exists():
             self._play_clip(path, name)
 
     def _play_clip(self, path: Path, name: str) -> None:
+        text = f"Hello {name}"
         try:
-            self._player.play(path)
+            if self._player.can_play(path):
+                proc = self._player.play(path)
+                if proc is not None:
+                    self.spoken.emit(name)
+                    return
+            log.warning(
+                "FaceGreeter: cannot play %s (need mpg123 or ffplay); "
+                "trying espeak fallback",
+                path.name,
+            )
         except Exception as exc:  # pragma: no cover - subprocess errors
             log.warning("FaceGreeter playback failed for %s: %s", name, exc)
+        if self._try_espeak(text):
+            self.spoken.emit(name)
             return
-        self.spoken.emit(name)
+        log.warning("FaceGreeter: espeak fallback also failed for %s", name)
+        self.reset_cooldown(name)
 
 
 class FaceGreetReceiver(QObject):
@@ -209,4 +257,4 @@ class FaceGreetReceiver(QObject):
             try:
                 self._greeter.greet(str(name))
             except Exception:
-                pass
+                log.exception("FaceGreetReceiver: greet failed for %r", name)
