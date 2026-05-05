@@ -390,7 +390,7 @@ def test_drive_from_stop_kicks_then_cruises_low(
     from sirena_ui.workers import drive_controller as dc
 
     nav = FakeNav()
-    ctrl = _make_controller(nav, default_speed=20)
+    ctrl = _make_controller(nav, default_speed=14)
     try:
         ctrl.ensure_hardware()
         assert _wait_for(lambda: nav.brake_engaged)
@@ -423,7 +423,7 @@ def test_drive_from_stop_kicks_then_cruises_low(
         dc_calls2 = [c for c in nav.calls if c[0] == "drive_continuous"]
         sw_calls2 = [c for c in nav.calls if c[0] == "set_wheels"]
         assert len(dc_calls2) >= 1
-        assert dc_calls2[-1][1]["speed_percent"] == 20
+        assert dc_calls2[-1][1]["speed_percent"] == 14
         assert sw_calls2 == []
     finally:
         ctrl.shutdown()

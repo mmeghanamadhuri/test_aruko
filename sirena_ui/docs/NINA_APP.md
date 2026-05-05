@@ -188,14 +188,14 @@ reboot or kiosk-service restart. The legacy `NINA_NAV_INVERT_LEFT=1` /
 `NINA_NAV_INVERT_RIGHT=1` env vars still work as a **boot-time
 default** when no persisted file exists; once the operator clicks a
 toggle, the persisted value wins. Default cruise speed is
-`NINA_NAV_SPEED=12` (GUI manual floor; override for faster cruises).
+`NINA_NAV_SPEED=10` (GUI manual floor; override for faster cruises).
 
 #### Calibrating wheel polarity (1-minute procedure)
 
 1. Mount the bot with the wheels free to spin (or set it on a low
    table edge so the wheels can rotate without grabbing).
 2. Open the Drive screen, release the brake (`Brake: OFF`), set the
-   speed slider toward the top (~20 %).
+   speed slider toward the top (~16 %).
 3. Press and hold **W** (or the on-screen Forward button) for ~2
    seconds. Watch the wheels.
 4. **Both wheels going forward** — done.
