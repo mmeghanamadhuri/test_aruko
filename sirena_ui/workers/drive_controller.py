@@ -102,7 +102,7 @@ FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 # compensate a faster left hub. First PWM after the breakaway kick uses
 # START; all later commands use RUN (including cruise, live speed, autonomy).
 RIGHT_WHEEL_EXTRA_START_PP = 2
-RIGHT_WHEEL_EXTRA_RUN_PP = 3
+RIGHT_WHEEL_EXTRA_RUN_PP = 5
 
 # When manual drive begins from a full stop (`_active_drive` is None),
 # apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
