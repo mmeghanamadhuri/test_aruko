@@ -1,9 +1,12 @@
 """
 Qt facade over `VisionPipeline`.
 
-Owns a dedicated worker thread that pumps `pipeline.step()` at the
-configured target rate, emits the annotated frame as a `QImage`, and
-publishes detection / FPS / status updates as Qt signals.
+Owns a dedicated worker thread that pumps the camera + vision pipeline
+at the configured target rate.  **Preview latency:** after each frame
+grab we push a downscaled `QImage` immediately (overlaying the *previous*
+frame's detections), then run face/object inference and refresh the
+preview again with fresh boxes. That way the RGB stream stays fluid even
+when YuNet + YOLO make the inference half of the loop slow.
 
 Anything that can block - camera open, YuNet ONNX download, the
 first YOLO + TensorRT export on a Jetson - is dispatched onto the
@@ -28,8 +31,9 @@ Public surface (used by `VisionScreen`):
     status() -> VisionStatus
 
 GUI previews use a downscaled frame (``NINA_VISION_PREVIEW_MAX_W``) and
-emit at most once per ``NINA_VISION_PREVIEW_MS`` so the Qt thread is not
-flooded with stale ``frame_ready`` events (keeps latency low).
+the Qt ``QTimer`` emits at most once per ``NINA_VISION_PREVIEW_MS``
+whenever the latest preview buffer changed (avoids queued backlog of
+full-size ``QImage`` values on the GUI thread).
 """
 
 from __future__ import annotations
@@ -53,16 +57,15 @@ from sirena_ui.workers.vision_types import Detection, VisionStatus
 log = logging.getLogger("sirena_ui.vision.worker")
 
 
-# Target capture/inference rate. The pipeline can drop below this if
-# inference is slow (Nano + TRT object detection runs at ~10 FPS),
-# but capping the loop here keeps the GUI thread from being flooded
-# on faster hosts.
-_TARGET_FPS = 20.0
+# Target loop rate (read + infer). Inference dominates on Jetson when
+# both detectors are on; when inference is faster than this, we sleep
+# to avoid pointless CPU spin.
+_TARGET_FPS = float(os.environ.get("NINA_VISION_TARGET_FPS", "30"))
 
 # Preview path: downscale + coalesce emits so the GUI is not handed a
 # QueuedConnection backlog of full-size QImages (major latency source).
 _PREVIEW_MAX_W = int(os.environ.get("NINA_VISION_PREVIEW_MAX_W", "640"))
-_PREVIEW_TIMER_MS = max(16, int(os.environ.get("NINA_VISION_PREVIEW_MS", "33")))
+_PREVIEW_TIMER_MS = max(16, int(os.environ.get("NINA_VISION_PREVIEW_MS", "20")))
 
 
 class VisionWorker(QObject):
@@ -123,8 +126,12 @@ class VisionWorker(QObject):
         self._preview_serial = 0
         self._preview_last_sent = -1
         self._preview_timer = QTimer(self)
-        self._preview_timer.setTimerType(Qt.CoarseTimer)
+        self._preview_timer.setTimerType(Qt.PreciseTimer)
         self._preview_timer.timeout.connect(self._emit_preview_if_new)
+
+        # Detections drawn on the leading (pre-inference) preview — last
+        # completed frame's boxes until fresh inference lands.
+        self._stale_preview_detections: List[Detection] = []
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -142,6 +149,7 @@ class VisionWorker(QObject):
                 self._preview_image = None
                 self._preview_serial = 0
             self._preview_last_sent = -1
+            self._stale_preview_detections = []
             self._thread = threading.Thread(
                 target=self._run,
                 name="VisionWorker",
@@ -171,6 +179,7 @@ class VisionWorker(QObject):
             self._preview_image = None
             self._preview_serial = 0
         self._preview_last_sent = -1
+        self._stale_preview_detections = []
         self._pipeline.close()
         self._emit_status(self._pipeline.status())
 
@@ -283,10 +292,10 @@ class VisionWorker(QObject):
 
             t0 = time.perf_counter()
             try:
-                frame, detections = self._pipeline.step()
+                frame = self._pipeline.read_frame()
             except Exception as exc:
-                log.exception("VisionPipeline.step raised: %s", exc)
-                frame, detections = None, []
+                log.exception("VisionPipeline.read_frame raised: %s", exc)
+                frame = None
 
             if frame is None:
                 # Camera not open or failed read - park until either a
@@ -294,7 +303,24 @@ class VisionWorker(QObject):
                 self._wait_for_command(0.1)
                 continue
 
-            self._publish_frame(frame, detections)
+            # Leading preview: show this frame immediately with the last
+            # known detections so motion stays fluid while inference runs.
+            try:
+                lead = VisionPipeline._annotate(frame, self._stale_preview_detections)
+                self._refresh_preview_only(lead)
+            except Exception:
+                log.exception("vision lead preview failed")
+                self._refresh_preview_only(frame)
+
+            try:
+                annotated, detections = self._pipeline.infer_and_annotate(frame)
+            except Exception as exc:
+                log.exception("VisionPipeline.infer_and_annotate raised: %s", exc)
+                annotated = frame
+                detections = []
+
+            self._stale_preview_detections = list(detections)
+            self._publish_frame(annotated, detections)
 
             dt = time.perf_counter() - t0
             ema_dt = 0.85 * ema_dt + 0.15 * max(dt, 1e-3)
@@ -412,13 +438,17 @@ class VisionWorker(QObject):
         self._preview_last_sent = serial
         self.frame_ready.emit(img)
 
-    def _publish_frame(self, frame_bgr, detections: List[Detection]) -> None:
+    def _refresh_preview_only(self, frame_bgr) -> None:
+        """Push a new downscaled ``QImage`` to the preview buffer (no signals)."""
         preview_bgr = self._maybe_downscale_for_preview(frame_bgr)
         qimg = self._bgr_to_qimage(preview_bgr)
         if qimg is not None:
             with self._preview_lock:
                 self._preview_image = qimg
                 self._preview_serial += 1
+
+    def _publish_frame(self, frame_bgr, detections: List[Detection]) -> None:
+        self._refresh_preview_only(frame_bgr)
         # Emit a stable Python list so Qt's queued connection deep-copies
         # via reference (not memoryview pointing into a dying ndarray).
         self.detections_changed.emit(list(detections))

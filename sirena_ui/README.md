@@ -139,6 +139,14 @@ Useful env vars:
 # /dev/video<N> the camera lives on (default: 0)
 export NINA_VISION_CAMERA=0
 
+# Worker loop target FPS when inference keeps up (default 30). Preview
+# is updated once immediately after each camera read (with prior frame's
+# boxes) and again after inference for fluid motion under heavy detectors.
+export NINA_VISION_TARGET_FPS=30
+
+# Qt preview emit cadence when the buffer changes (default 20 ms)
+export NINA_VISION_PREVIEW_MS=20
+
 # Disable the TensorRT path even on a Jetson (defaults to on)
 export NINA_VISION_TRT=0
 

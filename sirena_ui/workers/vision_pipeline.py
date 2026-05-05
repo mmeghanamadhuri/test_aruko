@@ -964,21 +964,32 @@ class VisionPipeline:
     # Frame loop
     # ------------------------------------------------------------------
 
-    def step(self):
-        """Pull one frame, optionally run the enabled detectors, and
-        return `(annotated_bgr, [Detection])`. Returns `(None, [])` if
-        the camera isn't available."""
+    def read_frame(self):
+        """Grab one BGR frame from the camera. No inference.
+
+        Used with :meth:`infer_and_annotate` so the GUI can show a live
+        preview immediately after each read while heavy detectors run.
+        """
         with self._lock:
             cap = self._cap
+        if cap is None or cv2 is None:
+            return None
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return None
+        return frame
+
+    def infer_and_annotate(self, frame):
+        """Run enabled detectors on ``frame`` and return ``(annotated, dets)``.
+
+        Does not call :meth:`read_frame`; callers typically pair one read
+        with one inference pass. Updates ``_last_frame`` to ``annotated``.
+        """
+        with self._lock:
             face = self._face if self._face_enabled else None
             sface = self._sface if self._face_enabled else None
             obj = self._object if self._object_enabled else None
             face_db = self._face_db
-        if cap is None or cv2 is None:
-            return None, []
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            return None, []
 
         detections: List[Detection] = []
         if face is not None:
@@ -987,10 +998,6 @@ class VisionPipeline:
             except Exception as exc:
                 log.warning("face.detect failed: %s", exc)
                 hits = []
-            # Recognition is opt-in on success: if we have an SFace
-            # recognizer AND at least one enrolled face, look up each
-            # detected face's identity. Otherwise we just emit the bare
-            # face detections (label "face") as before.
             do_recog = sface is not None and not face_db.is_empty()
             for hit in hits:
                 if do_recog:
@@ -1017,6 +1024,15 @@ class VisionPipeline:
         with self._lock:
             self._last_frame = annotated
         return annotated, detections
+
+    def step(self):
+        """Pull one frame, optionally run the enabled detectors, and
+        return `(annotated_bgr, [Detection])`. Returns `(None, [])` if
+        the camera isn't available."""
+        frame = self.read_frame()
+        if frame is None:
+            return None, []
+        return self.infer_and_annotate(frame)
 
     # ------------------------------------------------------------------
     # Face enrollment

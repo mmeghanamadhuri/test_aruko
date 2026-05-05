@@ -719,10 +719,12 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 export NINA_VISION_CAMERA=0
 export NINA_VISION_TRT=1                       # 0 = force PyTorch CPU
 export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
-# Preview latency: GUI only shows the latest frame at ~30 Hz; inference still full rate.
-# Smaller max width = less scaling work on the UI thread (default 640).
+# Preview latency: max width of frame passed to Qt (default 640); smaller = less GUI work.
 export NINA_VISION_PREVIEW_MAX_W=640
-export NINA_VISION_PREVIEW_MS=33
+# Qt refresh interval (ms) when the preview buffer changed (default 20).
+export NINA_VISION_PREVIEW_MS=20
+# Worker loop target rate when inference is fast (default 30); slow detectors still dominate.
+export NINA_VISION_TARGET_FPS=30
 # Face greetings (Vision): cached MP3s under nina/data/greetings/<name>.mp3 (repo root).
 # Playback: sudo apt install -y mpg123 alsa-utils espeak-ng
 # (espeak renders via WAV + aplay when aplay is present).
