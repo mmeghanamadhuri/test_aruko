@@ -25,13 +25,14 @@ from sirena_ui.workers.vision_types import KIND_FACE, Detection
 log = logging.getLogger("sirena_ui.face_follow")
 
 # Follow speeds — `drive_wheels` passes these through to PWM (can be < MIN_SPEED_PCT).
-# Defaults tuned for slow, stable approach; override via NINA_FOLLOW_* env vars.
-_SPEED_APPROACH_PCT = int(os.environ.get("NINA_FOLLOW_APPROACH_PCT", "6"))
-_SPEED_CRUISE_PCT = int(os.environ.get("NINA_FOLLOW_CRUISE_PCT", "5"))
-_SPEED_BACK_PCT = int(os.environ.get("NINA_FOLLOW_BACK_PCT", "5"))
-_SPEED_NUDGE_PCT = int(os.environ.get("NINA_FOLLOW_NUDGE_PCT", "5"))
+# Defaults balanced for responsive approach while staying within safe duty on
+# slick floors; tune with NINA_FOLLOW_* env vars (see NINA_APP.md).
+_SPEED_APPROACH_PCT = int(os.environ.get("NINA_FOLLOW_APPROACH_PCT", "11"))
+_SPEED_CRUISE_PCT = int(os.environ.get("NINA_FOLLOW_CRUISE_PCT", "9"))
+_SPEED_BACK_PCT = int(os.environ.get("NINA_FOLLOW_BACK_PCT", "9"))
+_SPEED_NUDGE_PCT = int(os.environ.get("NINA_FOLLOW_NUDGE_PCT", "9"))
 
-_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "4"))
+_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "6"))
 _SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "16.0"))
 # Lateral steering while approaching: normalized err_x [-1,1] -> differential PWM.
 _YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "3.5"))
