@@ -48,7 +48,13 @@ from sirena_ui.widgets.common import (
     SectionLabel,
 )
 from sirena_ui.widgets.dpad import DPad
-from sirena_ui.workers.drive_controller import MAX_SPEED_PCT, MIN_SPEED_PCT
+from sirena_ui.workers.drive_controller import (
+    MAX_SPEED_PCT,
+    MIN_SPEED_PCT,
+    WHEEL_TRIM_MAX,
+    WHEEL_TRIM_MIN,
+    WHEEL_TRIM_STEP,
+)
 from sirena_ui.workers.nina_service import NinaService
 
 
@@ -332,6 +338,74 @@ class DriveScreen(QWidget):
         self._speed_pill = Pill(f"{MIN_SPEED_PCT}%", Pill.KIND_ERROR)
         speed_row.addWidget(self._speed_pill)
 
+        # Per-wheel PWM trim (percentage points) when one hub is slightly
+        # stronger — default 0 / 0 matches the legacy symmetric path.
+        trim_row = QHBoxLayout()
+        trim_row.setSpacing(4)
+        card.add_layout(trim_row)
+        trim_lbl = QLabel("Wheel trim")
+        trim_lbl.setStyleSheet(
+            "color: #6e6e73; font-size: 12px; background-color: transparent;"
+        )
+        trim_lbl.setToolTip(
+            f"Offset left/right duty in \u00b1{WHEEL_TRIM_STEP}% steps "
+            f"(range {WHEEL_TRIM_MIN}…{WHEEL_TRIM_MAX}). "
+            "Use while driving forward to straighten a slight pull."
+        )
+        trim_row.addWidget(trim_lbl)
+
+        def _mk_trim_btn(text: str) -> QPushButton:
+            b = QPushButton(text)
+            b.setObjectName("secondaryButton")
+            b.setFocusPolicy(Qt.NoFocus)
+            b.setMinimumHeight(28)
+            b.setMaximumHeight(28)
+            b.setMaximumWidth(36)
+            b.setCursor(Qt.PointingHandCursor)
+            return b
+
+        trim_row.addWidget(QLabel("L"))
+        self._trim_l_minus = _mk_trim_btn("\u2212")
+        self._trim_l_minus.clicked.connect(
+            lambda: self._on_wheel_trim_delta(left_delta=-WHEEL_TRIM_STEP)
+        )
+        trim_row.addWidget(self._trim_l_minus)
+        self._trim_l_value = QLabel("+0")
+        self._trim_l_value.setMinimumWidth(28)
+        self._trim_l_value.setAlignment(Qt.AlignCenter)
+        self._trim_l_value.setStyleSheet(
+            "color: #1c1c1e; font-size: 12px; font-weight: 600;"
+            " background-color: transparent;"
+        )
+        trim_row.addWidget(self._trim_l_value)
+        self._trim_l_plus = _mk_trim_btn("+")
+        self._trim_l_plus.clicked.connect(
+            lambda: self._on_wheel_trim_delta(left_delta=WHEEL_TRIM_STEP)
+        )
+        trim_row.addWidget(self._trim_l_plus)
+
+        trim_row.addSpacing(8)
+        trim_row.addWidget(QLabel("R"))
+        self._trim_r_minus = _mk_trim_btn("\u2212")
+        self._trim_r_minus.clicked.connect(
+            lambda: self._on_wheel_trim_delta(right_delta=-WHEEL_TRIM_STEP)
+        )
+        trim_row.addWidget(self._trim_r_minus)
+        self._trim_r_value = QLabel("+0")
+        self._trim_r_value.setMinimumWidth(28)
+        self._trim_r_value.setAlignment(Qt.AlignCenter)
+        self._trim_r_value.setStyleSheet(
+            "color: #1c1c1e; font-size: 12px; font-weight: 600;"
+            " background-color: transparent;"
+        )
+        trim_row.addWidget(self._trim_r_value)
+        self._trim_r_plus = _mk_trim_btn("+")
+        self._trim_r_plus.clicked.connect(
+            lambda: self._on_wheel_trim_delta(right_delta=WHEEL_TRIM_STEP)
+        )
+        trim_row.addWidget(self._trim_r_plus)
+        trim_row.addStretch(1)
+
         # Wheel polarity calibration. The first time a Nina is built the
         # JYQDs are commonly soldered to the hub motors with one wheel
         # phase-wired backwards, so a "forward" command spins one wheel
@@ -436,6 +510,12 @@ class DriveScreen(QWidget):
         return card
 
     # ---------- handlers ----------
+
+    def _on_wheel_trim_delta(
+        self, left_delta: int = 0, right_delta: int = 0
+    ) -> None:
+        self._drive.bump_wheel_trim(left_delta=left_delta, right_delta=right_delta)
+        self.setFocus()
 
     def _on_brake_toggle(self, checked: bool) -> None:
         if checked and self._straight_test_timer.isActive():
@@ -711,6 +791,10 @@ class DriveScreen(QWidget):
         self._hud_heading._value_label.setText(f"{state['heading_deg']}\u00b0")
         self._hud_distance._value_label.setText(f"{state['distance_m']:.1f} m")
         self._speed_pill.setText(f"{state['speed_pct']}%")
+        tl = int(state.get("wheel_trim_left", 0))
+        tr = int(state.get("wheel_trim_right", 0))
+        self._trim_l_value.setText(f"{tl:+d}")
+        self._trim_r_value.setText(f"{tr:+d}")
         # Autonomy lock takes priority over the brake-lock for D-pad
         # enablement: while autonomy is on, the D-pad stays disabled
         # regardless of the manual brake state.

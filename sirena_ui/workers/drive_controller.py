@@ -108,6 +108,15 @@ MAX_SPEED_PCT = 14
 FROM_STOP_KICK_PCT = 14
 FROM_STOP_CRUISE_PCT = 5
 
+# Per-wheel duty trim (percentage points) for bench tuning when one hub
+# pulls slightly harder than the other. Applied on top of whatever base
+# PWM the manoeuvre commanded; base 0 stays 0 so autonomy "coast" ticks
+# are unchanged. Defaults are zero so behaviour matches the pre-trim
+# build until the operator nudges the Drive screen controls.
+WHEEL_TRIM_MIN = -10
+WHEEL_TRIM_MAX = 10
+WHEEL_TRIM_STEP = 1
+
 
 def _clamp_speed(pct: int) -> int:
     """Clamp `pct` into the operator-safe envelope. Negative / non-int
@@ -290,6 +299,8 @@ class DriveController(QObject):
             "driver_message": "",
             "invert_left": initial_invert_left,
             "invert_right": initial_invert_right,
+            "wheel_trim_left": 0,
+            "wheel_trim_right": 0,
         }
 
         # Last (left_dir, left_speed, right_dir, right_speed) that was
@@ -300,6 +311,9 @@ class DriveController(QObject):
         # Cleared whenever the wheels are commanded to stop / brake /
         # estop so the heartbeat goes quiet between drives.
         self._active_drive: Optional[Tuple[str, int, str, int]] = None
+        # Pre-trim duties for the last move command; trim bumps replay
+        # set_wheels from these bases without re-deriving from UI state.
+        self._last_wheel_bases: Optional[Tuple[int, int]] = None
 
         # All hardware-touching work runs on a single worker thread, in
         # the order commands were issued, so GUI clicks never collide
@@ -423,6 +437,83 @@ class DriveController(QObject):
                 bool(self._state["invert_left"]),
                 bool(self._state["invert_right"]),
             )
+
+    def bump_wheel_trim(self, left_delta: int = 0, right_delta: int = 0) -> None:
+        """Nudge per-wheel duty offsets (percentage points). Values are
+        clamped to [WHEEL_TRIM_MIN, WHEEL_TRIM_MAX]. If the wheels are
+        live, the worker reapplies set_wheels from the last base duties."""
+        if left_delta == 0 and right_delta == 0:
+            return
+        changed = False
+        with self._lock:
+            if left_delta:
+                key = "wheel_trim_left"
+                nv = max(
+                    WHEEL_TRIM_MIN,
+                    min(WHEEL_TRIM_MAX, self._state[key] + left_delta),
+                )
+                if nv != self._state[key]:
+                    self._state[key] = nv
+                    changed = True
+            if right_delta:
+                key = "wheel_trim_right"
+                nv = max(
+                    WHEEL_TRIM_MIN,
+                    min(WHEEL_TRIM_MAX, self._state[key] + right_delta),
+                )
+                if nv != self._state[key]:
+                    self._state[key] = nv
+                    changed = True
+        if changed:
+            self._emit_state()
+            self._enqueue(self._do_reapply_wheel_trim)
+
+    def _with_trim(self, left_base: int, right_base: int) -> Tuple[int, int]:
+        """Map commanded base duties to PWM sent to the nav layer.
+        Base 0 is left at 0 so autonomy coast / explicit stops don't
+        acquire trim."""
+        with self._lock:
+            lo = int(self._state["wheel_trim_left"])
+            ro = int(self._state["wheel_trim_right"])
+        tl = 0 if left_base == 0 else max(0, min(100, int(left_base) + lo))
+        tr = 0 if right_base == 0 else max(0, min(100, int(right_base) + ro))
+        return tl, tr
+
+    def _commit_wheels(
+        self,
+        left_dir: str,
+        left_base: int,
+        right_dir: str,
+        right_base: int,
+    ) -> None:
+        """set_wheels with trim; update _active_drive + _last_wheel_bases."""
+        if self._nav is None:
+            return
+        tl, tr = self._with_trim(left_base, right_base)
+        self._nav.set_wheels(
+            left_dir=left_dir,
+            left_speed=tl,
+            right_dir=right_dir,
+            right_speed=tr,
+        )
+        with self._lock:
+            self._last_wheel_bases = (int(left_base), int(right_base))
+            self._active_drive = (left_dir, tl, right_dir, tr)
+
+    def _do_reapply_wheel_trim(self) -> None:
+        if self._nav is None:
+            return
+        with self._lock:
+            bases = self._last_wheel_bases
+            active = self._active_drive
+        if bases is None or active is None:
+            return
+        ldir, _, rdir, _ = active
+        bl, br = bases
+        try:
+            self._commit_wheels(ldir, bl, rdir, br)
+        except Exception as exc:
+            log.exception("reapply wheel trim failed: %s", exc)
 
     def _do_apply_polarity(self) -> None:
         """Worker-thread side of set_invert_*. Pushes the current
@@ -703,6 +794,7 @@ class DriveController(QObject):
             self._nav.engage_brake()
             with self._lock:
                 self._active_drive = None
+                self._last_wheel_bases = None
         except Exception as exc:
             log.exception("engage_brake failed: %s", exc)
 
@@ -734,14 +826,7 @@ class DriveController(QObject):
                     right_dir=rdir,
                     speed_percent=kick,
                 )
-                self._nav.set_wheels(
-                    left_dir=ldir,
-                    left_speed=cruise,
-                    right_dir=rdir,
-                    right_speed=cruise,
-                )
-                with self._lock:
-                    self._active_drive = (ldir, cruise, rdir, cruise)
+                self._commit_wheels(ldir, cruise, rdir, cruise)
                 log.info(
                     "drive from stop: kick %s%% then cruise %s%% (UI slider %s%%)",
                     kick,
@@ -749,13 +834,7 @@ class DriveController(QObject):
                     speed_pct,
                 )
             else:
-                self._nav.drive_continuous(
-                    left_dir=ldir,
-                    right_dir=rdir,
-                    speed_percent=speed_pct,
-                )
-                with self._lock:
-                    self._active_drive = (ldir, speed_pct, rdir, speed_pct)
+                self._commit_wheels(ldir, speed_pct, rdir, speed_pct)
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
 
@@ -769,14 +848,7 @@ class DriveController(QObject):
         if ldir is None or rdir is None:
             return
         try:
-            self._nav.set_wheels(
-                left_dir=ldir,
-                left_speed=speed_pct,
-                right_dir=rdir,
-                right_speed=speed_pct,
-            )
-            with self._lock:
-                self._active_drive = (ldir, speed_pct, rdir, speed_pct)
+            self._commit_wheels(ldir, speed_pct, rdir, speed_pct)
         except Exception as exc:
             log.exception(
                 "apply_live_speed(%s, %s) failed: %s",
@@ -804,12 +876,15 @@ class DriveController(QObject):
             self._nav.stop()
             with self._lock:
                 self._active_drive = None
+                self._last_wheel_bases = None
         except Exception as exc:
             log.exception("stop() failed: %s", exc)
 
     def _do_emergency_stop(self) -> None:
         if self._nav is None:
             with self._lock:
+                self._active_drive = None
+                self._last_wheel_bases = None
                 self._state["driver_message"] = (
                     "EMERGENCY STOP requested - hardware not connected"
                 )
@@ -819,6 +894,7 @@ class DriveController(QObject):
             self._nav.emergency_stop()
             with self._lock:
                 self._active_drive = None
+                self._last_wheel_bases = None
                 self._state["driver_message"] = (
                     "EMERGENCY STOP - brake engaged, release brake to resume"
                 )
@@ -847,19 +923,18 @@ class DriveController(QObject):
                 if right_dir == _DIR_FORWARD
                 else self._nav.DIR_BACKWARD
             )
-            self._nav.set_wheels(
-                left_dir=ldir,
-                left_speed=left_speed,
-                right_dir=rdir,
-                right_speed=right_speed,
-            )
-            with self._lock:
-                # 0/0 from autonomy is "coast" - don't try to maintain
-                # a stopped state with a heartbeat (no point).
-                if left_speed == 0 and right_speed == 0:
+            if left_speed == 0 and right_speed == 0:
+                self._nav.set_wheels(
+                    left_dir=ldir,
+                    left_speed=0,
+                    right_dir=rdir,
+                    right_speed=0,
+                )
+                with self._lock:
                     self._active_drive = None
-                else:
-                    self._active_drive = (ldir, left_speed, rdir, right_speed)
+                    self._last_wheel_bases = None
+                return
+            self._commit_wheels(ldir, left_speed, rdir, right_speed)
         except Exception as exc:
             log.exception(
                 "drive_wheels(%s/%s, %s/%s) failed: %s",
