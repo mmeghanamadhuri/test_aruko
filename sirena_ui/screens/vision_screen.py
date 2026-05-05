@@ -300,8 +300,8 @@ class VisionScreen(QWidget):
 
         card.add(SectionLabel("Person follow"))
         follow_hint = MutedLabel(
-            "Locks face size at start, then drives forward/back and turns "
-            "to keep you centred. Stops when you come closer."
+            "Drives toward a standoff face size, holds when centred, and reverses "
+            "if you move closer—using the same closeness limit for hold and reverse."
         )
         follow_hint.setWordWrap(True)
         card.add(follow_hint)

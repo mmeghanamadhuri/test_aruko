@@ -1,7 +1,13 @@
-"""Vision-guided follow: keep a chosen face centred and near a reference size.
+"""Vision-guided follow: keep a chosen face centred near a **configured standoff**
+size (not whatever size the face had when we first locked).
 
 Uses `DriveController.drive_wheels` at the timer rate from
 ``NINA_FOLLOW_TICK_MS`` (default 50 ms ≈ 20 Hz) so motion stays smooth.
+Distance is inferred from bbox area vs ``NINA_FOLLOW_TARGET_BBOX_AREA``
+or ``NINA_FOLLOW_TARGET_FACE_FRAC`` × frame area (see below).
+``NINA_FOLLOW_CLOSE_RATIO`` (default 1.25) is the single **too-close** edge:
+above it the robot reverses; at or below it (and at least ``_area_far``)
+a centred face yields hold instead of approach.
 Requires face detection; recognition matches a
 named enrollee when ``target_name`` is set, otherwise tracks the largest
 face box.
@@ -49,8 +55,21 @@ _YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "3.5"))
 _LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "4")))
 # Face must be seen this many ticks in a row before we trust it (clear lost streak / exit search).
 _FACE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_CONFIRM_TICKS", "2")))
+# Face area ratio (bbox_area / standoff) above which we reverse; same band limit
+# for centred hold (no separate "early stop" closer than reverse). Tunable.
+try:
+    _FOLLOW_CLOSE_RATIO = float(os.environ.get("NINA_FOLLOW_CLOSE_RATIO", "1.25"))
+except ValueError:
+    _FOLLOW_CLOSE_RATIO = 1.25
+_FOLLOW_CLOSE_RATIO = max(1.01, min(2.5, _FOLLOW_CLOSE_RATIO))
 # Control-loop period (ms). Lower = snappier first lock after detections appear.
 _FOLLOW_TICK_MS = max(16, int(os.environ.get("NINA_FOLLOW_TICK_MS", "50")))
+
+# Desired standoff: face bbox area (px²) the controller tries to hold, independent
+# of size at first lock. Set NINA_FOLLOW_TARGET_BBOX_AREA for a fixed px², or use
+# NINA_FOLLOW_TARGET_FACE_FRAC (fraction of frame width×height, default 0.035).
+_MIN_TARGET_AREA_PX = 400
+_DEFAULT_FACE_FRAC = 0.035
 
 
 def _bbox_area(det: Detection) -> int:
@@ -72,8 +91,7 @@ class FaceFollowController(QObject):
     """Start/stop person follow; ingests ``Detection`` lists from VisionWorker."""
 
     status_message = pyqtSignal(str)
-    #: Emitted when follow locks a target (new ``_ref_area``). Payload is the
-    #: greeting name for ``FaceGreeter`` (enrolled name, label, or ``friend``).
+    #: Emitted once per “lock session” when a target is acquired (greeting).
     face_latched = pyqtSignal(str)
 
     def __init__(self, drive: DriveController, parent=None) -> None:
@@ -91,7 +109,7 @@ class FaceFollowController(QObject):
 
         self._active = False
         self._target_name: Optional[str] = None
-        self._ref_area: Optional[float] = None
+        self._latched: bool = False
         self._latest: List[Detection] = []
         self._frame_wh: Tuple[int, int] = (640, 480)
 
@@ -103,15 +121,33 @@ class FaceFollowController(QObject):
         self._lost_streak = 0
         self._face_present_streak = 0
 
-        # ratio = face_area / reference_area (ref = bbox area at lock).
+        # ratio = face bbox area / standoff. _area_far.._FOLLOW_CLOSE_RATIO: hold / nudge
+        # when centred or off-axis; ratio > _FOLLOW_CLOSE_RATIO: reverse (too close).
         self._area_far = 0.92
         self._area_blend_far = 0.82
-        self._area_close_stop = 1.06
-        self._area_close_back = 1.25
+        self._area_close_back = _FOLLOW_CLOSE_RATIO
         self._ang_dead = 0.09
 
     def set_frame_size(self, w: int, h: int) -> None:
         self._frame_wh = (max(1, int(w)), max(1, int(h)))
+
+    def _target_standoff_area_px(self) -> float:
+        """Ideal face bbox area (px²) for approach / back thresholds."""
+        raw = (os.environ.get("NINA_FOLLOW_TARGET_BBOX_AREA") or "").strip()
+        if raw:
+            try:
+                v = int(raw)
+                if v >= _MIN_TARGET_AREA_PX:
+                    return float(v)
+            except ValueError:
+                pass
+        fw, fh = self._frame_wh
+        try:
+            frac = float(os.environ.get("NINA_FOLLOW_TARGET_FACE_FRAC", str(_DEFAULT_FACE_FRAC)))
+        except ValueError:
+            frac = _DEFAULT_FACE_FRAC
+        frac = max(1e-6, min(0.5, frac))
+        return max(float(_MIN_TARGET_AREA_PX), frac * float(fw * fh))
 
     def ingest_detections(self, dets: List[Detection]) -> None:
         self._latest = list(dets)
@@ -129,7 +165,7 @@ class FaceFollowController(QObject):
         except Exception:
             pass
         self._target_name = (target_name or "").strip() or None
-        self._ref_area = None
+        self._latched = False
         self._latest = []
         self._searching = False
         self._search_in_turn = False
@@ -163,7 +199,7 @@ class FaceFollowController(QObject):
         self._nudge_pulse_timer.stop()
         self._search_step_timer.stop()
         self._target_name = None
-        self._ref_area = None
+        self._latched = False
         self._latest = []
         try:
             self._drive.stop(drain=True)
@@ -250,7 +286,7 @@ class FaceFollowController(QObject):
             self._search_look_remaining = 0
             self._search_steps_done = 0
             self._search_step_timer.stop()
-            self._ref_area = None
+            self._latched = False
             self._drive_stop_safe()
             self.status_message.emit("Follow: lost — stepped 360° scan…")
             return
@@ -276,18 +312,11 @@ class FaceFollowController(QObject):
         self._start_search_turn()
 
     def _handle_track(self, chosen: Detection) -> None:
-        lost_before = self._lost_streak
         self._face_present_streak += 1
         # Intermittent detections while the subject is gone used to reset
         # _lost_streak every frame and prevented 360° search from ever arming.
         if self._face_present_streak >= _FACE_CONFIRM_TICKS:
             self._lost_streak = 0
-
-        if self._face_present_streak == 1 and (
-            self._searching or lost_before >= 2
-        ):
-            # Distance reference is stale after real absence; skip on 1-frame blips.
-            self._ref_area = None
 
         self._had_lock = True
 
@@ -307,7 +336,7 @@ class FaceFollowController(QObject):
             self._search_in_turn = False
             self._search_look_remaining = 0
             self._search_steps_done = 0
-            self._ref_area = None
+            self._latched = False
             self.status_message.emit("Follow: target reacquired")
 
         self._nudge_pulse_timer.stop()
@@ -318,17 +347,21 @@ class FaceFollowController(QObject):
         err_x = max(-1.0, min(1.0, err_x))
 
         area = float(max(1, _bbox_area(chosen)))
+        standoff = self._target_standoff_area_px()
         latched_greet: Optional[str] = None
-        if self._ref_area is None:
-            self._ref_area = float(max(1, area))
+        if not self._latched:
+            self._latched = True
             label = chosen.identity or chosen.label or "face"
-            self.status_message.emit(f"Follow: locked {label} ({int(area)} px²)")
+            tgt = int(standoff)
+            self.status_message.emit(
+                f"Follow: locked {label} ({int(area)} px² · standoff target {tgt} px²)"
+            )
             # Defer face_latched until after drive commands: the greeting slot
             # can block the GUI thread (mute preroll + mpg123), which prevents
             # QTimer follow ticks and delays this tick's drive_wheels.
             latched_greet = _greeting_name(chosen)
 
-        ratio = area / self._ref_area
+        ratio = area / standoff
 
         min_sp = _SPEED_CRUISE_PCT
         max_sp = _SPEED_APPROACH_PCT
@@ -341,16 +374,6 @@ class FaceFollowController(QObject):
                     )
                 except Exception as exc:
                     log.debug("drive_wheels back: %s", exc)
-                return
-
-            if ratio > self._area_close_stop:
-                if abs(err_x) <= self._ang_dead:
-                    try:
-                        self._drive.stop(drain=True)
-                    except Exception:
-                        pass
-                    return
-                self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
                 return
 
             if ratio < self._area_far:
@@ -440,7 +463,7 @@ class FaceFollowController(QObject):
         self._search_step_timer.stop()
         self._latest = []
         self._target_name = None
-        self._ref_area = None
+        self._latched = False
         self._drive_stop_safe()
         self.status_message.emit(
             "Follow: lost after full scan — tap Start follow to retry"

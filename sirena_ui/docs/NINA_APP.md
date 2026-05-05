@@ -751,6 +751,12 @@ export NINA_FOLLOW_CRUISE_PCT=9
 export NINA_FOLLOW_BACK_PCT=9
 export NINA_FOLLOW_NUDGE_PCT=9
 export NINA_FOLLOW_YAW_GAIN=3.5
+# Standoff: desired face bbox area (px²) for approach/back; not tied to size at lock.
+# Prefer NINA_FOLLOW_TARGET_BBOX_AREA for a fixed px², or fraction of frame (W×H):
+# export NINA_FOLLOW_TARGET_BBOX_AREA=12000
+# export NINA_FOLLOW_TARGET_FACE_FRAC=0.035
+# Ratio face_area/standoff above which the bot reverses; centred hold runs up to this same ratio.
+# export NINA_FOLLOW_CLOSE_RATIO=1.25
 # Lost-target search: slow stepped in-place rotation (~step_deg per pulse), pause to look, repeat to ~360°.
 # Tune STEP_MS + SEARCH_PCT on hardware so each pulse matches step_deg; LOOK_TICKS × TICK_MS ≈ dwell per station.
 export NINA_FOLLOW_SEARCH_STEP_DEG=30
