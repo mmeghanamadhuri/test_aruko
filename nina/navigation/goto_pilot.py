@@ -444,7 +444,7 @@ class GotoPilot:
             self._path_index = 0
             return False
 
-        fwd_clear = self._auto.forward_clear_mm
+        fwd_clear = self._goto.forward_clear_mm
         _tn = time.monotonic()
         _forward_veto = forward_mm is None or forward_mm < fwd_clear
         if not _forward_veto:
@@ -474,6 +474,13 @@ class GotoPilot:
                 unknown_pixel_cost=self._goto.unknown_pixel_cost,
             )
             if not result.ok:
+                log.warning(
+                    "Goto plan_path failed: %s (goal=%s start=(%.0f,%.0f))",
+                    result.reason,
+                    goal,
+                    pose.x_mm,
+                    pose.y_mm,
+                )
                 # Record the snapped pin even on failure so the UI
                 # can show "we tried, but here".
                 with self._lock:
@@ -558,12 +565,9 @@ class GotoPilot:
                 self._state.last_action = action
             return False
 
-        # Forward we go. We deliberately gate forward motion on the
-        # planner's path being non-empty AND the immediate forward
-        # sector being clear by a comfortable margin (forward_clear_mm
-        # from the wander tunables, not the e-stop floor).
-        # forward_clear_mm
-        # from the wander tunables, not the e-stop floor).
+        # Forward we go. Use goto's own forward_clear_mm (lower than
+        # wander's default) so map-following can proceed in normal rooms;
+        # wander keeps the conservative 1200 mm for reactive roaming.
         if forward_mm is not None and forward_mm < fwd_clear:
             side_clear = self._auto.side_clear_mm
             lm = obstacle.min_mm(SECTOR_LEFT)

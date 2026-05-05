@@ -68,6 +68,7 @@ def _goto_settings(**over) -> GotoSettings:
         stuck_motion_mm=10,
         tick_hz=50.0,
         unknown_pixel_cost=1.5,
+        forward_clear_mm=600,
     )
     base.update(over)
     return GotoSettings(**base)

@@ -188,6 +188,7 @@ def _goto_settings():
         heading_deadband_deg=15.0, lookahead_mm=400,
         replan_period_sec=3.0, stuck_window_sec=5.0,
         stuck_motion_mm=50, tick_hz=8.0, unknown_pixel_cost=1.5,
+        forward_clear_mm=700,
     )
 
 
