@@ -1,7 +1,8 @@
 """Vision-guided follow: keep a chosen face centred and near a reference size.
 
-Uses `DriveController.drive_wheels` at ~15 Hz (same family as autonomy) so
-motion stays smooth. Requires face detection; recognition matches a
+Uses `DriveController.drive_wheels` at the timer rate from
+``NINA_FOLLOW_TICK_MS`` (default 50 ms ≈ 20 Hz) so motion stays smooth.
+Requires face detection; recognition matches a
 named enrollee when ``target_name`` is set, otherwise tracks the largest
 face box.
 
@@ -39,6 +40,8 @@ _YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "3.5"))
 _LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "4")))
 # Face must be seen this many ticks in a row before we trust it (clear lost streak / exit search).
 _FACE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_CONFIRM_TICKS", "2")))
+# Control-loop period (ms). Lower = snappier first lock after detections appear.
+_FOLLOW_TICK_MS = max(16, int(os.environ.get("NINA_FOLLOW_TICK_MS", "50")))
 
 
 def _bbox_area(det: Detection) -> int:
@@ -69,7 +72,7 @@ class FaceFollowController(QObject):
         self._drive = drive
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
-        self._timer.setInterval(66)
+        self._timer.setInterval(_FOLLOW_TICK_MS)
         self._nudge_pulse_timer = QTimer(self)
         self._nudge_pulse_timer.setSingleShot(True)
         self._nudge_pulse_timer.timeout.connect(self._finish_nudge_pulse)

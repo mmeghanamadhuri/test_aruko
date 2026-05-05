@@ -744,6 +744,8 @@ export NINA_FOLLOW_SEARCH_PCT=4
 export NINA_FOLLOW_LOST_TICKS=4
 # Consecutive face ticks before we trust detections (clear lost / exit search).
 export NINA_FOLLOW_CONFIRM_TICKS=2
+# Person-follow Qt timer period in ms (default 50 ≈ 20 Hz; lower = snappier).
+export NINA_FOLLOW_TICK_MS=50
 
 # Lidar
 export NINA_LIDAR_PORT=/dev/ttyUSB0

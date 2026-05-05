@@ -764,10 +764,10 @@ class VisionScreen(QWidget):
             if r != QMessageBox.Yes:
                 return
             auto.set_enabled(False)
+        # Face detection only — object/YOLO would slow the first frames and
+        # delays locking; follow uses KIND_FACE detections exclusively.
         if self._face_toggle is not None and not self._face_toggle._btn.isChecked():  # noqa: SLF001
             self._face_toggle._btn.setChecked(True)  # noqa: SLF001
-        if self._object_toggle is not None and not self._object_toggle._btn.isChecked():  # noqa: SLF001
-            self._object_toggle._btn.setChecked(True)  # noqa: SLF001
         target = self._follow_combo.currentData()
         if not self._follow.start(target):
             return
