@@ -715,7 +715,7 @@ export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
 export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
-# Drive "Straight 15 s" bench test: sustained PWM % (default: MAX_SPEED_PCT, same as slider max).
+# Drive "Straight 15 s" bench test: sustained PWM % (default: MAX_SPEED_PCT).
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
 
 # Vision
@@ -724,8 +724,8 @@ export NINA_VISION_TRT=1                       # 0 = force PyTorch CPU
 export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
 # Preview latency: max width of frame passed to Qt (default 640); smaller = less GUI work.
 export NINA_VISION_PREVIEW_MAX_W=640
-# Qt refresh interval (ms) when the preview buffer changed (default 20).
-export NINA_VISION_PREVIEW_MS=20
+# Coalesce timer (ms) as fallback if the GUI thread misses an immediate flush (default 12).
+export NINA_VISION_PREVIEW_MS=12
 # Worker loop target rate when inference is fast (default 30); slow detectors still dominate.
 export NINA_VISION_TARGET_FPS=30
 # Face greetings (Vision): cached MP3s under nina/data/greetings/<name>.mp3 (repo root).

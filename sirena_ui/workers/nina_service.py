@@ -90,9 +90,11 @@ class NinaService:
         if self._drive is None:
             nav_settings = self.settings.navigation
             nav_manager = build_navigation_manager(nav_settings)
+            # Manual drive duty is fixed in DriveController (no slider); do not
+            # seed the GUI state from nav_settings.default_speed_percent.
             self._drive = DriveController(
                 nav_manager=nav_manager,
-                default_speed_percent=nav_settings.default_speed_percent,
+                default_speed_percent=None,
             )
         return self._drive
 

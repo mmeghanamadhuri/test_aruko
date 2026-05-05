@@ -30,10 +30,10 @@ Public surface (used by `VisionScreen`):
     snapshot() -> Path | None
     status() -> VisionStatus
 
-GUI previews use a downscaled frame (``NINA_VISION_PREVIEW_MAX_W``) and
-the Qt ``QTimer`` emits at most once per ``NINA_VISION_PREVIEW_MS``
-whenever the latest preview buffer changed (avoids queued backlog of
-full-size ``QImage`` values on the GUI thread).
+GUI previews use a downscaled frame (``NINA_VISION_PREVIEW_MAX_W``).
+Each buffer update queues ``frame_ready`` immediately via a flush signal,
+and a Qt timer at ``NINA_VISION_PREVIEW_MS`` provides a fallback so a slow
+GUI thread still catches up (avoids backlog of full-size ``QImage`` values).
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ _TARGET_FPS = float(os.environ.get("NINA_VISION_TARGET_FPS", "30"))
 # Preview path: downscale + coalesce emits so the GUI is not handed a
 # QueuedConnection backlog of full-size QImages (major latency source).
 _PREVIEW_MAX_W = int(os.environ.get("NINA_VISION_PREVIEW_MAX_W", "640"))
-_PREVIEW_TIMER_MS = max(16, int(os.environ.get("NINA_VISION_PREVIEW_MS", "20")))
+_PREVIEW_TIMER_MS = max(8, int(os.environ.get("NINA_VISION_PREVIEW_MS", "12")))
 
 
 class VisionWorker(QObject):
@@ -86,6 +86,9 @@ class VisionWorker(QObject):
     # corresponding toggle back to OFF so it doesn't lie about state.
     face_enable_failed = pyqtSignal(str)
     object_enable_failed = pyqtSignal(str)
+    # Worker thread requests an immediate GUI preview refresh (in addition
+    # to the periodic coalesce timer) so RGB is not delayed by a full tick.
+    _preview_flush_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -128,6 +131,7 @@ class VisionWorker(QObject):
         self._preview_timer = QTimer(self)
         self._preview_timer.setTimerType(Qt.PreciseTimer)
         self._preview_timer.timeout.connect(self._emit_preview_if_new)
+        self._preview_flush_requested.connect(self._emit_preview_if_new)
 
         # Detections drawn on the leading (pre-inference) preview — last
         # completed frame's boxes until fresh inference lands.
@@ -439,13 +443,15 @@ class VisionWorker(QObject):
         self.frame_ready.emit(img)
 
     def _refresh_preview_only(self, frame_bgr) -> None:
-        """Push a new downscaled ``QImage`` to the preview buffer (no signals)."""
+        """Push a downscaled ``QImage`` into the preview buffer and request
+        a GUI-thread emit (plus the coalesce timer as backup)."""
         preview_bgr = self._maybe_downscale_for_preview(frame_bgr)
         qimg = self._bgr_to_qimage(preview_bgr)
         if qimg is not None:
             with self._preview_lock:
                 self._preview_image = qimg
                 self._preview_serial += 1
+            self._preview_flush_requested.emit()
 
     def _publish_frame(self, frame_bgr, detections: List[Detection]) -> None:
         self._refresh_preview_only(frame_bgr)

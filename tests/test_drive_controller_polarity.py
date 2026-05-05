@@ -386,7 +386,7 @@ def test_drive_from_stop_kicks_then_cruises_low(
     isolate_polarity_dir: Path,
 ) -> None:
     """First motion after idle uses drive_continuous at the kick duty,
-    then set_wheels at FROM_STOP_CRUISE_PCT."""
+    then set_wheels at kick (+ start bias) and cruise (+ run bias)."""
     from sirena_ui.workers import drive_controller as dc
 
     nav = FakeNav()
@@ -402,7 +402,7 @@ def test_drive_from_stop_kicks_then_cruises_low(
         def saw_kick_and_cruise() -> bool:
             dcs = [c for c in nav.calls if c[0] == "drive_continuous"]
             sws = [c for c in nav.calls if c[0] == "set_wheels"]
-            return len(dcs) >= 1 and len(sws) >= 1
+            return len(dcs) >= 1 and len(sws) >= 2
 
         assert _wait_for(saw_kick_and_cruise)
 
@@ -411,19 +411,33 @@ def test_drive_from_stop_kicks_then_cruises_low(
         sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
         assert len(dc_calls) >= 1
         assert dc_calls[-1][1]["speed_percent"] == dc.FROM_STOP_KICK_PCT
-        assert len(sw_calls) >= 1
+        assert len(sw_calls) >= 2
+        kick_sw = sw_calls[0][1]
+        assert kick_sw["left_speed"] == dc.FROM_STOP_KICK_PCT
+        assert (
+            kick_sw["right_speed"]
+            == dc.FROM_STOP_KICK_PCT + dc.RIGHT_WHEEL_EXTRA_START_PP
+        )
         last_sw = sw_calls[-1][1]
         assert last_sw["left_speed"] == dc.FROM_STOP_CRUISE_PCT
-        assert last_sw["right_speed"] == dc.FROM_STOP_CRUISE_PCT
+        assert (
+            last_sw["right_speed"]
+            == dc.FROM_STOP_CRUISE_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
+        )
 
-        # Second drive without stop: single drive_continuous at slider speed
+        # Second drive without stop: set_wheels at fixed manual speed (+ run bias)
         nav.calls.clear()
         ctrl.drive("forward")
         assert _wait_for(lambda: len(nav.calls) >= 1)
         dc_calls2 = [c for c in nav.calls if c[0] == "drive_continuous"]
         sw_calls2 = [c for c in nav.calls if c[0] == "set_wheels"]
-        assert len(dc_calls2) >= 1
-        assert dc_calls2[-1][1]["speed_percent"] == 12
-        assert sw_calls2 == []
+        assert dc_calls2 == []
+        assert len(sw_calls2) >= 1
+        last2 = sw_calls2[-1][1]
+        assert last2["left_speed"] == dc.FIXED_MANUAL_DRIVE_SPEED_PCT
+        assert (
+            last2["right_speed"]
+            == dc.FIXED_MANUAL_DRIVE_SPEED_PCT + dc.RIGHT_WHEEL_EXTRA_RUN_PP
+        )
     finally:
         ctrl.shutdown()
