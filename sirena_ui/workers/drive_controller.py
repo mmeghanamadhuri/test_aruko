@@ -92,6 +92,11 @@ _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
 # Bump these together (and re-test on a wheels-up bench) when the
 # mechanical build can handle more. They're module-level so screens /
 # tests can import the same constants instead of re-deriving them.
+#
+# Note: `NavigationManager` also applies `NINA_NAV_START_KICK_PCT` from
+# settings (default aligned with MAX_SPEED_PCT). If that env is left at
+# an old high value (e.g. 35), every start-from-rest will pulse that
+# duty and low GUI speeds will feel ignored.
 MIN_SPEED_PCT = 8
 MAX_SPEED_PCT = 14
 

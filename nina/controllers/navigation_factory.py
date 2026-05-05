@@ -17,7 +17,7 @@ Env var summary (read at settings-load time, see `nina.config.settings`):
     NINA_NAV_REMOTE_PORT       # default /dev/ttyUSB0
     NINA_NAV_REMOTE_BAUD       # default 115200
     NINA_NAV_REMOTE_TIMEOUT_SEC# default 0.4
-    NINA_NAV_START_KICK_PCT    # default 35; 0 = no breakaway pulse
+    NINA_NAV_START_KICK_PCT    # default 14; 0 = no breakaway pulse (was 35 — dominated low cruise)
     NINA_NAV_START_KICK_SEC    # default 1.0 (max); clamped to 1.0; 0 = off
     NINA_NAV_DIR_SETTLE_SEC    # default 0.03; delay after DIR+EL before PWM; 0 = off
     NINA_NAV_PWM_REASSERT_SEC  # default 0.02; 2nd PWM write from rest; 0 = off

@@ -189,6 +189,10 @@ reboot or kiosk-service restart. The legacy `NINA_NAV_INVERT_LEFT=1` /
 default** when no persisted file exists; once the operator clicks a
 toggle, the persisted value wins. Default cruise speed is
 `NINA_NAV_SPEED=8` (GUI manual floor; override for faster cruises).
+The BLDC **breakaway kick** is `NINA_NAV_START_KICK_PCT` (default **14**,
+aligned with the top of the Drive slider). If a kiosk drop-in still sets
+this to **35**, motion from a stop will briefly run at 35% PWM and feel
+much faster than the slider.
 
 #### Calibrating wheel polarity (1-minute procedure)
 

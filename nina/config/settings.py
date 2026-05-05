@@ -41,7 +41,9 @@ class NavigationSettings:
     `start_kick_percent` / `start_kick_sec` apply when both wheels were
     at PWM 0 and a new command requests motion: each non-zero side
     briefly runs at at least the kick duty to overcome static friction,
-    then drops to the commanded speed. Set either to 0 to disable
+    then drops to the commanded speed. Keep kick near the GUI top speed
+    (`MAX_SPEED_PCT`); a much higher kick (historically 35%) makes low
+    slider/autonomy speeds feel broken. Set either to 0 to disable
     (NINA_NAV_START_KICK_PCT / NINA_NAV_START_KICK_SEC). SEC is clamped
     to at most NAV_START_KICK_SEC_MAX (default when unset = that max).
 
@@ -58,7 +60,7 @@ class NavigationSettings:
     turn_duration_sec: float
     invert_left_dir: bool
     invert_right_dir: bool
-    start_kick_percent: int = 35
+    start_kick_percent: int = 14
     start_kick_sec: float = NAV_START_KICK_SEC_MAX
     # Local + remote: delay after DIR+EL before torque (local GPIO). Remote
     # uses the same value as a sleep between protocol steps when mirroring.
@@ -215,7 +217,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # JYQD ZF level for "forward" depends on motor wiring polarity).
         invert_left_dir=_env_bool("NINA_NAV_INVERT_LEFT", False),
         invert_right_dir=_env_bool("NINA_NAV_INVERT_RIGHT", False),
-        start_kick_percent=int(os.environ.get("NINA_NAV_START_KICK_PCT", "35")),
+        start_kick_percent=int(os.environ.get("NINA_NAV_START_KICK_PCT", "14")),
         start_kick_sec=min(
             NAV_START_KICK_SEC_MAX,
             max(

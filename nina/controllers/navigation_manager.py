@@ -209,7 +209,7 @@ class NavigationConfig:
     # `start_kick_sec` to overcome static friction / JYQD cogging, then apply the command.
     # Set either kick field to 0 to disable (see NINA_NAV_START_KICK_*). SEC default/cap
     # matches `nina.config.settings.NAV_START_KICK_SEC_MAX` when using `load_settings`.
-    start_kick_percent: int = 35
+    start_kick_percent: int = 14
     start_kick_sec: float = 1.0
     dir_pwm_gap_sec: float = _DEFAULT_DIR_PWM_GAP_SEC
     pwm_reassert_sec: float = _DEFAULT_PWM_REASSERT_SEC
