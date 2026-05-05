@@ -304,6 +304,9 @@ class MapScreen(QWidget):
         self._pose_label.setText(
             f"x: {x:>7.1f} mm\ny: {y:>7.1f} mm\n\u03b8: {theta:>6.1f}\u00b0"
         )
+        # Keep the map triangle in lockstep with pose (snapshot handler
+        # also sets this; pose_changed fires every scan and is cheap).
+        self._grid.set_pose(float(x), float(y), float(theta))
 
     def _on_slam_status(self, status: dict) -> None:
         connected = bool(status.get("lidar_connected"))

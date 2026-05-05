@@ -356,6 +356,7 @@ class PerceptionScreen(QWidget):
             log.debug("PerceptionScreen: VisionWorker signals unavailable")
         try:
             self._slam.snapshot_changed.connect(self._on_slam_snapshot_meta)
+            self._slam.pose_changed.connect(self._on_slam_pose_only)
             self._slam.status_changed.connect(self._on_slam_status)
         except Exception:
             log.debug("PerceptionScreen: SlamWorker signals unavailable")
@@ -480,6 +481,15 @@ class PerceptionScreen(QWidget):
             age = max(0.0, time.monotonic() - float(when))
             self._lidar_pill.setText(f"updated {age:.1f}s ago")
             self._lidar_pill.set_kind(Pill.KIND_OK)
+
+    def _on_slam_pose_only(self, pose: dict) -> None:
+        if self._grid is None:
+            return
+        self._grid.set_pose(
+            float(pose.get("x_mm", 0.0)),
+            float(pose.get("y_mm", 0.0)),
+            float(pose.get("theta_deg", 0.0)),
+        )
 
     def _on_slam_status(self, status: dict) -> None:
         connected = bool(status.get("lidar_connected"))
