@@ -106,7 +106,12 @@ Wants=network-online.target
 Type=simple
 # Must exist at systemd parse time; PYTHONPATH + ExecStart pin the repo (avoid /opt vs home mismatches).
 WorkingDirectory=/
-# Match Sirena UI kiosk BLDC UART (see nina/systemd/nina-link-navigation.env.example).
+# Stock Sirena BLDC defaults (same as desktop kiosk). /etc/nina-link/navigation.env overrides.
+Environment=NINA_NAV_MODE=remote
+Environment=NINA_NAV_REMOTE_PORT=/dev/ttyTHS1
+Environment=NINA_NAV_REMOTE_BAUD=115200
+Environment=NINA_NAV_INVERT_LEFT=1
+Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1

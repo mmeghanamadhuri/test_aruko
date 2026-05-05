@@ -359,10 +359,11 @@ fun SirenaDriveScreen(
                     ),
             ) {
                 Text(
-                    "BLDC path failed under nina-link. Match Sirena UI: copy " +
-                        "nina/systemd/nina-link-navigation.env.example to /etc/nina-link/navigation.env " +
-                        "(NINA_NAV_REMOTE_PORT, NINA_NAV_MODE=remote), restart nina-link, and ensure " +
-                        "the desktop Drive screen is not holding the same UART.",
+                    "BLDC not reachable from nina-link (Pi UART bridge). Only one process may use " +
+                        "that serial port — close the desktop Sirena Drive screen if it is open. " +
+                        "Stock robots use remote mode on /dev/ttyTHS1 (defaults are in nina-link.service); " +
+                        "for another device, set NINA_NAV_REMOTE_PORT in /etc/nina-link/navigation.env " +
+                        "and restart nina-link.",
                     Modifier.padding(12.dp),
                     color = MaterialTheme.colorScheme.onTertiaryContainer,
                     style = MaterialTheme.typography.bodySmall,

@@ -7,8 +7,13 @@ Wants=network-online.target
 Type=simple
 # Always use a path that exists; repo location is defined by PYTHONPATH + ExecStart below.
 WorkingDirectory=/
-# Optional: BLDC env matching Sirena UI (NINA_NAV_*). Copy nina-link-navigation.env.example
-# to /etc/nina-link/navigation.env on the Jetson. Leading "-" = ignore if missing.
+# Stock Sirena BLDC: same NINA_NAV_* defaults as desktop/nina-ui-kiosk.service (Pi bridge on UART).
+# Optional /etc/nina-link/navigation.env overrides these (copy nina-link-navigation.env.example).
+Environment=NINA_NAV_MODE=remote
+Environment=NINA_NAV_REMOTE_PORT=/dev/ttyTHS1
+Environment=NINA_NAV_REMOTE_BAUD=115200
+Environment=NINA_NAV_INVERT_LEFT=1
+Environment=NINA_NAV_INVERT_RIGHT=0
 EnvironmentFile=-/etc/nina-link/navigation.env
 Environment=PYTHONPATH=/opt/nvidia-jetson-platform
 Environment=NINA_LINK_BOOT_AP=1
