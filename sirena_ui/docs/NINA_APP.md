@@ -719,6 +719,13 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 export NINA_VISION_CAMERA=0
 export NINA_VISION_TRT=1                       # 0 = force PyTorch CPU
 export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
+# Preview latency: GUI only shows the latest frame at ~30 Hz; inference still full rate.
+# Smaller max width = less scaling work on the UI thread (default 640).
+export NINA_VISION_PREVIEW_MAX_W=640
+export NINA_VISION_PREVIEW_MS=33
+# Person follow: seconds of in-place spin to search for a lost face (time ~= ~360°).
+export NINA_FOLLOW_SEARCH_SPIN_SEC=9
+export NINA_FOLLOW_SEARCH_PCT=10
 
 # Lidar
 export NINA_LIDAR_PORT=/dev/ttyUSB0

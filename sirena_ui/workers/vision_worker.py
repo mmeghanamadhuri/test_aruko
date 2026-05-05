@@ -27,14 +27,15 @@ Public surface (used by `VisionScreen`):
     snapshot() -> Path | None
     status() -> VisionStatus
 
-Falls back gracefully when OpenCV / Ultralytics / a camera aren't
-available - the screen reads `VisionStatus.message` and renders a
-warn pill instead of pretending the system is healthy.
+GUI previews use a downscaled frame (``NINA_VISION_PREVIEW_MAX_W``) and
+emit at most once per ``NINA_VISION_PREVIEW_MS`` so the Qt thread is not
+flooded with stale ``frame_ready`` events (keeps latency low).
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import threading
 import time
@@ -42,7 +43,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable, List, Optional, Tuple
 
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtCore import QObject, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QImage
 
 from sirena_ui.workers.vision_pipeline import EnrollmentResult, VisionPipeline
@@ -57,6 +58,11 @@ log = logging.getLogger("sirena_ui.vision.worker")
 # but capping the loop here keeps the GUI thread from being flooded
 # on faster hosts.
 _TARGET_FPS = 20.0
+
+# Preview path: downscale + coalesce emits so the GUI is not handed a
+# QueuedConnection backlog of full-size QImages (major latency source).
+_PREVIEW_MAX_W = int(os.environ.get("NINA_VISION_PREVIEW_MAX_W", "640"))
+_PREVIEW_TIMER_MS = max(16, int(os.environ.get("NINA_VISION_PREVIEW_MS", "33")))
 
 
 class VisionWorker(QObject):
@@ -112,6 +118,14 @@ class VisionWorker(QObject):
         self._refcount = 0
         self._refcount_lock = threading.Lock()
 
+        self._preview_lock = threading.Lock()
+        self._preview_image: Optional[QImage] = None
+        self._preview_serial = 0
+        self._preview_last_sent = -1
+        self._preview_timer = QTimer(self)
+        self._preview_timer.setTimerType(Qt.CoarseTimer)
+        self._preview_timer.timeout.connect(self._emit_preview_if_new)
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -124,12 +138,17 @@ class VisionWorker(QObject):
             if self._thread is not None and self._thread.is_alive():
                 return
             self._stop_evt.clear()
+            with self._preview_lock:
+                self._preview_image = None
+                self._preview_serial = 0
+            self._preview_last_sent = -1
             self._thread = threading.Thread(
                 target=self._run,
                 name="VisionWorker",
                 daemon=True,
             )
             self._thread.start()
+        self._preview_timer.start(_PREVIEW_TIMER_MS)
         # First job: open the camera (may surface "OpenCV missing" or
         # "no /dev/video0" via status_changed without raising).
         self._enqueue(self._cmd_open_camera)
@@ -147,6 +166,11 @@ class VisionWorker(QObject):
             pass
         if thread is not None:
             thread.join(timeout=2.0)
+        self._preview_timer.stop()
+        with self._preview_lock:
+            self._preview_image = None
+            self._preview_serial = 0
+        self._preview_last_sent = -1
         self._pipeline.close()
         self._emit_status(self._pipeline.status())
 
@@ -379,10 +403,22 @@ class VisionWorker(QObject):
     # Helpers
     # ------------------------------------------------------------------
 
+    def _emit_preview_if_new(self) -> None:
+        with self._preview_lock:
+            serial = self._preview_serial
+            img = self._preview_image
+        if serial == self._preview_last_sent or img is None:
+            return
+        self._preview_last_sent = serial
+        self.frame_ready.emit(img)
+
     def _publish_frame(self, frame_bgr, detections: List[Detection]) -> None:
-        qimg = self._bgr_to_qimage(frame_bgr)
+        preview_bgr = self._maybe_downscale_for_preview(frame_bgr)
+        qimg = self._bgr_to_qimage(preview_bgr)
         if qimg is not None:
-            self.frame_ready.emit(qimg)
+            with self._preview_lock:
+                self._preview_image = qimg
+                self._preview_serial += 1
         # Emit a stable Python list so Qt's queued connection deep-copies
         # via reference (not memoryview pointing into a dying ndarray).
         self.detections_changed.emit(list(detections))
@@ -398,6 +434,23 @@ class VisionWorker(QObject):
                 recognised.append(det.identity)
         if recognised:
             self.faces_recognized.emit(recognised)
+
+    @staticmethod
+    def _maybe_downscale_for_preview(frame_bgr):
+        if _PREVIEW_MAX_W <= 0:
+            return frame_bgr
+        try:
+            import cv2
+
+            h, w = frame_bgr.shape[:2]
+        except Exception:
+            return frame_bgr
+        if w <= _PREVIEW_MAX_W:
+            return frame_bgr
+        nh = max(1, int(round(h * (_PREVIEW_MAX_W / float(w)))))
+        return cv2.resize(
+            frame_bgr, (_PREVIEW_MAX_W, nh), interpolation=cv2.INTER_AREA
+        )
 
     @staticmethod
     def _bgr_to_qimage(frame_bgr) -> Optional[QImage]:

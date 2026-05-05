@@ -459,10 +459,11 @@ class VisionScreen(QWidget):
         self._announcer.error.connect(self._on_announcer_error)
 
     def _on_detections_changed(self, detections: List[Detection]) -> None:
+        if self._follow.is_active():
+            self._follow.ingest_detections(detections)
         if not self.isVisible():
             return
         self._render_detections(detections)
-        self._follow.ingest_detections(detections)
 
     def _on_face_enable_failed(self, reason: str) -> None:
         from PyQt5.QtWidgets import QMessageBox

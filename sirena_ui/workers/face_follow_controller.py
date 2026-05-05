@@ -4,11 +4,16 @@ Uses `DriveController.drive_wheels` at ~15 Hz (same family as autonomy) so
 motion stays smooth. Requires face detection; recognition matches a
 named enrollee when ``target_name`` is set, otherwise tracks the largest
 face box.
+
+When the target leaves the frame, wheels stop immediately, then the bot
+spins slowly in place for up to one full rotation (time-calibrated) to
+reacquire; if still lost, follow stops.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
@@ -19,10 +24,13 @@ from sirena_ui.workers.vision_types import KIND_FACE, Detection
 log = logging.getLogger("sirena_ui.face_follow")
 
 # Follow speeds — `drive_wheels` passes these through to PWM (can be < MIN_SPEED_PCT).
-_SPEED_APPROACH_PCT = 15
+_SPEED_APPROACH_PCT = 12
 _SPEED_CRUISE_PCT = 10
 _SPEED_BACK_PCT = 10
 _SPEED_NUDGE_PCT = 10
+
+_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "10"))
+_SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "9.0"))
 
 
 def _bbox_area(det: Detection) -> int:
@@ -49,19 +57,17 @@ class FaceFollowController(QObject):
         self._target_name: Optional[str] = None
         self._ref_area: Optional[float] = None
         self._latest: List[Detection] = []
-        self._lost_ticks = 0
         self._frame_wh: Tuple[int, int] = (640, 480)
 
+        self._searching = False
+        self._search_elapsed_s = 0.0
+
         # ratio = face_area / reference_area (ref = bbox area at lock).
-        # <1 face shrunk vs lock = target farther -> forward.
-        # >_area_close_stop = close hold + turn nudges only.
-        # >_area_close_back = clearly too close -> reverse.
         self._area_far = 0.92
         self._area_blend_far = 0.82
         self._area_close_stop = 1.06
         self._area_close_back = 1.25
         self._ang_dead = 0.09
-        self._lost_max_ticks = 14
 
     def set_frame_size(self, w: int, h: int) -> None:
         self._frame_wh = (max(1, int(w)), max(1, int(h)))
@@ -79,7 +85,8 @@ class FaceFollowController(QObject):
             return False
         self._target_name = (target_name or "").strip() or None
         self._ref_area = None
-        self._lost_ticks = 0
+        self._searching = False
+        self._search_elapsed_s = 0.0
         self._active = True
         self._nudge_pulse_timer.stop()
         self._timer.start()
@@ -93,6 +100,8 @@ class FaceFollowController(QObject):
 
     def stop(self) -> None:
         self._active = False
+        self._searching = False
+        self._search_elapsed_s = 0.0
         self._timer.stop()
         self._nudge_pulse_timer.stop()
         self._target_name = None
@@ -128,6 +137,7 @@ class FaceFollowController(QObject):
             except Exception:
                 pass
             self._active = False
+            self._searching = False
             self._timer.stop()
             self._nudge_pulse_timer.stop()
             self.status_message.emit("Follow: stopped (brake on)")
@@ -135,25 +145,52 @@ class FaceFollowController(QObject):
 
         faces = [d for d in self._latest if d.kind == KIND_FACE]
         chosen = self._pick_face(faces)
-        if chosen is None:
-            self._nudge_pulse_timer.stop()
-            self._lost_ticks += 1
-            # Drain + stop immediately so the ~300ms drive heartbeat cannot
-            # keep replaying the last SET while the face is out of frame.
-            try:
-                self._drive.stop(drain=True)
-            except Exception:
-                pass
-            if self._lost_ticks >= self._lost_max_ticks:
-                self._active = False
-                self._timer.stop()
-                self._nudge_pulse_timer.stop()
-                self.status_message.emit(
-                    "Follow: lost target — tap Start follow to retry"
-                )
+        if chosen is not None:
+            self._handle_track(chosen)
             return
 
-        self._lost_ticks = 0
+        self._handle_lost()
+
+    def _handle_lost(self) -> None:
+        self._nudge_pulse_timer.stop()
+        try:
+            self._drive.stop(drain=True)
+        except Exception:
+            pass
+
+        if not self._searching:
+            self._searching = True
+            self._search_elapsed_s = 0.0
+            self._ref_area = None
+            self.status_message.emit("Follow: lost — scanning 360°…")
+            return
+
+        dt_s = self._timer.interval() / 1000.0
+        self._search_elapsed_s += dt_s
+        if self._search_elapsed_s >= _SEARCH_SPIN_SEC:
+            self._active = False
+            self._searching = False
+            self._timer.stop()
+            self.status_message.emit(
+                "Follow: lost after full scan — tap Start follow to retry"
+            )
+            return
+
+        sp = max(1, min(100, _SEARCH_SPEED_PCT))
+        try:
+            # Consistent in-place turn (same handedness as _nudge_turn err_x > 0).
+            self._drive.drive_wheels("forward", sp, "back", sp)
+        except Exception as exc:
+            log.debug("search spin: %s", exc)
+
+    def _handle_track(self, chosen: Detection) -> None:
+        if self._searching:
+            self._searching = False
+            self._search_elapsed_s = 0.0
+            self._ref_area = None
+            self.status_message.emit("Follow: target reacquired")
+
+        self._nudge_pulse_timer.stop()
         x1, y1, x2, y2 = chosen.bbox
         fw, _fh = self._frame_wh
         cx = 0.5 * (x1 + x2)
@@ -171,9 +208,7 @@ class FaceFollowController(QObject):
         min_sp = _SPEED_CRUISE_PCT
         max_sp = _SPEED_APPROACH_PCT
 
-        # Distance policy: too far -> forward; cosy band -> hold; closer -> hold + nudge; very close -> back
         if ratio > self._area_close_back:
-            self._nudge_pulse_timer.stop()
             try:
                 self._drive.drive_wheels(
                     "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
@@ -200,10 +235,10 @@ class FaceFollowController(QObject):
                     1e-6, self._area_far - self._area_blend_far
                 )
                 t = max(0.0, min(1.0, t))
-                cruise_sp = _SPEED_APPROACH_PCT + (_SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT) * t
+                cruise_sp = _SPEED_APPROACH_PCT + (
+                    _SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT
+                ) * t
             cruise = int(round(cruise_sp))
-            self._nudge_pulse_timer.stop()
-            # Stronger yaw mix so the bot tracks lateral target motion while approaching.
             yaw = err_x * 14.0
             ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
             rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
@@ -213,9 +248,7 @@ class FaceFollowController(QObject):
                 log.debug("drive_wheels forward: %s", exc)
             return
 
-        # Size OK: centre only (close to reference size — hold still)
         if abs(err_x) <= self._ang_dead:
-            self._nudge_pulse_timer.stop()
             try:
                 self._drive.stop(drain=True)
             except Exception:
