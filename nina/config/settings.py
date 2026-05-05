@@ -207,9 +207,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
     navigation = NavigationSettings(
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
-        # 15% matches the Sirena RPi reference build's `forward_forever`
-        # default. Bump via NINA_NAV_SPEED for harder cruises.
-        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "15")),
+        # 12% matches the GUI manual floor (MIN_SPEED_PCT). Bump via
+        # NINA_NAV_SPEED for harder cruises.
+        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "12")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         # Flip if a wheel spins opposite of what the GUI expects (the
         # JYQD ZF level for "forward" depends on motor wiring polarity).
@@ -252,17 +252,17 @@ def load_settings(repo_root: Path) -> NinaSettings:
 
     autonomy = AutonomySettings(
         # 8 Hz (was 5 Hz) so the pilot reacts every 125 ms instead of
-        # every 200 ms. At 15% PWM (~0.3-0.5 m/s) the bot still
-        # coasts a few cm during one tick, but the extra ticks per
-        # second cut the worst-case "saw obstacle / decided to turn /
-        # actually started turning" latency by ~75 ms.
+        # every 200 ms. At low cruise PWM the bot still coasts a few
+        # cm during one tick, but the extra ticks per second cut the
+        # worst-case "saw obstacle / decided to turn / actually started
+        # turning" latency by ~75 ms.
         tick_hz=float(os.environ.get("NINA_AUTO_TICK_HZ", "8")),
-        # 15% matches the GUI manual-mode floor (MIN_SPEED_PCT) so an
+        # Matches the GUI manual-mode floor (MIN_SPEED_PCT) so an
         # operator dropping out of autonomy doesn't see the wheels
         # change pace mid-handoff. Bump via NINA_AUTO_CRUISE_PCT for
         # tests that want a faster wander.
-        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "15")),
-        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "16")),
+        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "12")),
+        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "13")),
         # 1200 mm (was 700 mm) is the new commit-to-forward
         # threshold. The previous 700 mm gave the BLDCs no room to
         # decelerate before reaching the obstacle: at ~0.4 m/s with
@@ -370,10 +370,10 @@ def load_settings(repo_root: Path) -> NinaSettings:
         min_passage_width_mm=int(
             os.environ.get("NINA_GOTO_MIN_PASSAGE_MM", "610")
         ),
-        # Match the wander pilot's 15 % cruise so a goto handoff
-        # doesn't change the bot's perceived "speed" mid-run.
-        cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "15")),
-        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "16")),
+        # Match the wander pilot's cruise so a goto handoff doesn't
+        # change the bot's perceived "speed" mid-run.
+        cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "12")),
+        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "13")),
         # 18 deg deadband: inside this we drive forward (still with
         # a small heading correction); outside, we turn in place.
         # Wider than the wander pilot's implicit binary so we don't

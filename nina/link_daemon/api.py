@@ -454,8 +454,8 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "default_duration_ms": cfg.robot_drive_default_duration_ms,
             "default_speed_percent": cfg.robot_drive_speed_percent,
             # Match sirena_ui.workers.drive_controller MIN_SPEED_PCT / MAX_SPEED_PCT.
-            "drive_speed_min_percent": 15,
-            "drive_speed_max_percent": 25,
+            "drive_speed_min_percent": 12,
+            "drive_speed_max_percent": 20,
             "drive_status_endpoint": "/v1/robot/drive/status",
             "drive_invert_endpoint": "/v1/robot/drive/invert",
             "actions_endpoint": "/v1/actions",

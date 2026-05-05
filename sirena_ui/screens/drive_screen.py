@@ -293,7 +293,7 @@ class DriveScreen(QWidget):
 
         # Speed row - inline label + slider + pill. The +/- buttons that
         # used to flank the slider were removed: with the slider clamped
-        # to a 10-percentage-point window (MIN_SPEED_PCT..MAX_SPEED_PCT)
+        # to the narrow MIN_SPEED_PCT..MAX_SPEED_PCT band they were
         # they were redundant and just stole touch targets from the
         # D-pad above. The slider's own handle is now the single way to
         # change speed.

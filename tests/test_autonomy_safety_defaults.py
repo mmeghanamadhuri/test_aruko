@@ -47,12 +47,10 @@ def clean_env(monkeypatch: pytest.MonkeyPatch):
 
 def test_cruise_speed_matches_manual_minimum(clean_env) -> None:
     """Autonomy cruise must match the GUI's manual-mode minimum so
-    the wheels don't change pace when the operator hands off control.
-    The manual floor is the BLDC minimum spin speed (anything lower
-    just stalls on the JYQDs)."""
+    the wheels don't change pace when the operator hands off control."""
     s = load_settings(REPO_ROOT)
-    assert s.autonomy.cruise_speed_pct == 15, (
-        "autonomy cruise drifted from 15%; either the manual floor "
+    assert s.autonomy.cruise_speed_pct == 12, (
+        "autonomy cruise drifted from 12%; either the manual floor "
         "moved (update both) or someone bumped this for testing and "
         "forgot to revert"
     )
@@ -60,7 +58,7 @@ def test_cruise_speed_matches_manual_minimum(clean_env) -> None:
 
 def test_forward_clearance_leaves_room_to_brake(clean_env) -> None:
     """Forward-commit clearance must leave the BLDCs room to actually
-    stop. At 15% PWM (~0.4 m/s) with ~125 ms tick + ~200 ms wheel
+    stop. At typical low cruise PWM with ~125 ms tick + ~200 ms wheel
     coast, anything below ~1 m brings the bot inside arm's length of
     a person before it stops. 1200 mm is the empirical floor that
     keeps stops in personal-space rather than chest-bumping."""
@@ -112,7 +110,7 @@ def test_fwd_blocked_backup_sec_default(clean_env) -> None:
 
 
 def test_tick_rate_fast_enough_for_walking_speed(clean_env) -> None:
-    """At 15% PWM the bot moves a few cm per tick. <= 5 Hz (200 ms /
+    """At low cruise PWM the bot moves a few cm per tick. <= 5 Hz (200 ms /
     tick) lets the bot coast multiple cm between decisions, which
     showed up in the field as 'didn't stop in time'. 8 Hz cuts the
     coast distance roughly in half."""
