@@ -429,7 +429,7 @@ class GotoPilot:
             self._path_index = 0
             return False
 
-        emin = self._auto.emergency_stop_mm
+        emin = self._goto.emergency_stop_mm
         forward_mm = obstacle.forward_mm
         if forward_mm is not None and forward_mm < emin:
             with self._lock:

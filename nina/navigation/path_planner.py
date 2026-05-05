@@ -462,11 +462,10 @@ def plan_path(
 
     sx, sy = world_to_pixel(start_mm[0], start_mm[1], width, height, scale_mm_per_px)
     gx, gy = world_to_pixel(goal_mm[0], goal_mm[1], width, height, scale_mm_per_px)
-
-    if not (0 <= sx < width and 0 <= sy < height):
-        return PlanResult(False, reason="out_of_bounds")
-    if not (0 <= gx < width and 0 <= gy < height):
-        return PlanResult(False, reason="out_of_bounds")
+    sx = max(0, min(width - 1, sx))
+    sy = max(0, min(height - 1, sy))
+    gx = max(0, min(width - 1, gx))
+    gy = max(0, min(height - 1, gy))
 
     # If the bot itself is "in a wall" after dilation, the planner
     # can't find any moves. This is real on a freshly-bumped pose

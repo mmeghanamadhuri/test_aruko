@@ -142,6 +142,7 @@ class AutonomyController(QObject):
                     tick_hz=8.0,
                     unknown_pixel_cost=1.5,
                     forward_clear_mm=700,
+                    emergency_stop_mm=580,
                 )
         self._goto_settings = goto_settings
         self._ultras = ultrasonics or HCSR04Array()

@@ -159,6 +159,11 @@ class GotoSettings:
     while `min_passage_width_mm` is "this is the tightest gap I'm
     willing to send the bot through" (safety policy). Default
     passage width is 2 ft / 610 mm.
+
+    Emergency stop and forward-clear for **goto** are separate from
+    wander (`NINA_AUTO_ESTOP_MM` / `NINA_AUTO_FWD_CLEAR_MM`): wander
+    targets open-space roaming; goto must tolerate closer forward
+    lidar returns along a planned path indoors.
     """
     arrival_radius_mm: int                 # within this -> 'arrived'
     footprint_radius_mm: int               # bot body half-width (geometry)
@@ -172,10 +177,8 @@ class GotoSettings:
     stuck_motion_mm: int                   # if pose moved < this in window -> 'stuck'
     tick_hz: float                         # control loop rate
     unknown_pixel_cost: float              # A* extra cost per unknown grey pixel (>=1.0)
-    forward_clear_mm: int
-    # Prefer >= ``AutonomySettings.emergency_stop_mm`` so this gate can
-    # take effect below the wander pilot's 1200 mm bar; if set lower,
-    # emergency backoff still runs first for readings under estop_mm.
+    forward_clear_mm: int                  # min forward clearance (mm) to command forward
+    emergency_stop_mm: int                 # goto-only: reverse if forward sector < this (mm)
 
 
 @dataclass(frozen=True)
@@ -396,6 +399,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # but still happily route into unmapped rooms when needed.
         unknown_pixel_cost=float(os.environ.get("NINA_GOTO_UNKNOWN_COST", "1.5")),
         forward_clear_mm=int(os.environ.get("NINA_GOTO_FWD_CLEAR_MM", "700")),
+        # Below wander's NINA_AUTO_ESTOP_MM (850): indoor goto routinely
+        # has real lidar returns in the 0.65--0.85 m band in the forward cone.
+        emergency_stop_mm=int(os.environ.get("NINA_GOTO_ESTOP_MM", "580")),
     )
 
     return NinaSettings(

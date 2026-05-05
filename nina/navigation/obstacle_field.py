@@ -246,10 +246,11 @@ def fuse(
         sources["ir"] = f"{ir.position}: {ir.distance_mm} mm" \
             if ir.distance_mm is not None else f"{ir.position}: no echo"
         # GP2Y0E02B always sees the floor when stationary; a sudden
-        # drop-out (no echo) or a reading shorter than the configured
-        # floor distance both indicate a cliff.
-        if ir.distance_mm is None or ir.distance_mm < cliff_min_mm:
-            cliff_alarm = True
+        # short distance both indicate a cliff. A missing reading alone
+        # is too common on miswired bring-up and would block goto forever.
+        cliff_alarm = (
+            ir.distance_mm is not None and ir.distance_mm < cliff_min_mm
+        )
 
     field = ObstacleField(
         forward_mm=_min_or_none(forward_candidates),
