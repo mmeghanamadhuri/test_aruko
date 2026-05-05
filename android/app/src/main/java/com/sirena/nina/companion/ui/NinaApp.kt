@@ -88,7 +88,7 @@ fun NinaApp(vm: CompanionViewModel) {
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
+                    Text(   
                         "Sirena UI",
                         fontWeight = FontWeight.SemiBold,
                     )

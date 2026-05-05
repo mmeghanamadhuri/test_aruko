@@ -458,10 +458,17 @@ class LinkClient {
                 val body = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
                     val hint = httpErrorDetail(body, resp.code, resp.message)
-                    NinaLog.warn(
-                        "LinkClient",
-                        "${req.method} ${req.url} -> ${resp.code} $hint",
-                    )
+                    val path = req.url.encodedPath
+                    val quietSlamSnapshot =
+                        resp.code == 404 &&
+                            req.method == "GET" &&
+                            path.endsWith("/v1/slam/snapshot")
+                    if (!quietSlamSnapshot) {
+                        NinaLog.warn(
+                            "LinkClient",
+                            "${req.method} ${req.url} -> ${resp.code} $hint",
+                        )
+                    }
                     throw LinkApiException(resp.code, hint)
                 }
                 return if (body.isBlank()) JSONObject() else JSONObject(body)

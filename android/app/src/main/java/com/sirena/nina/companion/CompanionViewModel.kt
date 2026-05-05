@@ -676,6 +676,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
             client.visionOptions(url, bearer, face, objects, objectConfidence)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             NinaLog.warn("vision_options", e.message ?: "failed")
             null

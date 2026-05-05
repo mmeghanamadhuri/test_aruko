@@ -619,9 +619,17 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             )
         try:
             return actions_bridge.play_named_action(body.action)
-        except Exception as exc:
-            log.warning("POST /v1/actions/play init failed: %s", exc, exc_info=True)
+        except HTTPException:
+            raise
+        except (ModuleNotFoundError, RuntimeError, PermissionError, OSError) as exc:
+            log.warning("POST /v1/actions/play bus/hardware: %s", exc, exc_info=True)
             raise _bus_init_http_exception(exc) from exc
+        except Exception as exc:
+            log.warning("POST /v1/actions/play failed: %s", exc, exc_info=True)
+            raise HTTPException(
+                status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=str(exc).strip() or type(exc).__name__,
+            ) from exc
 
     @app.get("/v1/actions/recordings")
     def list_recordings_http() -> Dict[str, Any]:
@@ -1107,7 +1115,15 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Autonomy bridge disabled — set NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1",
             )
-        return autonomy_bridge.set_enabled(body.enabled)
+        try:
+            return autonomy_bridge.set_enabled(body.enabled)
+        except Exception as exc:
+            log.exception("POST /v1/autonomy/enabled")
+            return {
+                "ok": False,
+                "enabled": False,
+                "error": str(exc).strip() or type(exc).__name__,
+            }
 
     @app.post("/v1/autonomy/goal")
     def autonomy_goal_set_http(
@@ -1131,7 +1147,14 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                     "NINA_LINK_ENABLE_AUTONOMY_BRIDGE=1"
                 ),
             )
-        return autonomy_bridge.set_goal(body.x_mm, body.y_mm)
+        try:
+            return autonomy_bridge.set_goal(body.x_mm, body.y_mm)
+        except Exception as exc:
+            log.exception("POST /v1/autonomy/goal")
+            return {
+                "ok": False,
+                "message": str(exc).strip() or type(exc).__name__,
+            }
 
     @app.delete("/v1/autonomy/goal")
     def autonomy_goal_clear_http(
@@ -1149,7 +1172,14 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Autonomy bridge disabled",
             )
-        return autonomy_bridge.clear_goal()
+        try:
+            return autonomy_bridge.clear_goal()
+        except Exception as exc:
+            log.exception("DELETE /v1/autonomy/goal")
+            return {
+                "ok": False,
+                "message": str(exc).strip() or type(exc).__name__,
+            }
 
     @app.post("/v1/session/claim")
     def session_claim_http(
@@ -1158,12 +1188,16 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
     ) -> Dict[str, Any]:
         auth_mutate(authorization, request)
         if not cfg.session_script:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=(
-                    "Configure NINA_LINK_SESSION_SCRIPT on the Jetson (executable helper)."
+            # Companion always calls claim when opening the console; no-op if Jetson has no helper.
+            return {
+                "ok": True,
+                "claimed": False,
+                "skipped": True,
+                "message": (
+                    "NINA_LINK_SESSION_SCRIPT not set — kiosk handoff skipped "
+                    "(optional on the Jetson)."
                 ),
-            )
+            }
         return session_claim.invoke_script(cfg.session_script, "claim")
 
     @app.post("/v1/session/release")
@@ -1173,7 +1207,12 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
     ) -> Dict[str, Any]:
         auth_mutate(authorization, request)
         if not cfg.session_script:
-            raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, detail="No script")
+            return {
+                "ok": True,
+                "released": False,
+                "skipped": True,
+                "message": "NINA_LINK_SESSION_SCRIPT not set — nothing to release.",
+            }
         return session_claim.invoke_script(cfg.session_script, "release")
 
     return app
