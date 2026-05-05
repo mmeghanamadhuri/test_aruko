@@ -8,14 +8,17 @@ launches on the 10.1" Jetson display.
 
 from __future__ import annotations
 
-from typing import List, Tuple
+import sys
+from typing import List, Optional, Tuple
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import QProcess, Qt, pyqtSignal
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtWidgets import (
+    QApplication,
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMessageBox,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -95,6 +98,8 @@ class HomeScreen(QWidget):
     def __init__(self, service: NinaService, parent=None) -> None:
         super().__init__(parent)
         self._service = service
+        self._git_pull_proc: Optional[QProcess] = None
+        self._pull_changes_btn: Optional[QPushButton] = None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(10, 10, 10, 10)
@@ -187,6 +192,16 @@ class HomeScreen(QWidget):
         )
         cta_col.addWidget(record_btn)
 
+        self._pull_changes_btn = QPushButton("Pull changes")
+        self._pull_changes_btn.setObjectName("secondaryButton")
+        self._pull_changes_btn.setCursor(Qt.PointingHandCursor)
+        self._pull_changes_btn.setMinimumWidth(140)
+        self._pull_changes_btn.setToolTip(
+            "Run git pull in this checkout, then restart the app"
+        )
+        self._pull_changes_btn.clicked.connect(self._on_pull_changes_clicked)
+        cta_col.addWidget(self._pull_changes_btn)
+
         return card
 
     # ---------- tiles ----------
@@ -230,3 +245,84 @@ class HomeScreen(QWidget):
             row.addWidget(box, stretch=1)
 
         return card
+
+    def _on_pull_changes_clicked(self) -> None:
+        from sirena_ui.workers import git_pull_restart
+
+        reply = QMessageBox.question(
+            self,
+            "Pull changes",
+            "Download the latest code with git pull and restart Nina?\n\n"
+            "The window will close briefly.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        root = git_pull_restart.repository_root()
+        if not (root / ".git").is_dir():
+            QMessageBox.warning(
+                self,
+                "Not a git checkout",
+                f"No .git directory at:\n{root}\n\n"
+                "Pull changes only works when Nina is run from a git clone.",
+            )
+            return
+
+        btn = self._pull_changes_btn
+        if btn is not None:
+            btn.setEnabled(False)
+
+        proc = QProcess(self)
+        self._git_pull_proc = proc
+        proc.setWorkingDirectory(str(root))
+        proc.setProcessChannelMode(QProcess.MergedChannels)
+        proc.finished.connect(self._on_git_pull_finished)
+        proc.start("git", ["pull"])
+
+    def _on_git_pull_finished(self, exit_code: int, exit_status: QProcess.ExitStatus) -> None:
+        _ = exit_status
+        btn = self._pull_changes_btn
+        proc = self._git_pull_proc
+        if btn is not None:
+            btn.setEnabled(True)
+
+        log_text = ""
+        if proc is not None:
+            log_text = bytes(proc.readAllStandardOutput()).decode(
+                "utf-8", errors="replace"
+            ).strip()
+        if log_text:
+            print(f"[git pull]\n{log_text}", flush=True)
+
+        if exit_code != 0:
+            QMessageBox.warning(
+                self,
+                "Git pull failed",
+                (log_text or "(no output)")
+                + f"\n\n(exit code {exit_code})\n\n"
+                "Fix the problem in a terminal, then try again.",
+            )
+            return
+
+        from sirena_ui.workers import git_pull_restart
+
+        try:
+            self._service.shutdown()
+        except Exception:
+            pass
+        try:
+            git_pull_restart.restart_application()
+        except OSError as exc:
+            QMessageBox.critical(
+                self,
+                "Restart failed",
+                f"Could not restart the app:\n\n{exc}\n\nStart Nina manually.",
+            )
+            return
+
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
+        sys.exit(0)

@@ -112,6 +112,10 @@ python3 scripts/generate-action-audio.py namaste
 python3 scripts/generate-action-audio.py namaste --offset 2.5 --skip-tts
 ```
 
+## Updating from git
+
+On **Home**, **Pull changes** runs `git pull` against this checkout and restarts the Control Center. Kiosk/systemd units that start via `scripts/launch-sirena.sh` can set **`NINA_UI_RESTART_CMD`** (e.g. `systemctl --user restart nina-ui-kiosk`) so the next launch picks up the same environment as boot. See `docs/NINA_APP.md`.
+
 ## Vision pipeline
 
 The Vision screen drives a USB camera and runs two GPU-accelerated
