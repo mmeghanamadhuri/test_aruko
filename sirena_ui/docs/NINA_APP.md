@@ -726,8 +726,10 @@ export NINA_VISION_PREVIEW_MS=20
 # Worker loop target rate when inference is fast (default 30); slow detectors still dominate.
 export NINA_VISION_TARGET_FPS=30
 # Face greetings (Vision): cached MP3s under nina/data/greetings/<name>.mp3 (repo root).
-# Playback: sudo apt install -y mpg123 alsa-utils espeak-ng
-# (espeak renders via WAV + aplay when aplay is present).
+# Playback: sudo apt install -y mpg123 alsa-utils espeak-ng pulseaudio-utils
+# (mpg123 for MP3; espeak-ng writes WAV then aplay or paplay; logs stderr on failure).
+# If aplay uses the wrong ALSA device, set e.g.:
+# export NINA_GREET_APLAY_DEVICE=plug:dmix
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=6
 export NINA_FOLLOW_CRUISE_PCT=5
