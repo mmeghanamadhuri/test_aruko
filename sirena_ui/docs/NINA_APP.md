@@ -745,18 +745,32 @@ export NINA_VISION_TARGET_FPS=30
 # export NINA_AUDIO_MIXER_CONTROL=Master    # or PCM, Speaker, etc.
 # If volume preroll fails: optional ms of silence via aplay (default 0).
 # export NINA_AUDIO_PREROLL_MS=0
+# Bind mpg123 to the same ALSA device as aplay so Master/pulse preroll matches PCM output:
+# export NINA_AUDIO_MPG123_DEVICE=plug:dmix
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=11
 export NINA_FOLLOW_CRUISE_PCT=9
 export NINA_FOLLOW_BACK_PCT=9
 export NINA_FOLLOW_NUDGE_PCT=9
 export NINA_FOLLOW_YAW_GAIN=3.5
+# Trajectory: scale forward speed down when the face is off-centre (slow while correcting).
+# export NINA_FOLLOW_ERR_FWD_SCALE_MIN=0.38
+# export NINA_FOLLOW_ERR_FWD_SCALE_POWER=1.0
+# Near standoff, creep + steer every tick until centred. If unset, uses NINA_FOLLOW_NUDGE_PCT.
+# export NINA_FOLLOW_HOLD_CREEP_PCT=6
+# export NINA_FOLLOW_HOLD_YAW_GAIN=4.2
 # Standoff: desired face bbox area (px²) for approach/back; not tied to size at lock.
 # Prefer NINA_FOLLOW_TARGET_BBOX_AREA for a fixed px², or fraction of frame (W×H):
 # export NINA_FOLLOW_TARGET_BBOX_AREA=12000
 # export NINA_FOLLOW_TARGET_FACE_FRAC=0.035
 # Ratio face_area/standoff above which the bot reverses; centred hold runs up to this same ratio.
 # export NINA_FOLLOW_CLOSE_RATIO=1.25
+# Start hold/approach boundary (lower = stop sooner); default 0.88 was 0.92.
+# export NINA_FOLLOW_AREA_FAR=0.88
+# Wider centre deadband when ratio >= AREA_FAR so the bot actually stops near the subject.
+# export NINA_FOLLOW_ANG_DEAD_CLOSE=0.14
+# Suppress reverse for this many follow ticks after Start (~50 ms/tick); default 24 ≈ 1.2 s.
+# export NINA_FOLLOW_NO_BACK_INITIAL_TICKS=24
 # Lost-target search: slow stepped in-place rotation (~step_deg per pulse), pause to look, repeat to ~360°.
 # Tune STEP_MS + SEARCH_PCT on hardware so each pulse matches step_deg; LOOK_TICKS × TICK_MS ≈ dwell per station.
 export NINA_FOLLOW_SEARCH_STEP_DEG=30

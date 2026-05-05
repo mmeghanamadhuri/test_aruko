@@ -13,6 +13,11 @@ default **4** s) so the amp path settles, then restore the saved level
 (ALSA ``amixer`` first for direct card playback, else PulseAudio). If that
 fails, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence via ``aplay``.
 
+For MP3, set ``NINA_AUDIO_MPG123_DEVICE`` or ``NINA_GREET_APLAY_DEVICE`` so
+``mpg123`` opens the **same** ALSA device the preroll mutes; otherwise the
+decoder may use a different PCM path and volume changes won't prevent
+startup glitches / underrun noise.
+
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
 """
@@ -167,6 +172,28 @@ def _pulse_get_volume_pct() -> Optional[int]:
     return _parse_volume_pct_from_text(r.stdout or "")
 
 
+def mpg123_command_for(path: Path) -> Optional[List[str]]:
+    """Build an ``mpg123`` argv list, optionally binding ALSA output so the
+    same device sees volume preroll (``amixer``/``pactl``) and decoded PCM.
+
+    ``NINA_AUDIO_MPG123_DEVICE`` wins; else ``NINA_GREET_APLAY_DEVICE`` (the
+    aplay ``-D`` value works as ``mpg123 -a``).
+    """
+    mpg = shutil.which("mpg123")
+    if not mpg:
+        return None
+    cmd: List[str] = [mpg, "-q"]
+    dev = (
+        os.environ.get("NINA_AUDIO_MPG123_DEVICE")
+        or os.environ.get("NINA_GREET_APLAY_DEVICE")
+        or ""
+    ).strip()
+    if dev:
+        cmd.extend(["-o", "alsa", "-a", dev])
+    cmd.append(str(path))
+    return cmd
+
+
 def _pulse_set_volume_pct(pct: int) -> bool:
     pactl = shutil.which("pactl")
     if not pactl:
@@ -314,8 +341,10 @@ class AudioPlayer:
         ext = path.suffix.lower()
         if ext == ".wav" and self._aplay:
             return [self._aplay, "-q", str(path)]
-        if ext in (".mp3",) and self._mpg123:
-            return [self._mpg123, "-q", str(path)]
+        if ext in (".mp3",):
+            cmd = mpg123_command_for(Path(path))
+            if cmd:
+                return cmd
         if self._ffplay:
             return [
                 self._ffplay,

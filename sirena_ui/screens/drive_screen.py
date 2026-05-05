@@ -22,7 +22,7 @@ Two input modes are supported:
 from __future__ import annotations
 
 import os
-from typing import Optional
+from typing import Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -62,6 +62,10 @@ _KEY_TO_DIRECTION = {
 # cruise), then stop.  Default matches top of slider envelope; override with
 # NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_TEST_MS = 15000
+# Poll after ensure_hardware(): init runs on a worker thread; driving before
+# _do_init completes was a no-op (_nav still None).
+STRAIGHT_READY_POLL_MS = 50
+STRAIGHT_READY_MAX_POLLS = 100
 
 
 def _straight_test_speed_pct() -> int:
@@ -89,6 +93,8 @@ class DriveScreen(QWidget):
         self._straight_test_timer = QTimer(self)
         self._straight_test_timer.setSingleShot(True)
         self._straight_test_timer.timeout.connect(self._finish_straight_test)
+        self._straight_pending: Optional[Tuple[str, int]] = None
+        self._straight_ready_polls = 0
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -469,6 +475,32 @@ class DriveScreen(QWidget):
         if st.get("reverse"):
             direction = "back"
         pct = _straight_test_speed_pct()
+        self._straight_pending = (direction, pct)
+        self._straight_ready_polls = 0
+        QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
+        self.setFocus()
+
+    def _try_straight_when_ready(self) -> None:
+        """Start straight test only after BLDC init finishes (async worker)."""
+        if self._straight_pending is None:
+            return
+        self._straight_ready_polls += 1
+        self._drive.ensure_hardware()
+        if not self._drive.state().get("connected"):
+            if self._straight_ready_polls >= STRAIGHT_READY_MAX_POLLS:
+                self._straight_pending = None
+                QMessageBox.warning(
+                    self,
+                    "Drive not ready",
+                    "BLDC did not connect in time. Check the link / Pi bridge, "
+                    "wait for the green connected pill, then try Straight again.",
+                )
+                self._restore_after_straight_test()
+                return
+            QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
+            return
+        direction, pct = self._straight_pending
+        self._straight_pending = None
         self._drive.drive_wheels(direction, pct, direction, pct)
         self._straight_test_timer.start(STRAIGHT_TEST_MS)
         self.setFocus()
@@ -559,6 +591,7 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def on_leave(self) -> None:
+        self._straight_pending = None
         if self._straight_test_timer.isActive():
             self._straight_test_timer.stop()
             self._drive.stop()

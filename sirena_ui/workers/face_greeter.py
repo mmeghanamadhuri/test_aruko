@@ -39,7 +39,11 @@ from typing import Dict, Optional
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
-from nina.services.audio_player import AudioPlayer, play_silence_preroll_blocking
+from nina.services.audio_player import (
+    AudioPlayer,
+    mpg123_command_for,
+    play_silence_preroll_blocking,
+)
 
 
 log = logging.getLogger("sirena_ui.face_greeter")
@@ -108,6 +112,7 @@ class FaceGreeter(QObject):
         self._cooldown = float(cooldown_sec)
         self._last_greeted: Dict[str, float] = {}
         self._lock = threading.RLock()
+        self._playback_gate = threading.Lock()
         self._player = AudioPlayer()
         # Active synthesis workers, kept alive until each finishes so
         # QThread doesn't get garbage-collected mid-run.
@@ -198,89 +203,93 @@ class FaceGreeter(QObject):
 
     def _play_wav_blocking(self, wav_path: Path) -> bool:
         """Play a WAV with aplay (optional ALSA device) then paplay."""
-        play_silence_preroll_blocking()
-        wav = str(wav_path)
-        cmd = self._aplay_argv(wav)
-        if cmd is not None:
-            r = subprocess.run(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-            if r.returncode == 0:
-                return True
-            log.warning(
-                "FaceGreeter: aplay failed rc=%s stderr=%s (try "
-                "NINA_GREET_APLAY_DEVICE=plug:dmix or paplay / dash)",
-                r.returncode,
-                _stderr_tail(r.stderr),
-            )
-        paplay = shutil.which("paplay")
-        if paplay:
-            r = subprocess.run(
-                [paplay, wav],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-            if r.returncode == 0:
-                return True
-            log.warning(
-                "FaceGreeter: paplay failed rc=%s stderr=%s",
-                r.returncode,
-                _stderr_tail(r.stderr),
-            )
-        return False
-
-    @staticmethod
-    def _espeak_direct(text: str, es_path: str) -> bool:
-        """Last resort: espeak's own audio output (Pulse etc.)."""
-        play_silence_preroll_blocking()
-        try:
-            r = subprocess.run(
-                [es_path, "-s", "150", text],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-            if r.returncode != 0:
+        with self._playback_gate:
+            play_silence_preroll_blocking()
+            wav = str(wav_path)
+            cmd = self._aplay_argv(wav)
+            if cmd is not None:
+                r = subprocess.run(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                if r.returncode == 0:
+                    return True
                 log.warning(
-                    "FaceGreeter: espeak direct failed rc=%s stderr=%s",
+                    "FaceGreeter: aplay failed rc=%s stderr=%s (try "
+                    "NINA_GREET_APLAY_DEVICE=plug:dmix or paplay / dash)",
                     r.returncode,
                     _stderr_tail(r.stderr),
                 )
-                return False
-            return True
-        except OSError as exc:
-            log.warning("FaceGreeter: espeak direct: %s", exc)
+            paplay = shutil.which("paplay")
+            if paplay:
+                r = subprocess.run(
+                    [paplay, wav],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                if r.returncode == 0:
+                    return True
+                log.warning(
+                    "FaceGreeter: paplay failed rc=%s stderr=%s",
+                    r.returncode,
+                    _stderr_tail(r.stderr),
+                )
             return False
 
-    def _play_mp3_blocking(self, path: Path) -> bool:
-        """Play MP3 with mpg123 (log stderr), then ffplay as fallback."""
-        path = Path(path)
-        play_silence_preroll_blocking()
-        mpg = shutil.which("mpg123")
-        if mpg:
-            r = subprocess.run(
-                [mpg, "-q", str(path)],
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                timeout=120,
-                check=False,
-            )
-            if r.returncode == 0:
+    def _espeak_direct(self, text: str, es_path: str) -> bool:
+        """Last resort: espeak's own audio output (Pulse etc.)."""
+        with self._playback_gate:
+            play_silence_preroll_blocking()
+            try:
+                r = subprocess.run(
+                    [es_path, "-s", "150", text],
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                if r.returncode != 0:
+                    log.warning(
+                        "FaceGreeter: espeak direct failed rc=%s stderr=%s",
+                        r.returncode,
+                        _stderr_tail(r.stderr),
+                    )
+                    return False
                 return True
-            log.warning(
-                "FaceGreeter: mpg123 failed rc=%s stderr=%s",
-                r.returncode,
-                _stderr_tail(r.stderr),
-            )
+            except OSError as exc:
+                log.warning("FaceGreeter: espeak direct: %s", exc)
+                return False
+
+    def _play_mp3_blocking(self, path: Path) -> bool:
+        """Play MP3 with mpg123 (log stream), then ffplay as fallback."""
+        path = Path(path)
+        with self._playback_gate:
+            play_silence_preroll_blocking()
+            cmd = mpg123_command_for(path)
+            if cmd:
+                r = subprocess.run(
+                    cmd,
+                    stdin=subprocess.DEVNULL,
+                    capture_output=True,
+                    timeout=120,
+                    check=False,
+                )
+                if r.returncode == 0:
+                    return True
+                log.warning(
+                    "FaceGreeter: mpg123 failed rc=%s stderr=%s",
+                    r.returncode,
+                    _stderr_tail(r.stderr),
+                )
         ffplay = shutil.which("ffplay")
         if ffplay:
+            with self._playback_gate:
+                play_silence_preroll_blocking()
             env = dict(os.environ)
             env.setdefault("SDL_AUDIODRIVER", "alsa")
             r = subprocess.run(
