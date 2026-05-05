@@ -5,11 +5,9 @@ motion stays smooth. Requires face detection; recognition matches a
 named enrollee when ``target_name`` is set, otherwise tracks the largest
 face box.
 
-When the target leaves the frame (after we have locked it once), wheels
-stop; several consecutive no-face ticks are required before a slow
-in-place scan (~360°) begins, so detector flicker does not immediately
-trigger a spin. Before the first lock the bot stays still while
-``seeking…``.
+Several consecutive no-face ticks (after a lock) start a slow in-place
+scan (~360°). Single-frame YuNet blips no longer reset the lost counter,
+so the scan actually runs when the subject leaves the frame.
 """
 
 from __future__ import annotations
@@ -34,8 +32,10 @@ _SPEED_NUDGE_PCT = 10
 _SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "10"))
 _SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "9.0"))
 # Require this many consecutive no-face ticks (after a lock) before 360° search.
-# Debounces detector flicker so we don't spin right after reacquiring.
-_LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "6")))
+# Single-frame YuNet blips must not reset this counter (see _face_present_streak).
+_LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "4")))
+# Face must be seen this many ticks in a row before we trust it (clear lost streak / exit search).
+_FACE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_CONFIRM_TICKS", "2")))
 
 
 def _bbox_area(det: Detection) -> int:
@@ -68,6 +68,7 @@ class FaceFollowController(QObject):
         self._search_elapsed_s = 0.0
         self._had_lock = False
         self._lost_streak = 0
+        self._face_present_streak = 0
 
         # ratio = face_area / reference_area (ref = bbox area at lock).
         self._area_far = 0.92
@@ -96,6 +97,7 @@ class FaceFollowController(QObject):
         self._search_elapsed_s = 0.0
         self._had_lock = False
         self._lost_streak = 0
+        self._face_present_streak = 0
         self._active = True
         self._nudge_pulse_timer.stop()
         self._timer.start()
@@ -113,6 +115,7 @@ class FaceFollowController(QObject):
         self._search_elapsed_s = 0.0
         self._had_lock = False
         self._lost_streak = 0
+        self._face_present_streak = 0
         self._timer.stop()
         self._nudge_pulse_timer.stop()
         self._target_name = None
@@ -151,6 +154,7 @@ class FaceFollowController(QObject):
             self._searching = False
             self._had_lock = False
             self._lost_streak = 0
+            self._face_present_streak = 0
             self._timer.stop()
             self._nudge_pulse_timer.stop()
             self.status_message.emit("Follow: stopped (brake on)")
@@ -165,6 +169,7 @@ class FaceFollowController(QObject):
         self._handle_lost()
 
     def _handle_lost(self) -> None:
+        self._face_present_streak = 0
         self._nudge_pulse_timer.stop()
         try:
             self._drive.stop(drain=True)
@@ -197,6 +202,7 @@ class FaceFollowController(QObject):
             self._searching = False
             self._had_lock = False
             self._lost_streak = 0
+            self._face_present_streak = 0
             self._timer.stop()
             self.status_message.emit(
                 "Follow: lost after full scan — tap Start follow to retry"
@@ -211,10 +217,30 @@ class FaceFollowController(QObject):
             log.debug("search spin: %s", exc)
 
     def _handle_track(self, chosen: Detection) -> None:
-        self._lost_streak = 0
+        lost_before = self._lost_streak
+        self._face_present_streak += 1
+        # Intermittent detections while the subject is gone used to reset
+        # _lost_streak every frame and prevented 360° search from ever arming.
+        if self._face_present_streak >= _FACE_CONFIRM_TICKS:
+            self._lost_streak = 0
+
+        if self._face_present_streak == 1 and (
+            self._searching or lost_before >= 2
+        ):
+            # Distance reference is stale after real absence; skip on 1-frame blips.
+            self._ref_area = None
+
         self._had_lock = True
 
         if self._searching:
+            if self._face_present_streak < _FACE_CONFIRM_TICKS:
+                # One-frame blip — keep scanning instead of stopping the spin.
+                sp = max(1, min(100, _SEARCH_SPEED_PCT))
+                try:
+                    self._drive.drive_wheels("forward", sp, "back", sp)
+                except Exception as exc:
+                    log.debug("search spin (blip guard): %s", exc)
+                return
             self._searching = False
             self._search_elapsed_s = 0.0
             self._ref_area = None

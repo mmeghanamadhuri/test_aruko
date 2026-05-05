@@ -727,7 +727,9 @@ export NINA_VISION_PREVIEW_MS=33
 export NINA_FOLLOW_SEARCH_SPIN_SEC=9
 export NINA_FOLLOW_SEARCH_PCT=10
 # Consecutive no-face ticks after a lock before 360° scan (debounce).
-export NINA_FOLLOW_LOST_TICKS=6
+export NINA_FOLLOW_LOST_TICKS=4
+# Consecutive face ticks before we trust detections (clear lost / exit search).
+export NINA_FOLLOW_CONFIRM_TICKS=2
 
 # Lidar
 export NINA_LIDAR_PORT=/dev/ttyUSB0
