@@ -741,9 +741,12 @@ export NINA_FOLLOW_CRUISE_PCT=9
 export NINA_FOLLOW_BACK_PCT=9
 export NINA_FOLLOW_NUDGE_PCT=9
 export NINA_FOLLOW_YAW_GAIN=3.5
-# Lost-target search: in-place spin speed and duration (longer + lower % = slower sweep).
-export NINA_FOLLOW_SEARCH_SPIN_SEC=16
-export NINA_FOLLOW_SEARCH_PCT=6
+# Lost-target search: slow stepped in-place rotation (~step_deg per pulse), pause to look, repeat to ~360°.
+# Tune STEP_MS + SEARCH_PCT on hardware so each pulse matches step_deg; LOOK_TICKS × TICK_MS ≈ dwell per station.
+export NINA_FOLLOW_SEARCH_STEP_DEG=30
+export NINA_FOLLOW_SEARCH_STEP_MS=900
+export NINA_FOLLOW_SEARCH_LOOK_TICKS=4
+export NINA_FOLLOW_SEARCH_PCT=5
 # Consecutive no-face ticks after a lock before 360° scan (debounce).
 export NINA_FOLLOW_LOST_TICKS=4
 # Consecutive face ticks before we trust detections (clear lost / exit search).

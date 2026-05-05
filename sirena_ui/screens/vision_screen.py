@@ -810,6 +810,11 @@ class VisionScreen(QWidget):
             self._follow_pill.set_kind(Pill.KIND_WARN)
         else:
             self._follow_pill.set_kind(Pill.KIND_OK)
+        if not self._follow.is_active():
+            if self._follow_start_btn is not None:
+                self._follow_start_btn.setEnabled(True)
+            if self._follow_stop_btn is not None:
+                self._follow_stop_btn.setEnabled(False)
 
     # ---------- helpers ----------
 
