@@ -723,6 +723,9 @@ export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
 # Smaller max width = less scaling work on the UI thread (default 640).
 export NINA_VISION_PREVIEW_MAX_W=640
 export NINA_VISION_PREVIEW_MS=33
+# Face greetings (Vision): cached MP3s under nina/data/greetings/<name>.mp3 (repo root).
+# Playback: sudo apt install -y mpg123 alsa-utils espeak-ng
+# (espeak renders via WAV + aplay when aplay is present).
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=6
 export NINA_FOLLOW_CRUISE_PCT=5

@@ -184,16 +184,19 @@ class FaceFollowController(QObject):
 
         self._handle_lost()
 
-    def _handle_lost(self) -> None:
-        self._face_present_streak = 0
-        self._nudge_pulse_timer.stop()
+    def _drive_stop_safe(self, *, drain: bool = True) -> None:
         try:
-            self._drive.stop(drain=True)
+            self._drive.stop(drain=drain)
         except Exception:
             pass
 
+    def _handle_lost(self) -> None:
+        self._face_present_streak = 0
+        self._nudge_pulse_timer.stop()
+
         # Before we have ever locked a face, hold still — do not 360° scan.
         if not self._had_lock:
+            self._drive_stop_safe()
             self._searching = False
             self._search_elapsed_s = 0.0
             self._lost_streak = 0
@@ -202,12 +205,16 @@ class FaceFollowController(QObject):
         self._lost_streak += 1
         if self._lost_streak < _LOST_ENTER_SEARCH_TICKS:
             # Brief dropout / motion blur — wait before declaring lost.
+            self._drive_stop_safe()
             return
 
         if not self._searching:
             self._searching = True
             self._search_elapsed_s = 0.0
             self._ref_area = None
+            # One clean stop before spinning; afterwards do NOT stop every tick
+            # — that drained the worker queue and cancelled in-place search.
+            self._drive_stop_safe()
             self.status_message.emit("Follow: lost — scanning 360°…")
             return
 
@@ -220,6 +227,7 @@ class FaceFollowController(QObject):
             self._lost_streak = 0
             self._face_present_streak = 0
             self._timer.stop()
+            self._drive_stop_safe()
             self.status_message.emit(
                 "Follow: lost after full scan — tap Start follow to retry"
             )

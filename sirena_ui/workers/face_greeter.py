@@ -7,8 +7,9 @@ Design goals:
   * Greet at most once per person within a configurable cooldown
     window. Walking past Nina shouldn't trigger a barrage of "Hello
     hari, Hello hari, Hello hari".
-  * Cache one MP3 per name on disk so the second time we see the
-    same person we don't need internet (gTTS is a network call).
+  * Default cache directory: ``<repo_root>/nina/data/greetings`` as
+    ``<sanitised_name>.mp3``, where ``repo_root`` is two levels above
+    this package (same root used by ``NinaService`` settings).
   * Synthesis runs on a background QThread so we never stall the
     Vision worker / GUI thread on the gTTS HTTP request.
   * Playback prefers cached MP3 via mpg123/ffplay; common Jetson images
@@ -25,9 +26,11 @@ That's it. The class internalises everything else.
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -86,8 +89,7 @@ class FaceGreeter(QObject):
     ) -> None:
         super().__init__(parent)
         if cache_dir is None:
-            repo_root = Path(__file__).resolve().parents[2]
-            cache_dir = repo_root / "nina" / "data" / "greetings"
+            cache_dir = FaceGreeter.greeting_cache_dir()
         self._cache_dir = Path(cache_dir)
         self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._cooldown = float(cooldown_sec)
@@ -98,21 +100,34 @@ class FaceGreeter(QObject):
         # QThread doesn't get garbage-collected mid-run.
         self._gen_workers: Dict[str, _GenerateClipWorker] = {}
 
+    @staticmethod
+    def greeting_cache_dir(repo_root: Optional[Path] = None) -> Path:
+        """Directory where per-name greeting MP3s are stored (``<stem>.mp3``)."""
+        if repo_root is None:
+            repo_root = Path(__file__).resolve().parents[2]
+        return Path(repo_root) / "nina" / "data" / "greetings"
+
     def _playback_available(self) -> bool:
-        """MP3 via mpg123/ffplay, or espeak as a common Jetson fallback."""
+        """MP3 via mpg123/ffplay, or espeak (with optional WAV + aplay)."""
         if self._player.can_play(Path("_greet_probe.mp3")):
             return True
         return bool(shutil.which("espeak-ng") or shutil.which("espeak"))
 
-    @staticmethod
-    def _try_espeak(text: str) -> bool:
+    def _try_espeak(self, text: str) -> bool:
+        es = shutil.which("espeak-ng") or shutil.which("espeak")
+        if not es:
+            return False
+        # WAV + aplay is more reliable on headless/ALSA Jetson images than
+        # espeak's default audio backend (often Pulse-only).
+        if shutil.which("aplay") and self._try_espeak_wav_aplay(text):
+            return True
         for exe_name in ("espeak-ng", "espeak"):
             exe = shutil.which(exe_name)
             if not exe:
                 continue
             try:
                 subprocess.Popen(
-                    [exe, text],
+                    [exe, "-s", "150", text],
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
@@ -120,6 +135,53 @@ class FaceGreeter(QObject):
             except OSError as exc:
                 log.debug("espeak not usable (%s): %s", exe, exc)
         return False
+
+    def _try_espeak_wav_aplay(self, text: str) -> bool:
+        """Headless ALSA path when espeak's audio backend is broken: WAV + aplay."""
+        es = shutil.which("espeak-ng") or shutil.which("espeak")
+        aplay = shutil.which("aplay")
+        if not es or not aplay:
+            return False
+        fd, wav_path = tempfile.mkstemp(suffix=".wav", prefix="nina_greet_")
+        os.close(fd)
+        try:
+            r = subprocess.run(
+                [es, "-s", "150", "-w", wav_path, text],
+                capture_output=True,
+                timeout=60,
+                check=False,
+            )
+            if r.returncode != 0:
+                log.warning(
+                    "FaceGreeter: espeak -w failed (rc=%s); install mpg123 or check audio",
+                    r.returncode,
+                )
+                return False
+            try:
+                subprocess.Popen(
+                    [aplay, "-q", wav_path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError as exc:
+                log.warning("FaceGreeter: aplay failed: %s", exc)
+                return False
+
+            def _unlink_later() -> None:
+                try:
+                    os.unlink(wav_path)
+                except OSError:
+                    pass
+
+            threading.Timer(90.0, _unlink_later).start()
+            return True
+        except Exception as exc:  # pragma: no cover
+            log.warning("FaceGreeter: espeak WAV path failed: %s", exc)
+            try:
+                os.unlink(wav_path)
+            except OSError:
+                pass
+            return False
 
     def greet(self, name: str) -> None:
         """Speak "Hello <name>" if cooldown has elapsed for this name.
@@ -176,7 +238,10 @@ class FaceGreeter(QObject):
             return
         if not self._playback_available():
             log.warning(
-                "FaceGreeter.greet_now: no MP3 player (mpg123/ffplay) or espeak"
+                "FaceGreeter.greet_now: no playback toolchain "
+                "(need mpg123/ffplay for cached MP3, or espeak-ng for TTS); "
+                "cache_dir=%s",
+                self._cache_dir.resolve(),
             )
             return
 
@@ -184,6 +249,13 @@ class FaceGreeter(QObject):
 
         text = f"Hello {name}"
         clip = self._cached_clip_for(name)
+        log.info(
+            "FaceGreeter.greet_now name=%r cache_dir=%s clip=%s mp3_cli_ok=%s",
+            name,
+            self._cache_dir.resolve(),
+            clip,
+            self._player.can_play(Path("_greet_probe.mp3")),
+        )
         if clip is not None:
             if self._play_clip(clip, name):
                 with self._lock:
