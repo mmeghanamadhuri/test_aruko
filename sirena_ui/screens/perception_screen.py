@@ -521,6 +521,8 @@ class PerceptionScreen(QWidget):
     # ------------------------------------------------------------------
 
     def _on_camera_frame(self, image: QImage) -> None:
+        if not self.isVisible():
+            return
         if self._cam_image_label is None:
             return
         if self._cam_placeholder is not None and self._cam_placeholder.isVisible():
@@ -533,7 +535,7 @@ class PerceptionScreen(QWidget):
         pix = QPixmap.fromImage(image).scaled(
             target,
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self._cam_image_label.setPixmap(pix)
 

@@ -439,8 +439,7 @@ class VisionScreen(QWidget):
     def _wire_signals(self) -> None:
         worker = self._service.vision
         worker.frame_ready.connect(self._on_frame)
-        worker.detections_changed.connect(self._render_detections)
-        worker.detections_changed.connect(self._follow.ingest_detections)
+        worker.detections_changed.connect(self._on_detections_changed)
         worker.fps_changed.connect(self._on_fps)
         worker.status_changed.connect(self._apply_status)
         worker.face_enable_failed.connect(self._on_face_enable_failed)
@@ -458,6 +457,12 @@ class VisionScreen(QWidget):
         # offline, ...) as a single warning dialog instead of a silent
         # console log.
         self._announcer.error.connect(self._on_announcer_error)
+
+    def _on_detections_changed(self, detections: List[Detection]) -> None:
+        if not self.isVisible():
+            return
+        self._render_detections(detections)
+        self._follow.ingest_detections(detections)
 
     def _on_face_enable_failed(self, reason: str) -> None:
         from PyQt5.QtWidgets import QMessageBox
@@ -507,6 +512,8 @@ class VisionScreen(QWidget):
         )
 
     def _on_frame(self, image: QImage) -> None:
+        if not self.isVisible():
+            return
         try:
             w, h = self._service.vision.capture_dimensions()
             self._follow.set_frame_size(w, h)
@@ -532,11 +539,13 @@ class VisionScreen(QWidget):
         pix = QPixmap.fromImage(image).scaled(
             target,
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         self._viewport_label.setPixmap(pix)
 
     def _on_fps(self, fps: float) -> None:
+        if not self.isVisible():
+            return
         self._fps_pill.setText(f"{fps:0.1f} fps")
 
     def _apply_status(self, status: dict) -> None:

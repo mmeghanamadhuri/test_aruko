@@ -584,6 +584,8 @@ class DriveScreen(QWidget):
 
     def _on_camera_frame(self, image: QImage) -> None:
         """Render an incoming RGB frame into the Front-camera card."""
+        if not self.isVisible():
+            return
         feed = self._cam_feed_label
         if feed is None:
             return
@@ -597,7 +599,7 @@ class DriveScreen(QWidget):
         pix = QPixmap.fromImage(image).scaled(
             target,
             Qt.KeepAspectRatio,
-            Qt.SmoothTransformation,
+            Qt.FastTransformation,
         )
         feed.setPixmap(pix)
 
