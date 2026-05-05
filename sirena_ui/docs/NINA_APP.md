@@ -737,8 +737,13 @@ export NINA_VISION_TARGET_FPS=30
 # installed; FaceGreeter tries paplay after aplay fails.
 # If aplay uses the wrong ALSA device, set e.g.:
 # export NINA_GREET_APLAY_DEVICE=plug:dmix
-# Optional: milliseconds of digital silence via aplay before clips (default 1000; 0 = off).
-# export NINA_AUDIO_PREROLL_MS=1000
+# Before TTS/MP3 playback: mute output → wait → unmute (reduces amp/USB stutter).
+# Uses pactl @DEFAULT_SINK@ if available, else amixer sset (see NINA_AUDIO_MIXER_*).
+# export NINA_AUDIO_MUTE_PREROLL_SEC=2
+# export NINA_AUDIO_MIXER_CARD=0          # optional amixer -c (empty = default card)
+# export NINA_AUDIO_MIXER_CONTROL=Master    # or PCM, Speaker, etc.
+# If mute preroll fails: optional fallback, play this many ms of silence via aplay (default 0).
+# export NINA_AUDIO_PREROLL_MS=0
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=11
 export NINA_FOLLOW_CRUISE_PCT=9

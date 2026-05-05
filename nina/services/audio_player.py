@@ -7,9 +7,12 @@ Jetson (`aplay` for WAV, `mpg123` for MP3, `ffplay` as a final
 fallback). No Python audio dependencies are required, so this works on
 a fresh JetPack image without extra pip installs.
 
-Before starting a clip, ``AudioPlayer.play`` can emit a short stretch of
-digital silence via ``aplay`` (``NINA_AUDIO_PREROLL_MS``, default 1000 ms)
-so amps/USB speakers settle and the first syllable is not clipped.
+Before starting a clip, ``AudioPlayer.play`` runs an output preroll:
+prefer **mute → dwell → unmute** (``NINA_AUDIO_MUTE_PREROLL_SEC``,
+default **2** s) via PulseAudio or ALSA ``amixer``, so amps settle
+without audible noise. If muting is unavailable, falls back to playing
+digital silence (``NINA_AUDIO_PREROLL_MS``; default **0** ms so mute
+is the only delay when it works).
 
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
@@ -21,6 +24,7 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 import wave
 from pathlib import Path
 from typing import List, Optional
@@ -30,11 +34,18 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _mute_preroll_sec() -> float:
+    try:
+        return max(0.0, float(os.environ.get("NINA_AUDIO_MUTE_PREROLL_SEC", "2")))
+    except ValueError:
+        return 2.0
+
+
 def _preroll_ms() -> int:
     try:
-        return max(0, int(os.environ.get("NINA_AUDIO_PREROLL_MS", "1000")))
+        return max(0, int(os.environ.get("NINA_AUDIO_PREROLL_MS", "0")))
     except ValueError:
-        return 1000
+        return 0
 
 
 def _aplay_device_flag() -> Optional[str]:
@@ -65,8 +76,50 @@ def _ensure_preroll_wav(ms: int, sample_rate: int = 44100) -> Optional[Path]:
     return path
 
 
-def play_silence_preroll_blocking() -> None:
-    """Play a short silent WAV through ``aplay`` to wake the output path."""
+def _pulse_default_sink_mute(mute: bool) -> bool:
+    pactl = shutil.which("pactl")
+    if not pactl:
+        return False
+    v = "1" if mute else "0"
+    try:
+        r = subprocess.run(
+            [pactl, "set-sink-mute", "@DEFAULT_SINK@", v],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _alsa_mixer_mute(mute: bool) -> bool:
+    amixer = shutil.which("amixer")
+    if not amixer:
+        return False
+    card = (os.environ.get("NINA_AUDIO_MIXER_CARD") or "").strip()
+    control = (os.environ.get("NINA_AUDIO_MIXER_CONTROL") or "Master").strip() or "Master"
+    state = "mute" if mute else "unmute"
+    cmd: List[str] = [amixer, "-q"]
+    if card:
+        cmd.extend(["-c", card])
+    cmd.extend(["sset", control, state])
+    try:
+        r = subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=5.0,
+            check=False,
+        )
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def _silence_wav_preroll_blocking() -> None:
+    """Play silent WAV through ``aplay`` when mute preroll is unavailable."""
     ms = _preroll_ms()
     if ms <= 0:
         return
@@ -92,6 +145,34 @@ def play_silence_preroll_blocking() -> None:
         )
     except subprocess.TimeoutExpired:
         pass
+
+
+def play_silence_preroll_blocking() -> None:
+    """Prepare the output path before playback: mute dwell, else silent WAV.
+
+    PulseAudio is tried first (``pactl``), then ALSA ``amixer``. If both
+    fail, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence.
+    """
+    sec = _mute_preroll_sec()
+    if sec > 0:
+        used_pulse = False
+        if _pulse_default_sink_mute(True):
+            used_pulse = True
+        elif _alsa_mixer_mute(True):
+            used_pulse = False
+        else:
+            _silence_wav_preroll_blocking()
+            return
+        try:
+            time.sleep(sec)
+        finally:
+            if used_pulse:
+                _pulse_default_sink_mute(False)
+            else:
+                _alsa_mixer_mute(False)
+        return
+
+    _silence_wav_preroll_blocking()
 
 
 class AudioPlayer:
@@ -127,7 +208,7 @@ class AudioPlayer:
                 "install one with: sudo apt install -y alsa-utils mpg123"
             )
             return None
-        if self._aplay and not skip_preroll:
+        if not skip_preroll:
             play_silence_preroll_blocking()
         try:
             proc = subprocess.Popen(
