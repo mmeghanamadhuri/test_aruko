@@ -122,6 +122,11 @@ class NinaService:
             self._face_greeter.reset_cooldown()
 
     @property
+    def face_greeter(self) -> Optional[FaceGreeter]:
+        """Lazy FaceGreeter; exists after first ``vision`` access."""
+        return self._face_greeter
+
+    @property
     def slam(self) -> SlamWorker:
         """Lazy singleton for the lidar + SLAM worker.
 

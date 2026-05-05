@@ -43,10 +43,23 @@ def _bbox_area(det: Detection) -> int:
     return max(0, x2 - x1) * max(0, y2 - y1)
 
 
+def _greeting_name(chosen: Detection) -> str:
+    """Name passed to FaceGreeter (\"Hello <name>\")."""
+    if chosen.identity and str(chosen.identity).strip():
+        return str(chosen.identity).strip()
+    lab = (chosen.label or "").strip()
+    if lab and lab.casefold() not in ("face", "person"):
+        return lab
+    return "friend"
+
+
 class FaceFollowController(QObject):
     """Start/stop person follow; ingests ``Detection`` lists from VisionWorker."""
 
     status_message = pyqtSignal(str)
+    #: Emitted when follow locks a target (new ``_ref_area``). Payload is the
+    #: greeting name for ``FaceGreeter`` (enrolled name, label, or ``friend``).
+    face_latched = pyqtSignal(str)
 
     def __init__(self, drive: DriveController, parent=None) -> None:
         super().__init__(parent)
@@ -258,6 +271,7 @@ class FaceFollowController(QObject):
             self._ref_area = float(max(1, area))
             label = chosen.identity or chosen.label or "face"
             self.status_message.emit(f"Follow: locked {label} ({int(area)} px²)")
+            self.face_latched.emit(_greeting_name(chosen))
 
         ratio = area / self._ref_area
 

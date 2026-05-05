@@ -140,6 +140,7 @@ class VisionScreen(QWidget):
         self._follow_stop_btn: Optional[QPushButton] = None
         self._follow_pill: Optional[Pill] = None
         self._follow = FaceFollowController(self._service.drive, parent=self)
+        self._follow.face_latched.connect(self._on_follow_face_latched)
         # Whether on_enter is currently holding a refcount on the
         # vision worker; tracked so on_leave only ever calls one
         # release() per acquire() even if Qt fires on_leave twice.
@@ -777,6 +778,16 @@ class VisionScreen(QWidget):
 
     def _on_follow_stop(self) -> None:
         self._follow.stop()
+
+    def _on_follow_face_latched(self, name: str) -> None:
+        """Speak \"Hello <name>\" when follow locks (same stack as vision greetings)."""
+        _ = self._service.vision
+        greeter = self._service.face_greeter
+        if greeter is None:
+            return
+        greet_key = (name or "").strip() or "friend"
+        greeter.reset_cooldown(greet_key)
+        greeter.greet(greet_key)
 
     def _on_follow_status(self, msg: str) -> None:
         if self._follow_pill is None:
