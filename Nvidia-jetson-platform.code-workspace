@@ -12,7 +12,8 @@
     },
     "search.exclude": {
       "**/__pycache__": true
-    }
+    },
+    "java.configuration.updateBuildConfiguration": "interactive"
   },
   "extensions": {
     "recommendations": [
