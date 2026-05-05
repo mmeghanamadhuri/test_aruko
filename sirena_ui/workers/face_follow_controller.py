@@ -312,27 +312,63 @@ class FaceFollowController(QObject):
         err_x = max(-1.0, min(1.0, err_x))
 
         area = float(max(1, _bbox_area(chosen)))
+        latched_greet: Optional[str] = None
         if self._ref_area is None:
             self._ref_area = float(max(1, area))
             label = chosen.identity or chosen.label or "face"
             self.status_message.emit(f"Follow: locked {label} ({int(area)} px²)")
-            self.face_latched.emit(_greeting_name(chosen))
+            # Defer face_latched until after drive commands: the greeting slot
+            # can block the GUI thread (mute preroll + mpg123), which prevents
+            # QTimer follow ticks and delays this tick's drive_wheels.
+            latched_greet = _greeting_name(chosen)
 
         ratio = area / self._ref_area
 
         min_sp = _SPEED_CRUISE_PCT
         max_sp = _SPEED_APPROACH_PCT
 
-        if ratio > self._area_close_back:
-            try:
-                self._drive.drive_wheels(
-                    "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
-                )
-            except Exception as exc:
-                log.debug("drive_wheels back: %s", exc)
-            return
+        try:
+            if ratio > self._area_close_back:
+                try:
+                    self._drive.drive_wheels(
+                        "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
+                    )
+                except Exception as exc:
+                    log.debug("drive_wheels back: %s", exc)
+                return
 
-        if ratio > self._area_close_stop:
+            if ratio > self._area_close_stop:
+                if abs(err_x) <= self._ang_dead:
+                    try:
+                        self._drive.stop(drain=True)
+                    except Exception:
+                        pass
+                    return
+                self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
+                return
+
+            if ratio < self._area_far:
+                if ratio <= self._area_blend_far:
+                    cruise_sp = float(_SPEED_APPROACH_PCT)
+                else:
+                    t = (ratio - self._area_blend_far) / max(
+                        1e-6, self._area_far - self._area_blend_far
+                    )
+                    t = max(0.0, min(1.0, t))
+                    cruise_sp = _SPEED_APPROACH_PCT + (
+                        _SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT
+                    ) * t
+                cruise = int(round(cruise_sp))
+                # Blend toward centre without commanding a near–in-place spin.
+                yaw = err_x * _YAW_GAIN
+                ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
+                rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
+                try:
+                    self._drive.drive_wheels("forward", ls, "forward", rs)
+                except Exception as exc:
+                    log.debug("drive_wheels forward: %s", exc)
+                return
+
             if abs(err_x) <= self._ang_dead:
                 try:
                     self._drive.stop(drain=True)
@@ -340,37 +376,9 @@ class FaceFollowController(QObject):
                     pass
                 return
             self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
-            return
-
-        if ratio < self._area_far:
-            if ratio <= self._area_blend_far:
-                cruise_sp = float(_SPEED_APPROACH_PCT)
-            else:
-                t = (ratio - self._area_blend_far) / max(
-                    1e-6, self._area_far - self._area_blend_far
-                )
-                t = max(0.0, min(1.0, t))
-                cruise_sp = _SPEED_APPROACH_PCT + (
-                    _SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT
-                ) * t
-            cruise = int(round(cruise_sp))
-            # Blend toward centre without commanding a near–in-place spin.
-            yaw = err_x * _YAW_GAIN
-            ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
-            rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
-            try:
-                self._drive.drive_wheels("forward", ls, "forward", rs)
-            except Exception as exc:
-                log.debug("drive_wheels forward: %s", exc)
-            return
-
-        if abs(err_x) <= self._ang_dead:
-            try:
-                self._drive.stop(drain=True)
-            except Exception:
-                pass
-            return
-        self._nudge_turn(err_x, _SPEED_NUDGE_PCT)
+        finally:
+            if latched_greet is not None:
+                self.face_latched.emit(latched_greet)
 
     def _finish_nudge_pulse(self) -> None:
         if not self._active:
