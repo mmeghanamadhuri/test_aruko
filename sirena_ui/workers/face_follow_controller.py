@@ -5,9 +5,11 @@ motion stays smooth. Requires face detection; recognition matches a
 named enrollee when ``target_name`` is set, otherwise tracks the largest
 face box.
 
-When the target leaves the frame, wheels stop immediately, then the bot
-spins slowly in place for up to one full rotation (time-calibrated) to
-reacquire; if still lost, follow stops.
+When the target leaves the frame (after we have locked it once), wheels
+stop; several consecutive no-face ticks are required before a slow
+in-place scan (~360°) begins, so detector flicker does not immediately
+trigger a spin. Before the first lock the bot stays still while
+``seeking…``.
 """
 
 from __future__ import annotations
@@ -31,6 +33,9 @@ _SPEED_NUDGE_PCT = 10
 
 _SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "10"))
 _SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "9.0"))
+# Require this many consecutive no-face ticks (after a lock) before 360° search.
+# Debounces detector flicker so we don't spin right after reacquiring.
+_LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "6")))
 
 
 def _bbox_area(det: Detection) -> int:
@@ -61,6 +66,8 @@ class FaceFollowController(QObject):
 
         self._searching = False
         self._search_elapsed_s = 0.0
+        self._had_lock = False
+        self._lost_streak = 0
 
         # ratio = face_area / reference_area (ref = bbox area at lock).
         self._area_far = 0.92
@@ -87,6 +94,8 @@ class FaceFollowController(QObject):
         self._ref_area = None
         self._searching = False
         self._search_elapsed_s = 0.0
+        self._had_lock = False
+        self._lost_streak = 0
         self._active = True
         self._nudge_pulse_timer.stop()
         self._timer.start()
@@ -102,6 +111,8 @@ class FaceFollowController(QObject):
         self._active = False
         self._searching = False
         self._search_elapsed_s = 0.0
+        self._had_lock = False
+        self._lost_streak = 0
         self._timer.stop()
         self._nudge_pulse_timer.stop()
         self._target_name = None
@@ -138,6 +149,8 @@ class FaceFollowController(QObject):
                 pass
             self._active = False
             self._searching = False
+            self._had_lock = False
+            self._lost_streak = 0
             self._timer.stop()
             self._nudge_pulse_timer.stop()
             self.status_message.emit("Follow: stopped (brake on)")
@@ -158,6 +171,18 @@ class FaceFollowController(QObject):
         except Exception:
             pass
 
+        # Before we have ever locked a face, hold still — do not 360° scan.
+        if not self._had_lock:
+            self._searching = False
+            self._search_elapsed_s = 0.0
+            self._lost_streak = 0
+            return
+
+        self._lost_streak += 1
+        if self._lost_streak < _LOST_ENTER_SEARCH_TICKS:
+            # Brief dropout / motion blur — wait before declaring lost.
+            return
+
         if not self._searching:
             self._searching = True
             self._search_elapsed_s = 0.0
@@ -170,6 +195,8 @@ class FaceFollowController(QObject):
         if self._search_elapsed_s >= _SEARCH_SPIN_SEC:
             self._active = False
             self._searching = False
+            self._had_lock = False
+            self._lost_streak = 0
             self._timer.stop()
             self.status_message.emit(
                 "Follow: lost after full scan — tap Start follow to retry"
@@ -184,6 +211,9 @@ class FaceFollowController(QObject):
             log.debug("search spin: %s", exc)
 
     def _handle_track(self, chosen: Detection) -> None:
+        self._lost_streak = 0
+        self._had_lock = True
+
         if self._searching:
             self._searching = False
             self._search_elapsed_s = 0.0
@@ -239,7 +269,8 @@ class FaceFollowController(QObject):
                     _SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT
                 ) * t
             cruise = int(round(cruise_sp))
-            yaw = err_x * 14.0
+            # Blend toward centre without commanding a near–in-place spin.
+            yaw = err_x * 7.0
             ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
             rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
             try:

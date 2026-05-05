@@ -726,6 +726,8 @@ export NINA_VISION_PREVIEW_MS=33
 # Person follow: seconds of in-place spin to search for a lost face (time ~= ~360°).
 export NINA_FOLLOW_SEARCH_SPIN_SEC=9
 export NINA_FOLLOW_SEARCH_PCT=10
+# Consecutive no-face ticks after a lock before 360° scan (debounce).
+export NINA_FOLLOW_LOST_TICKS=6
 
 # Lidar
 export NINA_LIDAR_PORT=/dev/ttyUSB0
