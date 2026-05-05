@@ -739,7 +739,7 @@ export NINA_VISION_TARGET_FPS=30
 # export NINA_GREET_APLAY_DEVICE=plug:dmix
 # Before TTS/MP3 playback: volume → 0%, dwell, restore saved level (reduces amp/USB stutter).
 # Tries pactl set-sink-volume @DEFAULT_SINK@ first, then amixer sset (see NINA_AUDIO_MIXER_*).
-# export NINA_AUDIO_MUTE_PREROLL_SEC=2
+# Default dwell at 0%% volume is 4 s. Example override: export NINA_AUDIO_MUTE_PREROLL_SEC=6
 # If level cannot be read, restore uses: export NINA_AUDIO_RESTORE_VOLUME_PCT=75
 # export NINA_AUDIO_MIXER_CARD=0          # optional amixer -c (empty = default card)
 # export NINA_AUDIO_MIXER_CONTROL=Master    # or PCM, Speaker, etc.

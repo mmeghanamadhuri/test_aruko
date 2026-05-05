@@ -9,7 +9,7 @@ a fresh JetPack image without extra pip installs.
 
 Before starting a clip, ``AudioPlayer.play`` runs a **volume preroll**:
 save sink/Master level, set **0%**, dwell (``NINA_AUDIO_MUTE_PREROLL_SEC``,
-default **2** s) so the amp path settles, then restore the saved level
+default **4** s) so the amp path settles, then restore the saved level
 (ALSA ``amixer`` first for direct card playback, else PulseAudio). If that
 fails, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence via ``aplay``.
 
@@ -36,9 +36,9 @@ def _repo_root() -> Path:
 
 def _mute_preroll_sec() -> float:
     try:
-        return max(0.0, float(os.environ.get("NINA_AUDIO_MUTE_PREROLL_SEC", "2")))
+        return max(0.0, float(os.environ.get("NINA_AUDIO_MUTE_PREROLL_SEC", "4")))
     except ValueError:
-        return 2.0
+        return 4.0
 
 
 def _preroll_ms() -> int:
@@ -217,7 +217,7 @@ def _silence_wav_preroll_blocking() -> None:
 def play_silence_preroll_blocking() -> None:
     """Before playback: volume 0% → dwell → restore (ALSA first, else Pulse).
 
-    Uses ``NINA_AUDIO_MUTE_PREROLL_SEC`` for dwell (default 2 s). If the
+    Uses ``NINA_AUDIO_MUTE_PREROLL_SEC`` for dwell (default 4 s). If the
     current level cannot be read, restore uses ``NINA_AUDIO_RESTORE_VOLUME_PCT``
     after zeroing.
     """
