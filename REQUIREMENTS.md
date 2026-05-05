@@ -553,8 +553,8 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_SLAM_LASER_SCAN_SIZE` | 400 (S2E) / 360 (A1) | The `scan_size` parameter passed to BreezySLAM's Laser model. Drives the resampling cadence the SlamWorker uses before calling `slam.update()`. |
 | `NINA_SLAM_LASER_SCAN_RATE_HZ` | 10 (S2E) / 5.5 (A1) | The `scan_rate_hz` parameter passed to BreezySLAM's Laser model. Used by the Markov-chain particle filter to gauge expected motion between sweeps. |
 | `NINA_AUTO_TICK_HZ` | 8 | Autonomy decision rate. (Was 5 Hz — at typical low cruise PWM the bot coasts a few cm per 200 ms tick, enough to overshoot a turn decision; 8 Hz halves that.) |
-| `NINA_AUTO_CRUISE_PCT` | 10 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
-| `NINA_AUTO_TURN_PCT` | 11 | Turn-in-place speed % during obstacle avoidance. |
+| `NINA_AUTO_CRUISE_PCT` | 8 | Forward cruise speed during autonomous mode, as % of full PWM. Matches the manual-mode minimum so a handover doesn't change pace. |
+| `NINA_AUTO_TURN_PCT` | 9 | Turn-in-place speed % during obstacle avoidance. |
 | `NINA_AUTO_FWD_CLEAR_MM` | 1200 | Required forward clearance (closest sensor reading) before the pilot will commit to a forward step. (Was 700 mm — at walking speed the BLDCs coasted to within 50–60 cm of people before stopping; 1200 mm leaves the bot ~1 m of buffer for braking.) |
 | `NINA_AUTO_SIDE_CLEAR_MM` | 450 | Used for **dead-end detection**: when both side sectors read tighter than this (and forward is below `NINA_AUTO_FWD_CLEAR_MM`), wander and goto issue a brief reverse. |
 | `NINA_AUTO_ESTOP_MM` | 850 | Anything closer than this in front triggers an immediate reverse. (Was 300 mm — too late; 600 mm still allowed bump-range coast-in; 850 mm under `NINA_AUTO_FWD_CLEAR_MM`=1200 leaves room for turn vs e-stop layering.) |
@@ -562,10 +562,10 @@ All optional; defaults work for the recommended hardware. Set in
 | `NINA_GOTO_ARRIVAL_MM` | 250 | Distance from the goal under which `GotoPilot` reports `arrived` and stops. Set to roughly half the chassis width so the bot doesn't pursue the exact tap pixel forever. |
 | `NINA_GOTO_INFLATE_MM` | 250 | Footprint inflation in mm — the bot's body half-width. The A* planner dilates every wall pixel by *at least* this radius so the resulting path leaves a Nina-shaped buffer. Bump for wider bots; for tighter safety margins use `NINA_GOTO_MIN_PASSAGE_MM` instead. |
 | `NINA_GOTO_MIN_PASSAGE_MM` | 610 | Minimum corridor width (between facing walls) the planner is allowed to route through, in mm. Default = **2 ft / 24 in / 610 mm**, the smallest passage Nina is supposed to thread in lab + corridor environments. The effective dilation is `max(NINA_GOTO_INFLATE_MM, ⌈min_passage / 2⌉)`, so this knob is the right place to express **operator policy** ("I want 3 ft of buffer in the showroom" → set to 914) rather than bot geometry. Set to 0 to disable the floor and fall back to footprint-only inflation. |
-| `NINA_GOTO_CRUISE_PCT` | 10 | Goto forward speed (matches `NINA_AUTO_CRUISE_PCT` so a wander → goto handoff doesn't change pace). |
+| `NINA_GOTO_CRUISE_PCT` | 8 | Goto forward speed (matches `NINA_AUTO_CRUISE_PCT` so a wander → goto handoff doesn't change pace). |
 | `NINA_GOTO_FWD_CLEAR_MM` | 700 | Min forward free space (mm) to commit to driving along the planned path. Layering: **first** `NINA_GOTO_ESTOP_MM` (reverse), **then** this gate (avoid/stop/replan), **then** forward. Wander still uses `NINA_AUTO_ESTOP_MM` / `NINA_AUTO_FWD_CLEAR_MM`. |
 | `NINA_GOTO_ESTOP_MM` | 580 | Goto-only forward emergency distance (mm). If lidar/depth forward min is **below** this, the pilot reverses immediately. Default **580** (not 850): otherwise any typical indoor wall at 0.7--0.8 m triggers wander-scale e-stop every tick and goto never leaves **avoiding**. Must be **≤** `NINA_GOTO_FWD_CLEAR_MM` so layers make sense. |
-| `NINA_GOTO_TURN_PCT` | 11 | Goto in-place spin speed. |
+| `NINA_GOTO_TURN_PCT` | 9 | Goto in-place spin speed. |
 | `NINA_GOTO_HEAD_DEG` | 18.0 | Heading-error deadband. Inside this window the pilot drives forward (still steering), outside it turns in place. Wider than the wander pilot's implicit binary so noisy SLAM headings don't flip the pilot into spin during normal driving. |
 | `NINA_GOTO_LOOKAHEAD_MM` | 600 | Pure-pursuit lookahead distance. Larger = smoother arcs, smaller = tighter follow at the cost of wobble. |
 | `NINA_GOTO_REPLAN_SEC` | 3.0 | Periodic replan cadence even if everything looks fine. As the SLAM map grows the optimal path may shorten — this picks that up. |
@@ -578,8 +578,8 @@ All optional; defaults work for the recommended hardware. Set in
 
 1. Place the bot in an open area with at least 1.5 m clearance on all sides.
 2. From the GUI, open **Drive** → **Settings** chip → confirm the
-   speed slider is at 10 % (the autonomy cruise default and the
-   BLDC manual-mode floor; the slider is also capped at 16 % to
+   speed slider is at 8 % (the autonomy cruise default and the
+   BLDC manual-mode floor; the slider is also capped at 14 % to
    keep the BLDCs in their stable PWM band).
 3. Tap **Map (SLAM)** so the lidar/SLAM worker starts and you can
    see scans coming in. A coarse occupancy grid should fill in

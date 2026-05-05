@@ -75,9 +75,9 @@ _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
 
 
 # Operator-facing speed envelope. The Yalu hub motors + JYQD drivers on
-# the current Nina build are not safe to run above ~16% PWM duty on
+# the current Nina build are not safe to run above ~14% PWM duty on
 # smooth floors — the wheels slip less and the bot runs faster than on
-# carpet at the same duty. 10% is the lowest we ship as the GUI floor;
+# carpet at the same duty. 8% is the lowest we ship as the GUI floor;
 # on some benches wheels may need the slider nudged up after a cold
 # start. The slider spans this band end-to-end:
 #
@@ -92,16 +92,16 @@ _VALID_DIRECTIONS = {_DIR_FORWARD, _DIR_BACK, _DIR_LEFT, _DIR_RIGHT}
 # Bump these together (and re-test on a wheels-up bench) when the
 # mechanical build can handle more. They're module-level so screens /
 # tests can import the same constants instead of re-deriving them.
-MIN_SPEED_PCT = 10
-MAX_SPEED_PCT = 16
+MIN_SPEED_PCT = 8
+MAX_SPEED_PCT = 14
 
 # When manual drive begins from a full stop (`_active_drive` is None),
 # apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
 # so logs, lidar, and bench observation can characterise motion at a lower
 # duty. The cruise value can be below MIN_SPEED_PCT; it is sent only to the
 # nav layer (UI clamp does not apply to hardware PWM).
-FROM_STOP_KICK_PCT = 16
-FROM_STOP_CRUISE_PCT = 6
+FROM_STOP_KICK_PCT = 14
+FROM_STOP_CRUISE_PCT = 5
 
 
 def _clamp_speed(pct: int) -> int:
@@ -252,7 +252,7 @@ class DriveController(QObject):
 
         `default_speed_percent` is only needed when using mode (2),
         because we can't read it from a NavigationConfig in that case.
-        Defaults to 10% (matches `NavigationConfig.default_speed_percent` /
+        Defaults to 8% (matches `NavigationConfig.default_speed_percent` /
         `NINA_NAV_SPEED` when unset).
         """
         super().__init__(parent)

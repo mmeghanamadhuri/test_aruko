@@ -200,7 +200,7 @@ class NavigationConfig:
     pins: "NavigationPins"
     backend_name: str = "jetson"
     pwm_frequency_hz: int = 2000           # matches RPi reference (pigpio hardware_PWM @ 2 kHz)
-    default_speed_percent: int = 10        # matches GUI / load_settings default (NINA_NAV_SPEED)
+    default_speed_percent: int = 8         # matches GUI / load_settings default (NINA_NAV_SPEED)
     turn_duration_sec: float = 2.3         # matches GUI / autonomy expectation
     settle_delay_sec: float = 0.1          # matches RPi `time.sleep(0.1)` between stop and re-drive
     invert_left_dir: bool = False          # flip if left wheel spins opposite of expected

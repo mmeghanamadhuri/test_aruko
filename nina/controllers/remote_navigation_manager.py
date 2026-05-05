@@ -98,7 +98,7 @@ class RemoteNavigationConfig:
     response_timeout_sec: float = 0.4
     connect_timeout_sec: float = 2.0
     reconnect_min_interval_sec: float = 1.0
-    default_speed_percent: int = 10
+    default_speed_percent: int = 8
     turn_duration_sec: float = 2.3
     invert_left_dir: bool = False
     invert_right_dir: bool = False

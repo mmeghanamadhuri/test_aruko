@@ -207,9 +207,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
     navigation = NavigationSettings(
         backend_name=os.environ.get("NINA_NAV_BACKEND", "jetson"),
         pwm_frequency_hz=int(os.environ.get("NINA_NAV_PWM_HZ", "2000")),
-        # 10% matches the GUI manual floor (MIN_SPEED_PCT). Bump via
+        # 8% matches the GUI manual floor (MIN_SPEED_PCT). Bump via
         # NINA_NAV_SPEED for harder cruises.
-        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "10")),
+        default_speed_percent=int(os.environ.get("NINA_NAV_SPEED", "8")),
         turn_duration_sec=float(os.environ.get("NINA_NAV_TURN_SEC", "2.3")),
         # Flip if a wheel spins opposite of what the GUI expects (the
         # JYQD ZF level for "forward" depends on motor wiring polarity).
@@ -261,8 +261,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # operator dropping out of autonomy doesn't see the wheels
         # change pace mid-handoff. Bump via NINA_AUTO_CRUISE_PCT for
         # tests that want a faster wander.
-        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "10")),
-        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "11")),
+        cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "8")),
+        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "9")),
         # 1200 mm (was 700 mm) is the new commit-to-forward
         # threshold. The previous 700 mm gave the BLDCs no room to
         # decelerate before reaching the obstacle: at ~0.4 m/s with
@@ -372,8 +372,8 @@ def load_settings(repo_root: Path) -> NinaSettings:
         ),
         # Match the wander pilot's cruise so a goto handoff doesn't
         # change the bot's perceived "speed" mid-run.
-        cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "10")),
-        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "11")),
+        cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "8")),
+        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "9")),
         # 18 deg deadband: inside this we drive forward (still with
         # a small heading correction); outside, we turn in place.
         # Wider than the wander pilot's implicit binary so we don't

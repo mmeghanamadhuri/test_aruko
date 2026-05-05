@@ -49,8 +49,8 @@ def test_cruise_speed_matches_manual_minimum(clean_env) -> None:
     """Autonomy cruise must match the GUI's manual-mode minimum so
     the wheels don't change pace when the operator hands off control."""
     s = load_settings(REPO_ROOT)
-    assert s.autonomy.cruise_speed_pct == 10, (
-        "autonomy cruise drifted from 10%; either the manual floor "
+    assert s.autonomy.cruise_speed_pct == 8, (
+        "autonomy cruise drifted from 8%; either the manual floor "
         "moved (update both) or someone bumped this for testing and "
         "forgot to revert"
     )
