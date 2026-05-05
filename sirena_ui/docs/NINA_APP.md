@@ -735,6 +735,8 @@ export NINA_VISION_TARGET_FPS=30
 # installed; FaceGreeter tries paplay after aplay fails.
 # If aplay uses the wrong ALSA device, set e.g.:
 # export NINA_GREET_APLAY_DEVICE=plug:dmix
+# Optional: milliseconds of digital silence via aplay before clips (default 300; 0 = off).
+# export NINA_AUDIO_PREROLL_MS=300
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=11
 export NINA_FOLLOW_CRUISE_PCT=9

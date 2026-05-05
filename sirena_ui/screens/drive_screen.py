@@ -62,7 +62,7 @@ _KEY_TO_DIRECTION = {
 }
 
 # Bench / field check: drive forward at current speed, then stop.
-STRAIGHT_TEST_MS = 5000
+STRAIGHT_TEST_MS = 15000
 
 
 class DriveScreen(QWidget):
@@ -277,13 +277,13 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.addStretch(1)
-        self._straight_test_btn = QPushButton("Straight 5 s (test)")
+        self._straight_test_btn = QPushButton("Straight 15 s (test)")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drive forward at the current speed for 5 seconds, then stop. "
+            "Drive forward at the current speed for 15 seconds, then stop. "
             "Turn off autonomous mode and release the brake first."
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)

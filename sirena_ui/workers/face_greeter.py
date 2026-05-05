@@ -39,7 +39,7 @@ from typing import Dict, Optional
 from PyQt5.QtCore import QObject, QThread, pyqtSignal, pyqtSlot
 
 from nina.services.audio_generator import AudioGenerator, AudioGeneratorError
-from nina.services.audio_player import AudioPlayer
+from nina.services.audio_player import AudioPlayer, play_silence_preroll_blocking
 
 
 log = logging.getLogger("sirena_ui.face_greeter")
@@ -198,6 +198,7 @@ class FaceGreeter(QObject):
 
     def _play_wav_blocking(self, wav_path: Path) -> bool:
         """Play a WAV with aplay (optional ALSA device) then paplay."""
+        play_silence_preroll_blocking()
         wav = str(wav_path)
         cmd = self._aplay_argv(wav)
         if cmd is not None:
@@ -237,6 +238,7 @@ class FaceGreeter(QObject):
     @staticmethod
     def _espeak_direct(text: str, es_path: str) -> bool:
         """Last resort: espeak's own audio output (Pulse etc.)."""
+        play_silence_preroll_blocking()
         try:
             r = subprocess.run(
                 [es_path, "-s", "150", text],
@@ -260,6 +262,7 @@ class FaceGreeter(QObject):
     def _play_mp3_blocking(self, path: Path) -> bool:
         """Play MP3 with mpg123 (log stderr), then ffplay as fallback."""
         path = Path(path)
+        play_silence_preroll_blocking()
         mpg = shutil.which("mpg123")
         if mpg:
             r = subprocess.run(
@@ -493,7 +496,7 @@ class FaceGreeter(QObject):
                 self.spoken.emit(name)
                 return True
             if self._player.can_play(path):
-                proc = self._player.play(path)
+                proc = self._player.play(path, skip_preroll=True)
                 if proc is not None:
                     self.spoken.emit(name)
                     return True
