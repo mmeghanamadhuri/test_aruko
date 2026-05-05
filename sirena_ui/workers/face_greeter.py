@@ -121,10 +121,6 @@ class FaceGreeter(QObject):
                 log.debug("espeak not usable (%s): %s", exe, exc)
         return False
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def greet(self, name: str) -> None:
         """Speak "Hello <name>" if cooldown has elapsed for this name.
 
@@ -154,7 +150,7 @@ class FaceGreeter(QObject):
         clip = self._cached_clip_for(name)
         if clip is not None:
             self._play_clip(clip, name)
-            return
+            return  # cooldown reserved above
         # First-time greeting: gTTS MP3 when possible, else espeak only.
         if AudioGenerator.is_available() is None:
             self._spawn_synthesis(name)
@@ -165,6 +161,80 @@ class FaceGreeter(QObject):
             self.spoken.emit(name)
         else:
             self.reset_cooldown(name)
+
+    def greet_now(self, name: str) -> None:
+        """Speak ``Hello <name>`` for operator-driven latches (e.g. person follow).
+
+        Bypasses cooldown and does not reserve the slot before playback so we
+        avoid the path where ``greet()`` records ``_last_greeted`` then returns
+        without audio because a QThread synthesis worker is still running for
+        the same name. First-time names run gTTS + play on a daemon thread so
+        we never block the GUI.
+        """
+        name = (name or "").strip()
+        if not name:
+            return
+        if not self._playback_available():
+            log.warning(
+                "FaceGreeter.greet_now: no MP3 player (mpg123/ffplay) or espeak"
+            )
+            return
+
+        self.reset_cooldown(name)
+
+        text = f"Hello {name}"
+        clip = self._cached_clip_for(name)
+        if clip is not None:
+            if self._play_clip(clip, name):
+                with self._lock:
+                    self._last_greeted[name] = time.time()
+            return
+
+        if AudioGenerator.is_available() is None:
+            cache_dir = self._cache_dir
+            stem = _safe_filename(name)
+            player = self._player
+            greeter = self
+
+            def run() -> None:
+                try:
+                    out_path = cache_dir / f"{stem}.mp3"
+                    if not out_path.exists() or out_path.stat().st_size == 0:
+                        try:
+                            AudioGenerator.generate(text, out_path)
+                        except AudioGeneratorError as exc:
+                            log.warning(
+                                "FaceGreeter.greet_now gTTS failed: %s", exc
+                            )
+                            if greeter._try_espeak(text):
+                                greeter.spoken.emit(name)
+                                with greeter._lock:
+                                    greeter._last_greeted[name] = time.time()
+                            return
+                    if player.can_play(out_path):
+                        proc = player.play(out_path)
+                        if proc is not None:
+                            greeter.spoken.emit(name)
+                            with greeter._lock:
+                                greeter._last_greeted[name] = time.time()
+                            return
+                    if greeter._try_espeak(text):
+                        greeter.spoken.emit(name)
+                        with greeter._lock:
+                            greeter._last_greeted[name] = time.time()
+                except Exception:  # pragma: no cover
+                    log.exception("FaceGreeter.greet_now")
+
+            threading.Thread(
+                target=run, daemon=True, name="face-greet-now"
+            ).start()
+            return
+
+        log.info("FaceGreeter.greet_now: gTTS unavailable; espeak for %s", name)
+        if self._try_espeak(text):
+            self.spoken.emit(name)
+            with self._lock:
+                self._last_greeted[name] = time.time()
 
     def reset_cooldown(self, name: Optional[str] = None) -> None:
         """Forget the last-greeted timestamp(s).
@@ -217,15 +287,17 @@ class FaceGreeter(QObject):
         path = Path(path_obj)
         if path.exists():
             self._play_clip(path, name)
+            return
+        self.reset_cooldown(name)
 
-    def _play_clip(self, path: Path, name: str) -> None:
+    def _play_clip(self, path: Path, name: str) -> bool:
         text = f"Hello {name}"
         try:
             if self._player.can_play(path):
                 proc = self._player.play(path)
                 if proc is not None:
                     self.spoken.emit(name)
-                    return
+                    return True
             log.warning(
                 "FaceGreeter: cannot play %s (need mpg123 or ffplay); "
                 "trying espeak fallback",
@@ -235,9 +307,10 @@ class FaceGreeter(QObject):
             log.warning("FaceGreeter playback failed for %s: %s", name, exc)
         if self._try_espeak(text):
             self.spoken.emit(name)
-            return
+            return True
         log.warning("FaceGreeter: espeak fallback also failed for %s", name)
         self.reset_cooldown(name)
+        return False
 
 
 class FaceGreetReceiver(QObject):

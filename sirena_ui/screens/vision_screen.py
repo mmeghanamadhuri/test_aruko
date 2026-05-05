@@ -786,8 +786,7 @@ class VisionScreen(QWidget):
         if greeter is None:
             return
         greet_key = (name or "").strip() or "friend"
-        greeter.reset_cooldown(greet_key)
-        greeter.greet(greet_key)
+        greeter.greet_now(greet_key)
 
     def _on_follow_status(self, msg: str) -> None:
         if self._follow_pill is None:

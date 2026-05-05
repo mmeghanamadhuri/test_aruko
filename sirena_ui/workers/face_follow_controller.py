@@ -24,13 +24,16 @@ from sirena_ui.workers.vision_types import KIND_FACE, Detection
 log = logging.getLogger("sirena_ui.face_follow")
 
 # Follow speeds — `drive_wheels` passes these through to PWM (can be < MIN_SPEED_PCT).
-_SPEED_APPROACH_PCT = 12
-_SPEED_CRUISE_PCT = 10
-_SPEED_BACK_PCT = 10
-_SPEED_NUDGE_PCT = 10
+# Defaults tuned for slow, stable approach; override via NINA_FOLLOW_* env vars.
+_SPEED_APPROACH_PCT = int(os.environ.get("NINA_FOLLOW_APPROACH_PCT", "6"))
+_SPEED_CRUISE_PCT = int(os.environ.get("NINA_FOLLOW_CRUISE_PCT", "5"))
+_SPEED_BACK_PCT = int(os.environ.get("NINA_FOLLOW_BACK_PCT", "5"))
+_SPEED_NUDGE_PCT = int(os.environ.get("NINA_FOLLOW_NUDGE_PCT", "5"))
 
-_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "10"))
-_SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "9.0"))
+_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "4"))
+_SEARCH_SPIN_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_SPIN_SEC", "16.0"))
+# Lateral steering while approaching: normalized err_x [-1,1] -> differential PWM.
+_YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "3.5"))
 # Require this many consecutive no-face ticks (after a lock) before 360° search.
 # Single-frame YuNet blips must not reset this counter (see _face_present_streak).
 _LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "4")))
@@ -310,7 +313,7 @@ class FaceFollowController(QObject):
                 ) * t
             cruise = int(round(cruise_sp))
             # Blend toward centre without commanding a near–in-place spin.
-            yaw = err_x * 7.0
+            yaw = err_x * _YAW_GAIN
             ls = int(max(min_sp, min(max_sp, cruise + int(yaw))))
             rs = int(max(min_sp, min(max_sp, cruise - int(yaw))))
             try:

@@ -723,9 +723,15 @@ export NINA_VISION_YOLO_WEIGHTS=/path/to.pt
 # Smaller max width = less scaling work on the UI thread (default 640).
 export NINA_VISION_PREVIEW_MAX_W=640
 export NINA_VISION_PREVIEW_MS=33
-# Person follow: seconds of in-place spin to search for a lost face (time ~= ~360°).
-export NINA_FOLLOW_SEARCH_SPIN_SEC=9
-export NINA_FOLLOW_SEARCH_PCT=10
+# Person follow: PWM % and timing (defaults are slow/stable).
+export NINA_FOLLOW_APPROACH_PCT=6
+export NINA_FOLLOW_CRUISE_PCT=5
+export NINA_FOLLOW_BACK_PCT=5
+export NINA_FOLLOW_NUDGE_PCT=5
+export NINA_FOLLOW_YAW_GAIN=3.5
+# Lost-target search: in-place spin speed and duration (longer + lower % = slower sweep).
+export NINA_FOLLOW_SEARCH_SPIN_SEC=16
+export NINA_FOLLOW_SEARCH_PCT=4
 # Consecutive no-face ticks after a lock before 360° scan (debounce).
 export NINA_FOLLOW_LOST_TICKS=4
 # Consecutive face ticks before we trust detections (clear lost / exit search).
