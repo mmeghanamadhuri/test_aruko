@@ -98,9 +98,10 @@ MAX_SPEED_PCT = 14
 # Single manual-drive duty (no slider): midpoint of the safe envelope.
 FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 
-# When both wheels share the same direction, boost the right duty to
-# compensate a faster left hub. First PWM after the breakaway kick uses
-# START; all later commands use RUN (including cruise, live speed, autonomy).
+# When both wheels share the same **forward** direction, boost the right duty
+# to compensate a faster left hub. First PWM after the breakaway kick uses
+# START; all later forward commands use RUN. Reverse (both backward), turns,
+# and coast are left symmetric.
 RIGHT_WHEEL_EXTRA_START_PP = 2
 RIGHT_WHEEL_EXTRA_RUN_PP = 5
 
@@ -132,15 +133,17 @@ def _pair_duties_with_right_bias(
     *,
     start_phase: bool,
 ) -> Tuple[int, int]:
-    """Left duty unchanged; right duty += START/RUN when both wheels agree on
-    direction (straight or gentle arc). Opposite directions (turn-in-place)
-    and 0/0 coast are left symmetric so steering geometry is preserved."""
+    """Left duty unchanged; right duty += START/RUN when both wheels move
+    **forward** together. Reverse (both **backward**), opposite directions
+    (turn-in-place), and coast (any zero duty) stay symmetric."""
     lb, rb = int(left_base), int(right_base)
     if lb == 0 and rb == 0:
         return 0, 0
     if left_dir != right_dir:
         return lb, rb
     if lb == 0 or rb == 0:
+        return lb, rb
+    if left_dir == NavigationManager.DIR_BACKWARD:
         return lb, rb
     extra = (
         RIGHT_WHEEL_EXTRA_START_PP if start_phase else RIGHT_WHEEL_EXTRA_RUN_PP
