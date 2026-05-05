@@ -124,8 +124,13 @@ class FaceFollowController(QObject):
         if st.get("brake"):
             self.status_message.emit("Follow: engage brake off on Drive first")
             return False
+        try:
+            self._drive.stop(drain=True)
+        except Exception:
+            pass
         self._target_name = (target_name or "").strip() or None
         self._ref_area = None
+        self._latest = []
         self._searching = False
         self._search_in_turn = False
         self._search_look_remaining = 0
@@ -159,6 +164,7 @@ class FaceFollowController(QObject):
         self._search_step_timer.stop()
         self._target_name = None
         self._ref_area = None
+        self._latest = []
         try:
             self._drive.stop(drain=True)
         except Exception as exc:
@@ -432,6 +438,9 @@ class FaceFollowController(QObject):
         self._face_present_streak = 0
         self._timer.stop()
         self._search_step_timer.stop()
+        self._latest = []
+        self._target_name = None
+        self._ref_area = None
         self._drive_stop_safe()
         self.status_message.emit(
             "Follow: lost after full scan — tap Start follow to retry"

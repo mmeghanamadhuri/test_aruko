@@ -7,12 +7,11 @@ Jetson (`aplay` for WAV, `mpg123` for MP3, `ffplay` as a final
 fallback). No Python audio dependencies are required, so this works on
 a fresh JetPack image without extra pip installs.
 
-Before starting a clip, ``AudioPlayer.play`` runs an output preroll:
-prefer **mute → dwell → unmute** (``NINA_AUDIO_MUTE_PREROLL_SEC``,
-default **2** s) via PulseAudio or ALSA ``amixer``, so amps settle
-without audible noise. If muting is unavailable, falls back to playing
-digital silence (``NINA_AUDIO_PREROLL_MS``; default **0** ms so mute
-is the only delay when it works).
+Before starting a clip, ``AudioPlayer.play`` runs a **volume preroll**:
+save sink/Master level, set **0%**, dwell (``NINA_AUDIO_MUTE_PREROLL_SEC``,
+default **2** s) so the amp path settles, then restore the saved level
+(ALSA ``amixer`` first for direct card playback, else PulseAudio). If that
+fails, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence via ``aplay``.
 
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
@@ -21,6 +20,7 @@ Install hint on the Jetson:
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -48,9 +48,27 @@ def _preroll_ms() -> int:
         return 0
 
 
+def _restore_volume_default_pct() -> int:
+    try:
+        return max(1, min(100, int(os.environ.get("NINA_AUDIO_RESTORE_VOLUME_PCT", "75"))))
+    except ValueError:
+        return 75
+
+
 def _aplay_device_flag() -> Optional[str]:
     d = (os.environ.get("NINA_GREET_APLAY_DEVICE") or "").strip()
     return d or None
+
+
+def _parse_volume_pct_from_text(text: str) -> Optional[int]:
+    """First ``NN%`` in pactl/amixer output (e.g. 50% / ... dB)."""
+    if not text:
+        return None
+    m = re.search(r"(\d{1,3})%", text)
+    if not m:
+        return None
+    v = int(m.group(1))
+    return v if 0 <= v <= 150 else None
 
 
 def _ensure_preroll_wav(ms: int, sample_rate: int = 44100) -> Optional[Path]:
@@ -76,14 +94,49 @@ def _ensure_preroll_wav(ms: int, sample_rate: int = 44100) -> Optional[Path]:
     return path
 
 
-def _pulse_default_sink_mute(mute: bool) -> bool:
-    pactl = shutil.which("pactl")
-    if not pactl:
-        return False
-    v = "1" if mute else "0"
+def _alsa_amixer_base() -> Optional[List[str]]:
+    exe = shutil.which("amixer")
+    if not exe:
+        return None
+    cmd: List[str] = [exe]
+    card = (os.environ.get("NINA_AUDIO_MIXER_CARD") or "").strip()
+    if card:
+        cmd.extend(["-c", card])
+    return cmd
+
+
+def _alsa_mixer_control() -> str:
+    return (os.environ.get("NINA_AUDIO_MIXER_CONTROL") or "Master").strip() or "Master"
+
+
+def _alsa_get_volume_pct() -> Optional[int]:
+    base = _alsa_amixer_base()
+    if not base:
+        return None
     try:
         r = subprocess.run(
-            [pactl, "set-sink-mute", "@DEFAULT_SINK@", v],
+            base + ["sget", _alsa_mixer_control()],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return _parse_volume_pct_from_text(r.stdout or "")
+
+
+def _alsa_set_volume_pct(pct: int) -> bool:
+    base = _alsa_amixer_base()
+    if not base:
+        return False
+    pct = max(0, min(100, int(pct)))
+    try:
+        r = subprocess.run(
+            base + ["-q", "sset", _alsa_mixer_control(), f"{pct}%"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5.0,
@@ -94,20 +147,34 @@ def _pulse_default_sink_mute(mute: bool) -> bool:
         return False
 
 
-def _alsa_mixer_mute(mute: bool) -> bool:
-    amixer = shutil.which("amixer")
-    if not amixer:
-        return False
-    card = (os.environ.get("NINA_AUDIO_MIXER_CARD") or "").strip()
-    control = (os.environ.get("NINA_AUDIO_MIXER_CONTROL") or "Master").strip() or "Master"
-    state = "mute" if mute else "unmute"
-    cmd: List[str] = [amixer, "-q"]
-    if card:
-        cmd.extend(["-c", card])
-    cmd.extend(["sset", control, state])
+def _pulse_get_volume_pct() -> Optional[int]:
+    pactl = shutil.which("pactl")
+    if not pactl:
+        return None
     try:
         r = subprocess.run(
-            cmd,
+            [pactl, "get-sink-volume", "@DEFAULT_SINK@"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+            timeout=5.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return _parse_volume_pct_from_text(r.stdout or "")
+
+
+def _pulse_set_volume_pct(pct: int) -> bool:
+    pactl = shutil.which("pactl")
+    if not pactl:
+        return False
+    pct = max(0, min(150, int(pct)))
+    try:
+        r = subprocess.run(
+            [pactl, "set-sink-volume", "@DEFAULT_SINK@", f"{pct}%"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=5.0,
@@ -119,7 +186,7 @@ def _alsa_mixer_mute(mute: bool) -> bool:
 
 
 def _silence_wav_preroll_blocking() -> None:
-    """Play silent WAV through ``aplay`` when mute preroll is unavailable."""
+    """Play silent WAV through ``aplay`` when volume preroll is unavailable."""
     ms = _preroll_ms()
     if ms <= 0:
         return
@@ -148,28 +215,37 @@ def _silence_wav_preroll_blocking() -> None:
 
 
 def play_silence_preroll_blocking() -> None:
-    """Prepare the output path before playback: mute dwell, else silent WAV.
+    """Before playback: volume 0% → dwell → restore (ALSA first, else Pulse).
 
-    PulseAudio is tried first (``pactl``), then ALSA ``amixer``. If both
-    fail, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence.
+    Uses ``NINA_AUDIO_MUTE_PREROLL_SEC`` for dwell (default 2 s). If the
+    current level cannot be read, restore uses ``NINA_AUDIO_RESTORE_VOLUME_PCT``
+    after zeroing.
     """
     sec = _mute_preroll_sec()
-    if sec > 0:
-        used_pulse = False
-        if _pulse_default_sink_mute(True):
-            used_pulse = True
-        elif _alsa_mixer_mute(True):
-            used_pulse = False
-        else:
-            _silence_wav_preroll_blocking()
-            return
+    if sec <= 0:
+        _silence_wav_preroll_blocking()
+        return
+
+    restore_default = _restore_volume_default_pct()
+
+    # Prefer ALSA Master first: mpg123/aplay often hit the card directly;
+    # Pulse default sink may not affect that path on Jetson kiosks.
+    alsa_saved = _alsa_get_volume_pct()
+    if _alsa_set_volume_pct(0):
         try:
             time.sleep(sec)
         finally:
-            if used_pulse:
-                _pulse_default_sink_mute(False)
-            else:
-                _alsa_mixer_mute(False)
+            r = alsa_saved if alsa_saved is not None else restore_default
+            _alsa_set_volume_pct(r)
+        return
+
+    pulse_saved = _pulse_get_volume_pct()
+    if _pulse_set_volume_pct(0):
+        try:
+            time.sleep(sec)
+        finally:
+            r = pulse_saved if pulse_saved is not None else restore_default
+            _pulse_set_volume_pct(r)
         return
 
     _silence_wav_preroll_blocking()
