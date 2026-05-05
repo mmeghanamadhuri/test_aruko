@@ -97,6 +97,10 @@ class LinkDaemonConfig:
     enable_depth_bridge: bool = False
     #: Autonomous pilot (reactive wander) over HTTP. Conflicts with momentary HTTP drive while active.
     enable_autonomy_bridge: bool = False
+    #: Log companion / UI HTTP traffic at INFO (mutations always when True; high-frequency GETs optional).
+    log_ui_requests: bool = True
+    #: Also log noisy polling GETs (vision status, slam snapshot, etc.); default False.
+    log_ui_poll_gets: bool = False
 
     def auth_required(self) -> bool:
         return bool(self.token and self.token.strip())
@@ -150,6 +154,8 @@ def load_config() -> LinkDaemonConfig:
         enable_slam_bridge=_env_bool("NINA_LINK_ENABLE_SLAM_BRIDGE", False),
         enable_depth_bridge=_env_bool("NINA_LINK_ENABLE_DEPTH_BRIDGE", False),
         enable_autonomy_bridge=_env_bool("NINA_LINK_ENABLE_AUTONOMY_BRIDGE", False),
+        log_ui_requests=_env_bool("NINA_LINK_LOG_UI_REQUESTS", True),
+        log_ui_poll_gets=_env_bool("NINA_LINK_LOG_UI_POLL_GETS", False),
     )
     if _env_bool("NINA_LINK_MOCK", False):
         cfg.mock_nm = True

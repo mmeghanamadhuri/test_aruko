@@ -447,11 +447,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         direction: String,
         durationMs: Int = 280,
         speedPercent: Int? = null,
-    ) {
+    ): JSONObject {
         NinaLog.tap("Drive", "momentary", "$direction ${durationMs}ms speed=$speedPercent")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
-        client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
+        return client.robotDriveMomentary(url, bearer, direction, durationMs, speedPercent)
     }
 
     suspend fun fetchRobotDriveStatus(): JSONObject? =
@@ -474,11 +474,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    suspend fun robotEmergencyStop() {
+    suspend fun robotEmergencyStop(): JSONObject {
         NinaLog.tap("Drive", "emergency_stop", "")
         val url = prefs.baseUrl.first()
         val bearer = prefs.bearerToken.first()
-        client.robotEmergencyStop(url, bearer)
+        return client.robotEmergencyStop(url, bearer)
     }
 
     fun requestJetsonShutdown(onResult: (String?) -> Unit) {

@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.graphics.Bitmap
 import android.webkit.WebView
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,7 +15,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
@@ -131,43 +132,55 @@ fun SirenaPerceptionScreen(
         }
     }
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    SirenaScrollableScreen(
+        titleBar = "Nina · Perception",
+        breadcrumb = "Nina / Perception",
+        modifier = modifier,
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                "Nina · Perception",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Text(
+            "Sensor fusion",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Pill(autoPill, emphasis = autonomyOn)
+            Pill(
+                if (slamOn) {
+                    if (lidarPill != "Lidar: …") lidarPill else if (lidarBitmap != null) "Lidar: map" else "Lidar: …"
+                } else {
+                    "Lidar: bridge off"
+                },
+                emphasis = slamOn && lidarBitmap != null,
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Pill(autoPill)
-                Pill(
-                    if (slamOn) {
-                        if (lidarPill != "Lidar: …") lidarPill else if (lidarBitmap != null) "Lidar: map" else "Lidar: …"
-                    } else {
-                        "Lidar: bridge off"
-                    },
-                )
-                Pill(
-                    if (depthOn) depthPill else "Depth: bridge off",
-                )
-                Pill(
-                    when {
-                        !visionOn -> "Cam: bridge off"
-                        cameraOn -> "Cam: live"
-                        else -> "Cam: off"
-                    },
-                )
-            }
+            Pill(
+                if (depthOn) depthPill else "Depth: bridge off",
+                emphasis = depthOn && depthPill.contains("stream"),
+            )
+            Pill(
+                when {
+                    !visionOn -> "Cam: bridge off"
+                    cameraOn -> "Cam: live"
+                    else -> "Cam: off"
+                },
+                emphasis = cameraOn,
+            )
         }
 
+        Text(
+            "Autonomy",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("Autonomous", style = MaterialTheme.typography.bodyMedium)
+            Text("Autonomous mode", style = MaterialTheme.typography.bodyMedium)
             SirenaSwitch(
                 checked = autonomyOn,
                 onCheckedChange = { want ->
@@ -202,6 +215,12 @@ fun SirenaPerceptionScreen(
             )
         }
 
+        Text(
+            "Live panels",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
         Row(
             Modifier
                 .fillMaxWidth()
@@ -249,9 +268,13 @@ fun SirenaPerceptionScreen(
 
 @Composable
 private fun LidarSlamPane(title: String, bitmap: Bitmap?, modifier: Modifier = Modifier) {
-    Card(modifier.fillMaxSize(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    Card(
+        modifier.fillMaxSize(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                 if (bitmap != null) {
                     Image(
@@ -280,9 +303,19 @@ private fun LidarSlamPane(title: String, bitmap: Bitmap?, modifier: Modifier = M
 }
 
 @Composable
-private fun Pill(text: String) {
-    Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant) {
-        Text(text, Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+private fun Pill(text: String, emphasis: Boolean = false) {
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color =
+            if (emphasis) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+    ) {
+        Text(
+            text,
+            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+        )
     }
 }
 
@@ -295,9 +328,13 @@ private fun CameraPane(
     enabled: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    Card(modifier.fillMaxSize(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+    Card(
+        modifier.fillMaxSize(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+    ) {
         Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text(title, fontWeight = FontWeight.SemiBold)
+            Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
             Box(Modifier.fillMaxWidth().aspectRatio(16f / 9f), contentAlignment = Alignment.Center) {
                 if (enabled) {
                     val streamUrl = "$streamRoot$streamPath"

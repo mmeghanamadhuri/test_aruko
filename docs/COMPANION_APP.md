@@ -143,6 +143,14 @@ Environment variables (see [`nina/link_daemon/config.py`](../nina/link_daemon/co
 
 Systemd example: [`nina/systemd/nina-link.service`](../nina/systemd/nina-link.service).
 
+### BLDC / Pi UART parity with Sirena UI
+
+The desktop kiosk sets `NINA_NAV_MODE`, `NINA_NAV_REMOTE_PORT` (often `/dev/ttyTHS1`), and invert flags — see [`desktop/nina-ui-kiosk.service`](../desktop/nina-ui-kiosk.service). The **same variables must be visible to `nina-link`** or `GET /v1/robot/drive/status` will show BLDC disconnected while the Qt Drive screen works.
+
+- **Stock unit** ([`nina/systemd/nina-link.service`](../nina/systemd/nina-link.service)) loads optional **`/etc/nina-link/navigation.env`** (`EnvironmentFile=-/…`).
+- **Template:** copy [`nina/systemd/nina-link-navigation.env.example`](../nina/systemd/nina-link-navigation.env.example) to `/etc/nina-link/navigation.env` on the Jetson (the install script creates this file once if missing), then `sudo systemctl restart nina-link`.
+- Do **not** run Sirena UI Drive and HTTP robot drive at the same time — they contend for the same navigation backend.
+
 ### Systemd: enable drive / play / record / vision (drop-in)
 
 Prefer a **drop-in** so future `install-nina-link-jetson.sh` runs do not overwrite your flags:

@@ -34,6 +34,26 @@ from nina.link_daemon.state import LinkCoordinator, UserMode
 
 log = logging.getLogger("nina.link_daemon.api")
 
+# GET paths polled often by the Android companion; omit from INFO logs unless log_ui_poll_gets.
+_UI_POLL_GET_PATHS = frozenset(
+    {
+        "/v1/status",
+        "/v1/robot/capabilities",
+        "/v1/robot/health",
+        "/v1/robot/drive/status",
+        "/v1/vision/status",
+        "/v1/vision/detections",
+        "/v1/vision/enroll/status",
+        "/v1/vision/announce/status",
+        "/v1/slam/status",
+        "/v1/slam/snapshot",
+        "/v1/slam/occupancy",
+        "/v1/depth/status",
+        "/v1/autonomy/status",
+        "/v1/actions/record/status",
+    }
+)
+
 
 def _bus_init_http_exception(exc: BaseException) -> HTTPException:
     """Map Dynamixel / ``build_app`` failures to JSON ``detail`` (companion + curl)."""
@@ -213,6 +233,18 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
     @app.middleware("http")
     async def touch_clients(request: Request, call_next):
         coordinator.record_http_client(_client_ip(request))
+        if cfg.log_ui_requests:
+            ip = _client_ip(request)
+            method = request.method.upper()
+            path = request.url.path
+            if path in ("/health", "/docs", "/openapi.json", "/redoc", "/favicon.ico"):
+                return await call_next(request)
+            skip = False
+            if method == "GET" and path in _UI_POLL_GET_PATHS and not cfg.log_ui_poll_gets:
+                skip = True
+            if not skip and path.startswith("/v1/"):
+                # One line per request: buttons/posts always; GETs unless poll omission above.
+                log.info("ui http %s %s client=%s", method, path, ip or "-")
         return await call_next(request)
 
     def auth_mutate(authorization: Optional[str], request: Request) -> None:

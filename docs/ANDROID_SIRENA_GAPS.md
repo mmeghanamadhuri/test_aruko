@@ -30,11 +30,11 @@ The Jetpack app is a **remote client** to **`nina-link`**. This document tracks 
 |--------|---------|---------|
 | Top pills | Autonomous + BLDC | **Present** |
 | Camera card + preview pill | Front camera + HUD | **Present** — HUD Speed / Heading / Distance / Battery |
-| HUD metrics | From `DriveController.state` + slam | **Partial** — speed from slider; pose from SLAM status when enabled; battery from health |
+| HUD metrics | From `DriveController.state` + slam | **Present** — speed from slider; heading/distance from SLAM when bridge on; battery from `GET /v1/robot/health` when a `battery` row exists, else `n/a` |
 | Manual card | Title row + Auto toggle | **Present** — autonomy toggle on manual card |
-| D-pad + speed | D-pad, slider, % pill | **Present** |
+| D-pad + speed | D-pad, slider, % pill | **Present** — hold-to-repeat pulses (HTTP momentary drive); `ok: false` / autonomy block surfaced |
 | Wheels Flip L / R | `set_invert_*` + persist | **Present** — `POST /v1/robot/drive/invert` + status fields |
-| Brake / Reverse / E‑STOP | Same row | **Present** |
+| Brake / Reverse / E‑STOP | Same row | **Present** — E‑stop shows Jetson init errors when BLDC path is down |
 | Keyboard hint | WASD line | **Present** (touch-focused copy) |
 
 ## Vision (`vision_screen.py` → `SirenaVisionScreen.kt`)

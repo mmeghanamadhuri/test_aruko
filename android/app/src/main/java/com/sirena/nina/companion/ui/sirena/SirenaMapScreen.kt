@@ -15,9 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,13 +33,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -177,80 +177,85 @@ fun SirenaMapScreen(
         }
     }
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    SirenaScrollableScreen(
+        titleBar = "Nina · Map",
+        breadcrumb = "Nina / Map",
+        modifier = modifier,
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(
-                "Nina · Map",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+        Text(
+            "Occupancy map & pilot",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            MapStatusPill(
+                if (slamOn) "SLAM: ${slamStatus?.optString("lidar_message")?.take(14) ?: "…"}"
+                else "SLAM: off",
+                emphasis = slamOn,
+                modifier = Modifier.weight(1f),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(
-                        if (slamOn) "SLAM: ${slamStatus?.optString("lidar_message")?.take(16) ?: "…"}"
-                        else "SLAM: off (daemon)",
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(
-                        if (autonomyApi) {
-                            if (autonomyOn) "Autonomy: ON" else "Autonomy: OFF"
-                        } else {
-                            "Autonomy: n/a"
-                        },
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(
-                        "Mode: $navMode",
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(
-                        "Goto: $gotoState",
-                        Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                }
-            }
+            MapStatusPill(
+                if (autonomyApi) {
+                    if (autonomyOn) "Auto: ON" else "Auto: OFF"
+                } else {
+                    "Auto: n/a"
+                },
+                emphasis = autonomyOn,
+                modifier = Modifier.weight(1f),
+            )
+            MapStatusPill(
+                "Mode: ${navMode.take(10)}",
+                emphasis = navMode != "—" && navMode.isNotBlank(),
+                modifier = Modifier.weight(1f),
+            )
+            MapStatusPill(
+                "Goto: ${gotoState.take(10)}",
+                emphasis = gotoState != "idle",
+                modifier = Modifier.weight(1f),
+            )
         }
 
         if (slamOn) {
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                verticalAlignment = Alignment.CenterVertically,
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
             ) {
-                MapLegendDot(Color(0xFFC8102E), "Nina")
-                MapLegendDot(Color(0xFF1C1C1E), "Wall")
-                MapLegendDot(Color(0xFFD1D1D6), "Free")
-                MapLegendDot(Color(0xFF8E8E93), "Unknown")
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp, horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    MapLegendDot(Color(0xFFC8102E), "Nina")
+                    MapLegendDot(Color(0xFF1C1C1E), "Wall")
+                    MapLegendDot(Color(0xFFD1D1D6), "Free")
+                    MapLegendDot(Color(0xFF8E8E93), "Unknown")
+                }
             }
         }
 
         Row(
             Modifier
                 .fillMaxWidth()
-                .height(320.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                .height(360.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
         ) {
             Card(
                 Modifier
-                    .weight(0.62f)
+                    .weight(0.57f)
                     .fillMaxSize(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             ) {
                 // Track the rendered bitmap rect so taps can be
                 // converted to world mm using the snapshot's scale.
@@ -302,9 +307,10 @@ fun SirenaMapScreen(
                         Image(
                             bitmap = occBitmap!!.asImageBitmap(),
                             contentDescription = "SLAM occupancy",
+                            contentScale = ContentScale.Fit,
                             modifier = Modifier
                                 .fillMaxSize()
-                                .padding(4.dp),
+                                .padding(6.dp),
                         )
                         // Overlay path polyline + goal flag on top of
                         // the bitmap. The overlay uses the same Box so
@@ -372,24 +378,51 @@ fun SirenaMapScreen(
                             }
                         }
                     } else {
-                        Text(
-                            if (!slamOn) "Enable NINA_LINK_ENABLE_SLAM_BRIDGE on the Jetson for the map."
-                            else if (occBitmap == null) "Waiting for SLAM grid…"
-                            else "",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                        Column(
+                            Modifier
+                                .fillMaxSize()
+                                .padding(20.dp),
+                            verticalArrangement = Arrangement.Center,
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            Text(
+                                if (!slamOn) {
+                                    "Enable NINA_LINK_ENABLE_SLAM_BRIDGE on the Jetson for the occupancy map."
+                                } else if (occBitmap == null) {
+                                    "Waiting for SLAM grid…"
+                                } else {
+                                    ""
+                                },
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                        }
                     }
                 }
             }
             Column(
                 Modifier
-                    .weight(0.38f)
+                    .weight(0.43f)
                     .fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Pose", fontWeight = FontWeight.Bold)
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "Pose",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                         val pose = snap?.optJSONObject("pose")
                         if (pose != null) {
                             val x = pose.optLong("x_mm")
@@ -409,35 +442,77 @@ fun SirenaMapScreen(
                             ).joinToString(" · ")
                         Text(
                             detail.ifBlank { "Pose from /v1/slam/snapshot when the bridge is on." },
+                            modifier = Modifier.fillMaxWidth(),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
                 if (autonomyApi) {
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Sensor health", fontWeight = FontWeight.Bold)
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                "Sensor health",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                             Text(
                                 listOf(lidarHl, depthHl, irHl, ultraHl).joinToString("  ·  "),
+                                modifier = Modifier.fillMaxWidth(),
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                    Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text("Pilot (wander)", fontWeight = FontWeight.Bold)
+                    Card(
+                        Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    ) {
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            Text(
+                                "Pilot",
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
                             Text(
                                 pilotSummary.ifBlank { "idle" },
+                                modifier = Modifier.fillMaxWidth(),
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }
                     }
                 }
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Controls", fontWeight = FontWeight.Bold)
+                Card(
+                    Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "Navigation & mapping",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Text("Autonomous", style = MaterialTheme.typography.bodySmall)
                             SirenaSwitch(
@@ -557,6 +632,34 @@ fun SirenaMapScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun MapStatusPill(
+    text: String,
+    emphasis: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color =
+            if (emphasis) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surfaceVariant,
+        shadowElevation = 1.dp,
+    ) {
+        Text(
+            text,
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Medium,
+            textAlign = TextAlign.Center,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

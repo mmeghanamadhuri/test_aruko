@@ -4,20 +4,15 @@ import android.annotation.SuppressLint
 import android.webkit.WebView
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,6 +31,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -130,43 +126,123 @@ fun SirenaVisionScreen(
         }
     }
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    SirenaScrollableScreen(
+        titleBar = "Nina · Vision",
+        breadcrumb = "Nina / Vision",
+        modifier = modifier,
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
             Text(
-                "Nina · Vision",
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                "Camera & recognition",
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.weight(1f),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text("Live", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color =
+                        if (pipelineOn) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        "MJPEG",
+                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                    )
                 }
-                Surface(shape = RoundedCornerShape(999.dp), color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text("Overlay", Modifier.padding(horizontal = 8.dp, vertical = 4.dp), style = MaterialTheme.typography.labelSmall)
+                Surface(
+                    shape = RoundedCornerShape(999.dp),
+                    color =
+                        if (faceOn || objectOn) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    Text(
+                        "Overlays",
+                        Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Medium,
+                    )
                 }
             }
         }
 
         if (!visionOn) {
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))) {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.55f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
                 Text(
                     "Vision bridge is off on the Jetson — set NINA_LINK_ENABLE_VISION_BRIDGE=1 and install OpenCV + sirena_ui vision dependencies, then restart nina-link.",
                     Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
                 )
             }
-            return@Column
         }
 
-        Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        if (visionOn) {
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Preview", fontWeight = FontWeight.Bold)
+                // Title + compact picture-in-corner (fixed width, native 16:9 — avoids full-width stretch).
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.Top,
+                ) {
+                    Text(
+                        "Live preview",
+                        modifier = Modifier.weight(1f),
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Surface(
+                        modifier = Modifier.width(200.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    ) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(4.dp)
+                                .aspectRatio(16f / 9f),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (pipelineOn && streamRoot.isNotBlank()) {
+                                val streamUrl = "$streamRoot/v1/vision/stream"
+                                val html =
+                                    remember(streamUrl) {
+                                        "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
+                                            "<body style=\"margin:0;background:#000;\">" +
+                                            "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block;object-fit:contain;\" />" +
+                                            "</body></html>"
+                                    }
+                                MjpegWebView(html = html)
+                            } else {
+                                Text(
+                                    "Off",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(8.dp),
+                                )
+                            }
+                        }
+                    }
+                }
                 ToggleRow("Camera stream", pipelineOn) { pipelineOn = it }
                 if (openCvHint && pipelineOn) {
                     Card(
@@ -195,81 +271,75 @@ fun SirenaVisionScreen(
                     )
                 }
                 if (statusMsg.isNotBlank()) {
-                    Text(statusMsg, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        statusMsg,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
-                // Same MJPEG resolution from Jetson; constrain display size so the frame fits comfortably on tablet.
-                BoxWithConstraints(
-                    Modifier.fillMaxWidth(),
-                    contentAlignment = Alignment.Center,
+            }
+        }
+        }
+
+        if (visionOn) {
+        Card(
+            Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Recognition pipeline",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                ToggleRow("Face detection", faceOn) { faceOn = it }
+                ToggleRow("Object detection", objectOn) { objectOn = it }
+                Text(
+                    "Object confidence ${(objectConfidence * 100).toInt()}%",
+                    modifier = Modifier.fillMaxWidth(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Slider(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = objectConfidence,
+                    onValueChange = { objectConfidence = it.coerceIn(0.5f, 0.99f) },
+                    valueRange = 0.5f..0.99f,
+                    enabled = visionOn && pipelineOn && objectOn,
+                )
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = {
+                        scope.launch {
+                            vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = objectConfidence.toDouble())
+                        }
+                    },
+                    enabled = visionOn && pipelineOn && objectOn,
                 ) {
-                    val maxPreviewHeight = 260.dp
-                    val widthWhenCapped = maxPreviewHeight * (16f / 9f)
-                    val naturalHeight = maxWidth * (9f / 16f)
-                    val previewModifier =
-                        if (naturalHeight <= maxPreviewHeight) {
-                            Modifier
-                                .fillMaxWidth()
-                                .aspectRatio(16f / 9f)
-                        } else {
-                            Modifier
-                                .width(widthWhenCapped)
-                                .height(maxPreviewHeight)
-                        }
-                    Box(previewModifier, contentAlignment = Alignment.Center) {
-                        if (pipelineOn && streamRoot.isNotBlank()) {
-                            val streamUrl = "$streamRoot/v1/vision/stream"
-                            val html =
-                                remember(streamUrl) {
-                                    "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"/></head>" +
-                                        "<body style=\"margin:0;background:#000;\">" +
-                                        "<img src=\"$streamUrl\" width=\"100%\" style=\"display:block\" />" +
-                                        "</body></html>"
-                                }
-                            MjpegWebView(html = html)
-                        } else {
-                            Surface(
-                                Modifier.fillMaxSize(),
-                                shape = RoundedCornerShape(8.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                            ) {
-                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    Text(
-                                        "Turn on Camera stream",
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            }
-                        }
-                    }
+                    Text("Apply confidence")
                 }
             }
         }
 
-        Text("Pipeline", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        ToggleRow("Face detection", faceOn) { faceOn = it }
-        ToggleRow("Object detection", objectOn) { objectOn = it }
-        Text("Object confidence ${(objectConfidence * 100).toInt()}%", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Slider(
-            value = objectConfidence,
-            onValueChange = { objectConfidence = it.coerceIn(0.5f, 0.99f) },
-            valueRange = 0.5f..0.99f,
-            enabled = visionOn && pipelineOn && objectOn,
+        Text(
+            "Face enrollment",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
         )
-        Button(
-            onClick = {
-                scope.launch {
-                    vm.postVisionOptionsSync(face = faceOn, objects = objectOn, objectConfidence = objectConfidence.toDouble())
-                }
-            },
-            enabled = visionOn && pipelineOn && objectOn,
-        ) {
-            Text("Apply confidence")
-        }
-
-        Text("Face enrollment", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
@@ -355,10 +425,17 @@ fun SirenaVisionScreen(
             }
         }
 
-        Text("Detections", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Detections & voice",
+            modifier = Modifier.fillMaxWidth(),
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.primary,
+        )
         Card(
             Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         ) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (detectionsText.isEmpty()) {
@@ -382,6 +459,7 @@ fun SirenaVisionScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Button(
+                    modifier = Modifier.fillMaxWidth(),
                     onClick = {
                         scope.launch {
                             announceErr = ""
@@ -430,6 +508,7 @@ fun SirenaVisionScreen(
                 }
             }
         }
+        }
     }
 }
 
@@ -456,7 +535,7 @@ private fun MjpegWebView(html: String) {
         update = { wv ->
             wv.loadDataWithBaseURL(null, html, "text/html", "UTF-8", null)
         },
-        modifier = Modifier.fillMaxWidth().fillMaxHeight(),
+        modifier = Modifier.fillMaxSize(),
     )
 }
 

@@ -118,6 +118,11 @@ def main() -> None:
     coordinator = LinkCoordinator(cfg, nm)
     _maybe_boot_ap(coordinator)
 
+    if cfg.enable_robot_bridge:
+        from nina.link_daemon import robot_bridge
+
+        robot_bridge.warmup_robot_navigation()
+
     app = create_app(cfg, coordinator)
     uvicorn.run(
         app,

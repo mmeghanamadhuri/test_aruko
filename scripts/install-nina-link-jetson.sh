@@ -106,6 +106,8 @@ Wants=network-online.target
 Type=simple
 # Must exist at systemd parse time; PYTHONPATH + ExecStart pin the repo (avoid /opt vs home mismatches).
 WorkingDirectory=/
+# Match Sirena UI kiosk BLDC UART (see nina/systemd/nina-link-navigation.env.example).
+EnvironmentFile=-/etc/nina-link/navigation.env
 Environment=PYTHONPATH=${REPO_ROOT}
 Environment=NINA_LINK_BOOT_AP=1
 Environment=NINA_LINK_DISABLE_WIFI_AUTOCONNECT=1
@@ -130,6 +132,19 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+    NAV_ENV_EX="${REPO_ROOT}/nina/systemd/nina-link-navigation.env.example"
+    NAV_ENV_DST="/etc/nina-link/navigation.env"
+    if [[ -f "${NAV_ENV_EX}" ]]; then
+        "${SUDO[@]}" mkdir -p /etc/nina-link
+        if [[ ! -f "${NAV_ENV_DST}" ]]; then
+            "${SUDO[@]}" cp "${NAV_ENV_EX}" "${NAV_ENV_DST}"
+            ok "Created ${NAV_ENV_DST} from example (edit NINA_NAV_REMOTE_PORT if needed)"
+        else
+            ok "Keeping existing ${NAV_ENV_DST}"
+        fi
+    else
+        warn "Missing ${NAV_ENV_EX} — create ${NAV_ENV_DST} manually for BLDC parity with Sirena UI"
+    fi
     "${SUDO[@]}" systemctl daemon-reload
     "${SUDO[@]}" systemctl enable nina-link.service
     "${SUDO[@]}" systemctl restart nina-link.service
