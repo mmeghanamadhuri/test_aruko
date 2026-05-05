@@ -22,6 +22,7 @@ Two input modes are supported:
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from PyQt5.QtCore import Qt, QTimer
@@ -61,8 +62,18 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
-# Bench / field check: drive forward at current speed, then stop.
+# Bench / field check: drive forward at boosted speed (not D-pad from-stop
+# cruise), then stop.  Default matches top of slider envelope; override with
+# NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_TEST_MS = 15000
+
+
+def _straight_test_speed_pct() -> int:
+    try:
+        raw = int(os.environ.get("NINA_STRAIGHT_TEST_SPEED_PCT", str(MAX_SPEED_PCT)))
+    except ValueError:
+        raw = MAX_SPEED_PCT
+    return max(MIN_SPEED_PCT, min(100, raw))
 
 
 class DriveScreen(QWidget):
@@ -283,7 +294,8 @@ class DriveScreen(QWidget):
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drive forward at the current speed for 15 seconds, then stop. "
+            "Drive forward at straight-test speed (default: top of slider range; "
+            "NINA_STRAIGHT_TEST_SPEED_PCT) for 15 seconds, then stop. "
             "Turn off autonomous mode and release the brake first."
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
@@ -486,7 +498,12 @@ class DriveScreen(QWidget):
         self._drive.ensure_hardware()
         self._straight_test_btn.setEnabled(False)
         self._dpad.set_enabled(False)
-        self._drive.drive("forward")
+        st = self._drive.state()
+        direction = "forward"
+        if st.get("reverse"):
+            direction = "back"
+        pct = _straight_test_speed_pct()
+        self._drive.drive_wheels(direction, pct, direction, pct)
         self._straight_test_timer.start(STRAIGHT_TEST_MS)
         self.setFocus()
 

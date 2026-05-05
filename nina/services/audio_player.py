@@ -8,7 +8,7 @@ fallback). No Python audio dependencies are required, so this works on
 a fresh JetPack image without extra pip installs.
 
 Before starting a clip, ``AudioPlayer.play`` can emit a short stretch of
-digital silence via ``aplay`` (``NINA_AUDIO_PREROLL_MS``, default 300 ms)
+digital silence via ``aplay`` (``NINA_AUDIO_PREROLL_MS``, default 1000 ms)
 so amps/USB speakers settle and the first syllable is not clipped.
 
 Install hint on the Jetson:
@@ -32,9 +32,9 @@ def _repo_root() -> Path:
 
 def _preroll_ms() -> int:
     try:
-        return max(0, int(os.environ.get("NINA_AUDIO_PREROLL_MS", "300")))
+        return max(0, int(os.environ.get("NINA_AUDIO_PREROLL_MS", "1000")))
     except ValueError:
-        return 300
+        return 1000
 
 
 def _aplay_device_flag() -> Optional[str]:
@@ -87,7 +87,7 @@ def play_silence_preroll_blocking() -> None:
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=max(2.0, ms / 500.0),
+            timeout=max(5.0, (ms / 1000.0) * 2 + 1.0),
             check=False,
         )
     except subprocess.TimeoutExpired:

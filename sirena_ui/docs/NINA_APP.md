@@ -715,6 +715,8 @@ export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
 export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
+# Drive "Straight 15 s" bench test: sustained PWM % (default: MAX_SPEED_PCT, same as slider max).
+# export NINA_STRAIGHT_TEST_SPEED_PCT=14
 
 # Vision
 export NINA_VISION_CAMERA=0
@@ -735,8 +737,8 @@ export NINA_VISION_TARGET_FPS=30
 # installed; FaceGreeter tries paplay after aplay fails.
 # If aplay uses the wrong ALSA device, set e.g.:
 # export NINA_GREET_APLAY_DEVICE=plug:dmix
-# Optional: milliseconds of digital silence via aplay before clips (default 300; 0 = off).
-# export NINA_AUDIO_PREROLL_MS=300
+# Optional: milliseconds of digital silence via aplay before clips (default 1000; 0 = off).
+# export NINA_AUDIO_PREROLL_MS=1000
 # Person follow: PWM % and timing (defaults are slow/stable).
 export NINA_FOLLOW_APPROACH_PCT=11
 export NINA_FOLLOW_CRUISE_PCT=9
