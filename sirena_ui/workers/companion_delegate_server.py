@@ -37,6 +37,9 @@ log = logging.getLogger("sirena_ui.workers.companion_delegate_server")
 
 _server: Optional[HTTPServer] = None
 _server_thread: Optional[threading.Thread] = None
+# Set in ``start_companion_delegate_server`` — never pass ``NinaService`` through ``pyqtSignal``
+# (non-QObject payloads across threads can abort Qt with SIGABRT).
+_delegate_service_ref: Optional[NinaService] = None
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -122,16 +125,23 @@ def _ensure_and_start_playback_worker(service: NinaService, action_name: str) ->
 
 
 class _DelegatePlaybackInvoker(QObject):
-    """Created on the GUI thread; HTTP threads emit here for QueuedConnection delivery."""
+    """Created on the GUI thread; HTTP threads emit here for QueuedConnection delivery.
 
-    playback_requested = pyqtSignal(object, str)
+    Signal carries **only** the action name string — see module ``_delegate_service_ref``.
+    """
 
-    def __init__(self) -> None:
-        super().__init__()
+    playback_requested = pyqtSignal(str)
+
+    def __init__(self, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
         self.playback_requested.connect(self._deliver, Qt.QueuedConnection)
 
-    def _deliver(self, service: NinaService, action_name: str) -> None:
-        _ensure_and_start_playback_worker(service, action_name)
+    def _deliver(self, action_name: str) -> None:
+        svc = _delegate_service_ref
+        if svc is None:
+            log.error("companion delegate: no NinaService ref — cannot play %s", action_name)
+            return
+        _ensure_and_start_playback_worker(svc, action_name)
 
 
 _invoker: Optional[_DelegatePlaybackInvoker] = None
@@ -141,18 +151,26 @@ def prime_delegate_invoker() -> None:
     """Call once from ``main()`` on the GUI thread after ``QApplication`` exists."""
     global _invoker
     if _invoker is None:
-        _invoker = _DelegatePlaybackInvoker()
+        from PyQt5.QtWidgets import QApplication
+
+        app = QApplication.instance()
+        _invoker = _DelegatePlaybackInvoker(parent=app)
 
 
-def _schedule_delegate_playback(service: NinaService, action_name: str) -> None:
+def _schedule_delegate_playback(action_name: str) -> None:
     """HTTP handler thread must not run Qt workers; queue onto the GUI thread."""
     from PyQt5.QtWidgets import QApplication
+
+    svc = _delegate_service_ref
+    if svc is None:
+        log.error("companion delegate: service ref missing")
+        return
 
     if QApplication.instance() is None:
         log.warning("companion delegate: no QApplication, using threaded fallback")
         threading.Thread(
             target=_playback_runnable_fallback,
-            args=(service, action_name),
+            args=(svc, action_name),
             daemon=True,
             name=f"sirena-delegate-fallback-{action_name}",
         ).start()
@@ -161,12 +179,12 @@ def _schedule_delegate_playback(service: NinaService, action_name: str) -> None:
         log.warning("companion delegate: invoker not primed — using threaded fallback")
         threading.Thread(
             target=_playback_runnable_fallback,
-            args=(service, action_name),
+            args=(svc, action_name),
             daemon=True,
             name=f"sirena-delegate-fallback-{action_name}",
         ).start()
         return
-    _invoker.playback_requested.emit(service, action_name)
+    _invoker.playback_requested.emit(action_name)
 
 
 def _make_handler_class(service: NinaService) -> Type[BaseHTTPRequestHandler]:
@@ -186,7 +204,7 @@ def _make_handler_class(service: NinaService) -> Type[BaseHTTPRequestHandler]:
             if not name:
                 self.send_error(400, "Missing action")
                 return
-            _schedule_delegate_playback(service, name)
+            _schedule_delegate_playback(name)
             payload = json.dumps(
                 {"ok": True, "queued": True, "action": name}
             ).encode("utf-8")
@@ -204,11 +222,12 @@ def _make_handler_class(service: NinaService) -> Type[BaseHTTPRequestHandler]:
 
 def start_companion_delegate_server(service: NinaService) -> None:
     """Bind ``127.0.0.1:NINA_UI_ACTION_DELEGATE_PORT`` unless ``NINA_UI_ACTION_DELEGATE=0``."""
-    global _server, _server_thread
+    global _server, _server_thread, _delegate_service_ref
 
     # Default ON so tablets work without extra env; opt out with NINA_UI_ACTION_DELEGATE=0.
     if not _env_bool("NINA_UI_ACTION_DELEGATE", True):
         return
+    _delegate_service_ref = service
     prime_delegate_invoker()
     port = max(1, min(65535, _env_int("NINA_UI_ACTION_DELEGATE_PORT", 8791)))
     handler_cls = _make_handler_class(service)
