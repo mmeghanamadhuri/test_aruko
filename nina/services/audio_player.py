@@ -7,11 +7,23 @@ Jetson (`aplay` for WAV, `mpg123` for MP3, `ffplay` as a final
 fallback). No Python audio dependencies are required, so this works on
 a fresh JetPack image without extra pip installs.
 
-Before starting a clip, ``AudioPlayer.play`` runs a **volume preroll**:
-save sink/Master level, set **0%**, dwell (``NINA_AUDIO_MUTE_PREROLL_SEC``,
-default **4** s) so the amp path settles, then restore the saved level
-(ALSA ``amixer`` first for direct card playback, else PulseAudio). If that
-fails, falls back to ``NINA_AUDIO_PREROLL_MS`` digital silence via ``aplay``.
+Before starting a clip, ``AudioPlayer.play`` can optionally run a **volume
+preroll**: save sink/Master level, set **0%**, dwell (``NINA_AUDIO_MUTE_PREROLL_SEC``),
+then restore (ALSA ``amixer`` first, else PulseAudio). **Default dwell is 0**
+(disabled): the old default (**4 s**) muted the amp before every clip and
+caused long silence / stutter — especially with USB DACs, dmix, or when
+the mixer control does not match the PCM device mpg123 uses. Set
+``NINA_AUDIO_MUTE_PREROLL_SEC=0.15`` (or similar) only on hardware that
+needs a brief mute to avoid power-on thump. If volume preroll cannot run,
+``NINA_AUDIO_PREROLL_MS`` can inject digital silence via ``aplay`` instead.
+
+When mute preroll is **off** (the default), ``play_silence_preroll_blocking``
+still **clears Pulse/ALSA mute** and plays a very short digital silence
+(``NINA_AUDIO_OUTPUT_WARMUP_MS``, default **100** ms) on the same device as
+greetings — many dmix / USB DAC paths fail or pop if mpg123 is the first
+client with no prior open. Set ``NINA_AUDIO_OUTPUT_WARMUP_MS=0`` to skip.
+If Master was left at **0%%** from an interrupted old preroll, set
+``NINA_AUDIO_RECOVER_ZERO_MASTER=1`` so we restore ``NINA_AUDIO_RESTORE_VOLUME_PCT``.
 
 For MP3, set ``NINA_AUDIO_MPG123_DEVICE`` or ``NINA_GREET_APLAY_DEVICE`` so
 ``mpg123`` opens the **same** ALSA device the preroll mutes; otherwise the
@@ -41,9 +53,9 @@ def _repo_root() -> Path:
 
 def _mute_preroll_sec() -> float:
     try:
-        return max(0.0, float(os.environ.get("NINA_AUDIO_MUTE_PREROLL_SEC", "4")))
+        return max(0.0, float(os.environ.get("NINA_AUDIO_MUTE_PREROLL_SEC", "0")))
     except ValueError:
-        return 4.0
+        return 0.0
 
 
 def _preroll_ms() -> int:
@@ -51,6 +63,22 @@ def _preroll_ms() -> int:
         return max(0, int(os.environ.get("NINA_AUDIO_PREROLL_MS", "0")))
     except ValueError:
         return 0
+
+
+def _output_warmup_ms() -> int:
+    """Short silence before real audio so dmix/DAC sees an open PCM stream first."""
+    raw = (os.environ.get("NINA_AUDIO_OUTPUT_WARMUP_MS") or "").strip()
+    if raw:
+        try:
+            return max(0, min(2000, int(raw)))
+        except ValueError:
+            return 100
+    return 100
+
+
+def _recover_zero_master_enabled() -> bool:
+    v = (os.environ.get("NINA_AUDIO_RECOVER_ZERO_MASTER") or "").strip().lower()
+    return v in ("1", "true", "yes", "on")
 
 
 def _restore_volume_default_pct() -> int:
@@ -212,9 +240,47 @@ def _pulse_set_volume_pct(pct: int) -> bool:
         return False
 
 
-def _silence_wav_preroll_blocking() -> None:
-    """Play silent WAV through ``aplay`` when volume preroll is unavailable."""
-    ms = _preroll_ms()
+def _ensure_sinks_unmuted() -> None:
+    """Clear soft-mute on common paths (Pulse default sink, ALSA Master)."""
+    pactl = shutil.which("pactl")
+    if pactl:
+        try:
+            subprocess.run(
+                [pactl, "set-sink-mute", "@DEFAULT_SINK@", "0"],
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                timeout=3.0,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+    base = _alsa_amixer_base()
+    if not base:
+        return
+    ctrl = _alsa_mixer_control()
+    try:
+        subprocess.run(
+            base + ["-q", "sset", ctrl, "unmute"],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=3.0,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def _maybe_recover_alsa_master_from_zero() -> None:
+    if not _recover_zero_master_enabled():
+        return
+    pct = _alsa_get_volume_pct()
+    if pct is None or pct > 0:
+        return
+    _alsa_set_volume_pct(_restore_volume_default_pct())
+
+
+def _play_aplay_silence_ms(ms: int) -> None:
+    """Play silent WAV through ``aplay`` for *ms* milliseconds (warmup / fallback)."""
     if ms <= 0:
         return
     aplay = shutil.which("aplay")
@@ -241,16 +307,26 @@ def _silence_wav_preroll_blocking() -> None:
         pass
 
 
-def play_silence_preroll_blocking() -> None:
-    """Before playback: volume 0% → dwell → restore (ALSA first, else Pulse).
+def _silence_wav_preroll_blocking() -> None:
+    """Play silent WAV through ``aplay`` when volume preroll is unavailable."""
+    _play_aplay_silence_ms(_preroll_ms())
 
-    Uses ``NINA_AUDIO_MUTE_PREROLL_SEC`` for dwell (default 4 s). If the
-    current level cannot be read, restore uses ``NINA_AUDIO_RESTORE_VOLUME_PCT``
-    after zeroing.
+
+def play_silence_preroll_blocking() -> None:
+    """Before playback: optional volume preroll, else unmute + short PCM warmup.
+
+    If ``NINA_AUDIO_MUTE_PREROLL_SEC`` > 0: mute dwell then restore (ALSA, else Pulse).
+
+    If **off** (default **0**): clear Pulse/ALSA mute, optionally bump Master if
+    ``NINA_AUDIO_RECOVER_ZERO_MASTER`` and level reads 0%%, then play
+    ``NINA_AUDIO_OUTPUT_WARMUP_MS`` + ``NINA_AUDIO_PREROLL_MS`` of silence via
+    ``aplay`` (same ``-D`` as ``NINA_GREET_APLAY_DEVICE`` when set).
     """
     sec = _mute_preroll_sec()
     if sec <= 0:
-        _silence_wav_preroll_blocking()
+        _ensure_sinks_unmuted()
+        _maybe_recover_alsa_master_from_zero()
+        _play_aplay_silence_ms(_output_warmup_ms() + _preroll_ms())
         return
 
     restore_default = _restore_volume_default_pct()

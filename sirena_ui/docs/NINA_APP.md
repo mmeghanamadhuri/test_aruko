@@ -748,14 +748,20 @@ export NINA_VISION_TARGET_FPS=30
 # installed; FaceGreeter tries paplay after aplay fails.
 # If aplay uses the wrong ALSA device, set e.g.:
 # export NINA_GREET_APLAY_DEVICE=plug:dmix
-# Before TTS/MP3 playback: volume → 0%, dwell, restore saved level (reduces amp/USB stutter).
-# Tries pactl set-sink-volume @DEFAULT_SINK@ first, then amixer sset (see NINA_AUDIO_MIXER_*).
-# Default dwell at 0%% volume is 4 s. Example override: export NINA_AUDIO_MUTE_PREROLL_SEC=6
+# Before TTS/MP3 playback: optional volume → 0%, dwell, restore (see NINA_AUDIO_MUTE_PREROLL_SEC).
+# Tries ALSA amixer first, then Pulse pactl (see NINA_AUDIO_MIXER_*).
+# Mute preroll before each clip: default 0 s (off). A long dwell used to mute
+# Master for 4 s and caused stutter / gap before playback on many DACs / dmix
+# setups. Set only if you need anti-thump, e.g. NINA_AUDIO_MUTE_PREROLL_SEC=0.15
 # If level cannot be read, restore uses: export NINA_AUDIO_RESTORE_VOLUME_PCT=75
 # export NINA_AUDIO_MIXER_CARD=0          # optional amixer -c (empty = default card)
 # export NINA_AUDIO_MIXER_CONTROL=Master    # or PCM, Speaker, etc.
 # If volume preroll fails: optional ms of silence via aplay (default 0).
 # export NINA_AUDIO_PREROLL_MS=0
+# Default 100 ms aplay silence before clip when mute preroll is off (opens dmix/DAC for mpg123). 0=skip.
+# export NINA_AUDIO_OUTPUT_WARMUP_MS=100
+# If Master stayed at 0%% after an interrupted session, restore to NINA_AUDIO_RESTORE_VOLUME_PCT:
+# export NINA_AUDIO_RECOVER_ZERO_MASTER=1
 # Bind mpg123 to the same ALSA device as aplay so Master/pulse preroll matches PCM output:
 # export NINA_AUDIO_MPG123_DEVICE=plug:dmix
 # Person follow: PWM % and timing (defaults are slow/stable).
