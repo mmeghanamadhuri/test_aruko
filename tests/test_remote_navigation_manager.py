@@ -298,7 +298,7 @@ def test_set_wheels_emits_correct_direction_letters(
             serial_port="/dev/fake0",
             connect_timeout_sec=0.5,
             response_timeout_sec=0.1,
-            pivot_right_forward_extra_pp=0,
+            pivot_turn_left_extra_pp=0,
         )
     )
     nav.initialize()
@@ -525,7 +525,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
     )
     port = _last_open(fake_serial)
     lines = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
-    assert lines == ["SET B 4 B 4", "SET B 0 B 0", "SET B 20 F 22"]
+    assert lines == ["SET B 4 B 4", "SET B 0 B 0", "SET B 26 F 26"]
 
     fake_serial.queue("OK", "OK", "OK")
     nav.set_wheels(
@@ -536,7 +536,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
     )
     lines2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
     assert lines2[-4:] == [
-        "SET B 20 F 22",
+        "SET B 26 F 26",
         "SET B 3 B 3",
         "SET B 0 B 0",
         "SET F 15 F 15",
@@ -569,7 +569,7 @@ def test_set_wheels_pivot_opposite_nudge_once_not_on_keepalive(
     )
     port = _last_open(fake_serial)
     sets = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
-    assert sets == ["SET B 4 B 4", "SET B 0 B 0", "SET B 20 F 22"]
+    assert sets == ["SET B 4 B 4", "SET B 0 B 0", "SET B 26 F 26"]
 
     fake_serial.queue("OK")
     nav.set_wheels(
@@ -579,7 +579,7 @@ def test_set_wheels_pivot_opposite_nudge_once_not_on_keepalive(
         right_speed=20,
     )
     sets2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
-    assert sets2[-2:] == ["SET B 20 F 22", "SET B 20 F 22"]
+    assert sets2[-2:] == ["SET B 26 F 26", "SET B 26 F 26"]
     assert sets2.count("SET B 4 B 4") == 1
 
 

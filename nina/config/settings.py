@@ -54,9 +54,12 @@ class NavigationSettings:
     curve (non-symmetric motion) to symmetric straight while PWM is
     still non-zero. Set NUDGE_SEC to 0 to disable.
 
-    `pivot_right_forward_extra_pp` adds PWM on the right wheel for
-    symmetric turn_left pivots (L=back R=forward), matching the straight
-    cruise right-wheel trim. Env: NINA_NAV_PIVOT_R_FWD_EXTRA_PP (0..20, default 2).
+    `pivot_turn_left_extra_pp` adds the same extra PWM **on both wheels** for
+    symmetric turn_left pivots (L=back, R=forward). On this bot both of those
+    directions share the same marginal DIR drive; boosting only one wheel was
+    insufficient in the field. Env: ``NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP`` (0..20,
+    default 6). Legacy alias: ``NINA_NAV_PIVOT_R_FWD_EXTRA_PP`` (used if the new
+    name is unset).
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -77,11 +80,8 @@ class NavigationSettings:
     # Pause after soft stop / between stop and fresh motion (`stop()`,
     # `drive_continuous`). Matches `NavigationConfig.settle_delay_sec`.
     settle_delay_sec: float = 0.1
-    # In-place turn_left only (left back + right forward): extra duty on the
-    # right wheel when both sides use the same command percent. Mirrors the
-    # straight-line RIGHT trim in the GUI — stock hardware often needs more
-    # torque when the right hub drives "forward". 0 = off.
-    pivot_right_forward_extra_pp: int = 2
+    # In-place turn_left (L=back R=fwd): symmetric +% on both sides for breakaway.
+    pivot_turn_left_extra_pp: int = 6
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -250,11 +250,17 @@ def load_settings(repo_root: Path) -> NinaSettings:
             os.environ.get("NINA_NAV_OPPOSITE_ZERO_SETTLE_SEC", "0.04")
         ),
         settle_delay_sec=float(os.environ.get("NINA_NAV_SETTLE_SEC", "0.1")),
-        pivot_right_forward_extra_pp=max(
+        pivot_turn_left_extra_pp=max(
             0,
             min(
                 20,
-                int(os.environ.get("NINA_NAV_PIVOT_R_FWD_EXTRA_PP", "2")),
+                int(
+                    (
+                        os.environ.get("NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP")
+                        or os.environ.get("NINA_NAV_PIVOT_R_FWD_EXTRA_PP")
+                        or "6"
+                    )
+                ),
             ),
         ),
         # 'local'  -> Jetson GPIOs drive the JYQDs directly.
