@@ -20,7 +20,9 @@ make hold engage sooner so the robot stops when visually close.
 **Trajectory:** horizontal face offset ``err_x`` (normalized to about ±1) steers
 the robot every tick: forward speed scales down when ``|err_x|`` is large
 (``NINA_FOLLOW_ERR_FWD_SCALE_MIN`` / ``NINA_FOLLOW_ERR_FWD_SCALE_POWER``) so it
-slows while correcting; when aligned, speed returns toward the cruise setpoint.
+slows while correcting; yaw scales up with ``NINA_FOLLOW_YAW_ERR_BOOST`` at large
+errors. Right-wheel PWM commands are offset so ``RIGHT_WHEEL_EXTRA_RUN_PP`` in
+``DriveController`` does not cancel steering toward a face on the right.
 Near standoff, ``NINA_FOLLOW_HOLD_CREEP_PCT`` + ``NINA_FOLLOW_HOLD_YAW_GAIN``
 keep smooth arc corrections instead of short in-place nudges.
 
@@ -41,7 +43,10 @@ from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import QObject, QTimer, pyqtSignal
 
-from sirena_ui.workers.drive_controller import DriveController
+from sirena_ui.workers.drive_controller import (
+    RIGHT_WHEEL_EXTRA_RUN_PP,
+    DriveController,
+)
 from sirena_ui.workers.vision_types import KIND_FACE, Detection
 
 log = logging.getLogger("sirena_ui.face_follow")
@@ -60,12 +65,18 @@ _SEARCH_STEP_MS = max(50, int(os.environ.get("NINA_FOLLOW_SEARCH_STEP_MS", "900"
 _SEARCH_LOOK_TICKS = max(0, int(os.environ.get("NINA_FOLLOW_SEARCH_LOOK_TICKS", "4")))
 _SEARCH_STEP_COUNT = max(1, int(math.ceil(360.0 / float(_SEARCH_STEP_DEG))))
 # Lateral steering while approaching: normalized err_x [-1,1] -> differential PWM.
-_YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "3.5"))
+_YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "5.5"))
+# Extra yaw multiplier at large |err_x| (yaw *= 1 + boost * |err_x|).
+try:
+    _YAW_ERR_BOOST = float(os.environ.get("NINA_FOLLOW_YAW_ERR_BOOST", "0.85"))
+except ValueError:
+    _YAW_ERR_BOOST = 0.85
+_YAW_ERR_BOOST = max(0.0, min(3.0, _YAW_ERR_BOOST))
 # Forward speed multiplier at |err_x|==1 vs 0 (slow while turning toward face).
 try:
-    _ERR_FWD_SCALE_MIN = float(os.environ.get("NINA_FOLLOW_ERR_FWD_SCALE_MIN", "0.38"))
+    _ERR_FWD_SCALE_MIN = float(os.environ.get("NINA_FOLLOW_ERR_FWD_SCALE_MIN", "0.22"))
 except ValueError:
-    _ERR_FWD_SCALE_MIN = 0.38
+    _ERR_FWD_SCALE_MIN = 0.22
 _ERR_FWD_SCALE_MIN = max(0.08, min(0.95, _ERR_FWD_SCALE_MIN))
 try:
     _ERR_FWD_SCALE_POWER = float(
@@ -81,7 +92,7 @@ if _hc_raw:
 else:
     _HOLD_CREEP_PCT = int(os.environ.get("NINA_FOLLOW_NUDGE_PCT", "9"))
 _HOLD_CREEP_PCT = max(1, min(100, _HOLD_CREEP_PCT))
-_HOLD_YAW_GAIN = float(os.environ.get("NINA_FOLLOW_HOLD_YAW_GAIN", "4.2"))
+_HOLD_YAW_GAIN = float(os.environ.get("NINA_FOLLOW_HOLD_YAW_GAIN", "5.5"))
 # Require this many consecutive no-face ticks (after a lock) before 360° search.
 # Single-frame YuNet blips must not reset this counter (see _face_present_streak).
 _LOST_ENTER_SEARCH_TICKS = max(1, int(os.environ.get("NINA_FOLLOW_LOST_TICKS", "4")))
@@ -154,6 +165,12 @@ def _follow_steering_command(
     ``err_x ≈ 0`` it returns to full *base_forward*. If a forward arc would
     require reversing a wheel, we command a short in-place turn instead (same
     handedness as before: ``err_x > 0`` → face is right → turn right).
+
+    ``DriveController`` adds ``RIGHT_WHEEL_EXTRA_RUN_PP`` to the **right** duty
+    on every forward-forward command (straight-line hardware trim). We subtract
+    that here on the right **command** so the delivered PWM matches the
+    differential we compute (otherwise corrections when the face is to the
+    right are largely cancelled).
     """
     max_w = max(1, min(100, int(max_wheel)))
     err_clamped = max(-1.0, min(1.0, err_x))
@@ -162,7 +179,8 @@ def _follow_steering_command(
         (1.0 - err_mag) ** _ERR_FWD_SCALE_POWER
     )
     base = float(base_forward) * fwd_scale
-    yaw = float(err_clamped) * float(yaw_gain)
+    yaw_mult = 1.0 + _YAW_ERR_BOOST * err_mag
+    yaw = float(err_clamped) * float(yaw_gain) * yaw_mult
     ls = base + yaw
     rs = base - yaw
 
@@ -174,7 +192,18 @@ def _follow_steering_command(
 
     ls_i = max(1, min(max_w, int(round(ls))))
     rs_i = max(1, min(max_w, int(round(rs))))
-    return ("forward", ls_i, "forward", rs_i)
+    # Integer PWM often wipes out small yaws; nudge a minimum diff when off-centre.
+    if err_mag >= 0.08 and abs(ls_i - rs_i) < 2:
+        if err_clamped > 0:
+            ls_i = min(max_w, ls_i + 1)
+            rs_i = max(1, rs_i - 1)
+        elif err_clamped < 0:
+            ls_i = max(1, ls_i - 1)
+            rs_i = min(max_w, rs_i + 1)
+
+    r_cap = max(1, max_w - RIGHT_WHEEL_EXTRA_RUN_PP)
+    rs_cmd = max(1, min(r_cap, rs_i - RIGHT_WHEEL_EXTRA_RUN_PP))
+    return ("forward", ls_i, "forward", rs_cmd)
 
 
 class FaceFollowController(QObject):

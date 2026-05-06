@@ -752,13 +752,15 @@ export NINA_FOLLOW_APPROACH_PCT=11
 export NINA_FOLLOW_CRUISE_PCT=9
 export NINA_FOLLOW_BACK_PCT=9
 export NINA_FOLLOW_NUDGE_PCT=9
-export NINA_FOLLOW_YAW_GAIN=3.5
+export NINA_FOLLOW_YAW_GAIN=5.5
 # Trajectory: scale forward speed down when the face is off-centre (slow while correcting).
-# export NINA_FOLLOW_ERR_FWD_SCALE_MIN=0.38
+# export NINA_FOLLOW_ERR_FWD_SCALE_MIN=0.22
 # export NINA_FOLLOW_ERR_FWD_SCALE_POWER=1.0
+# Extra yaw at large |err_x|: effective_yaw *= (1 + YAW_ERR_BOOST * |err_x|).
+# export NINA_FOLLOW_YAW_ERR_BOOST=0.85
 # Near standoff, creep + steer every tick until centred. If unset, uses NINA_FOLLOW_NUDGE_PCT.
 # export NINA_FOLLOW_HOLD_CREEP_PCT=6
-# export NINA_FOLLOW_HOLD_YAW_GAIN=4.2
+# export NINA_FOLLOW_HOLD_YAW_GAIN=5.5
 # Standoff: desired face bbox area (px²) for approach/back; not tied to size at lock.
 # Prefer NINA_FOLLOW_TARGET_BBOX_AREA for a fixed px², or fraction of frame (W×H):
 # export NINA_FOLLOW_TARGET_BBOX_AREA=12000
