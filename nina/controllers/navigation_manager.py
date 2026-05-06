@@ -216,6 +216,9 @@ class NavigationConfig:
     straight_opposite_nudge_sec: float = _DEFAULT_STRAIGHT_OPP_NUDGE_SEC
     straight_opposite_nudge_pct: int = _DEFAULT_STRAIGHT_OPP_NUDGE_PCT
     opposite_zero_settle_sec: float = _DEFAULT_OPP_ZERO_SETTLE_SEC
+    # turn_left geometry (L=back R=forward), symmetric speed only — see
+    # `NavigationSettings.pivot_right_forward_extra_pp`.
+    pivot_right_forward_extra_pp: int = 2
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -647,11 +650,19 @@ class NavigationManager:
             and ls == rs
             and ls > 0
         )
+        cfg = self.config
+        exr = max(0, min(20, int(cfg.pivot_right_forward_extra_pp)))
+        if (
+            exr > 0
+            and pivot_crawl
+            and left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+        ):
+            rs = max(0, min(100, rs + exr))
         target_sign: Optional[int] = None
         if straight_crawl:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
 
-        cfg = self.config
         ns = max(0.0, min(2.0, float(cfg.straight_opposite_nudge_sec)))
         pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
         want_nudge = (

@@ -130,6 +130,7 @@ class RemoteNavigationConfig:
     # Matches local `NavigationConfig.settle_delay_sec` — pause after STOP
     # before a fresh SET in `drive_continuous`.
     settle_delay_sec: float = 0.1
+    pivot_right_forward_extra_pp: int = 2
 
 
 class RemoteNavigationManager:
@@ -380,11 +381,19 @@ class RemoteNavigationManager:
             and ls == rs
             and ls > 0
         )
+        cfg = self.config
+        exr = max(0, min(20, int(cfg.pivot_right_forward_extra_pp)))
+        if (
+            exr > 0
+            and pivot_crawl
+            and left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+        ):
+            rs = max(0, min(100, rs + exr))
         target_sign: Optional[int] = None
         if straight_crawl:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
 
-        cfg = self.config
         ns = max(0.0, min(2.0, float(cfg.straight_opposite_nudge_sec)))
         pct = max(0, min(100, int(cfg.straight_opposite_nudge_pct)))
         want_nudge = (
