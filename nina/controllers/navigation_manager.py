@@ -642,6 +642,11 @@ class NavigationManager:
             and ls == rs
             and ls > 0
         )
+        pivot_crawl = (
+            left_dir != right_dir
+            and ls == rs
+            and ls > 0
+        )
         target_sign: Optional[int] = None
         if straight_crawl:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
@@ -676,6 +681,30 @@ class NavigationManager:
             )
             self._prepare_side_motion(self.SIDE_LEFT, opp_dir)
             self._prepare_side_motion(self.SIDE_RIGHT, opp_dir)
+            gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_pre > 0:
+                time.sleep(gap_pre)
+            nd = max(3, min(100, (ls * pct + 99) // 100))
+            self._apply_side_pwm(self.SIDE_LEFT, nd)
+            self._apply_side_pwm(self.SIDE_RIGHT, nd)
+            time.sleep(ns)
+            self._apply_both_pwm_zero_twice()
+            zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
+            if zs > 0:
+                time.sleep(zs)
+
+        want_pivot_nudge = (
+            pivot_crawl
+            and ns > 0
+            and pct > 0
+            and (
+                was_rest
+                or (moving_now and self._last_was_symmetric_straight)
+            )
+        )
+        if want_pivot_nudge:
+            self._prepare_side_motion(self.SIDE_LEFT, self.DIR_BACKWARD)
+            self._prepare_side_motion(self.SIDE_RIGHT, self.DIR_BACKWARD)
             gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
             if gap_pre > 0:
                 time.sleep(gap_pre)

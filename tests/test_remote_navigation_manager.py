@@ -515,7 +515,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
         )
     )
     nav.initialize()
-    fake_serial.queue("OK")
+    fake_serial.queue("OK", "OK", "OK")
     nav.set_wheels(
         left_dir="backward",
         left_speed=20,
@@ -524,7 +524,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
     )
     port = _last_open(fake_serial)
     lines = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
-    assert lines == ["SET B 20 F 20"]
+    assert lines == ["SET B 4 B 4", "SET B 0 B 0", "SET B 20 F 20"]
 
     fake_serial.queue("OK", "OK", "OK")
     nav.set_wheels(
@@ -540,6 +540,46 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
         "SET B 0 B 0",
         "SET F 15 F 15",
     ]
+
+
+def test_set_wheels_pivot_opposite_nudge_once_not_on_keepalive(
+    fake_serial: _FakeSerialRegistry,
+) -> None:
+    """Pivot preload runs from rest; repeated identical pivot SET does not re-nudge."""
+    fake_serial.queue_handshake()
+    nav = RemoteNavigationManager(
+        RemoteNavigationConfig(
+            serial_port="/dev/fake0",
+            connect_timeout_sec=0.5,
+            response_timeout_sec=0.1,
+            straight_opposite_nudge_sec=0.01,
+            straight_opposite_nudge_pct=20,
+            opposite_zero_settle_sec=0.0,
+            dir_pwm_gap_sec=0.0,
+        )
+    )
+    nav.initialize()
+    fake_serial.queue("OK", "OK", "OK")
+    nav.set_wheels(
+        left_dir="backward",
+        left_speed=20,
+        right_dir="forward",
+        right_speed=20,
+    )
+    port = _last_open(fake_serial)
+    sets = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert sets == ["SET B 4 B 4", "SET B 0 B 0", "SET B 20 F 20"]
+
+    fake_serial.queue("OK")
+    nav.set_wheels(
+        left_dir="backward",
+        left_speed=20,
+        right_dir="forward",
+        right_speed=20,
+    )
+    sets2 = [ln for ln in _writes_as_strings(port) if ln.startswith("SET ")]
+    assert sets2[-2:] == ["SET B 20 F 20", "SET B 20 F 20"]
+    assert sets2.count("SET B 4 B 4") == 1
 
 
 def test_drive_continuous_sends_stop_before_set(fake_serial: _FakeSerialRegistry) -> None:

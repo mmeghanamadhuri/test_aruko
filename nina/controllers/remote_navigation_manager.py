@@ -375,6 +375,11 @@ class RemoteNavigationManager:
             and ls == rs
             and ls > 0
         )
+        pivot_crawl = (
+            left_dir != right_dir
+            and ls == rs
+            and ls > 0
+        )
         target_sign: Optional[int] = None
         if straight_crawl:
             target_sign = 1 if left_dir == self.DIR_FORWARD else -1
@@ -409,6 +414,37 @@ class RemoteNavigationManager:
             )
             ol = self._dir_letter(self.SIDE_LEFT, opp_dir)
             orr = self._dir_letter(self.SIDE_RIGHT, opp_dir)
+            nd = max(3, min(100, (ls * pct + 99) // 100))
+            gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_pre > 0:
+                time.sleep(gap_pre)
+            self._send_command(f"SET {ol} {nd} {orr} {nd}")
+            time.sleep(ns)
+            self._send_command(f"SET {ol} 0 {orr} 0")
+            gap_z = float(self.config.pwm_reassert_sec)
+            if gap_z > 0:
+                gap_z = max(0.002, min(0.1, gap_z))
+                time.sleep(gap_z)
+                self._send_command(f"SET {ol} 0 {orr} 0")
+            zs = max(0.0, min(0.2, float(cfg.opposite_zero_settle_sec)))
+            if zs > 0:
+                time.sleep(zs)
+            gap_mid = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
+            if gap_mid > 0:
+                time.sleep(gap_mid)
+
+        want_pivot_nudge = (
+            pivot_crawl
+            and ns > 0
+            and pct > 0
+            and (
+                was_rest
+                or (moving_now and self._last_was_symmetric_straight)
+            )
+        )
+        if want_pivot_nudge:
+            ol = self._dir_letter(self.SIDE_LEFT, self.DIR_BACKWARD)
+            orr = self._dir_letter(self.SIDE_RIGHT, self.DIR_BACKWARD)
             nd = max(3, min(100, (ls * pct + 99) // 100))
             gap_pre = max(0.0, min(0.2, float(cfg.dir_pwm_gap_sec)))
             if gap_pre > 0:
