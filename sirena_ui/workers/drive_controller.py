@@ -98,11 +98,10 @@ MAX_SPEED_PCT = 14
 # Single manual-drive duty (no slider): midpoint of the safe envelope.
 FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 
-# When both wheels share the same **forward** direction, boost the right duty
-# to compensate a faster left hub. First PWM after the breakaway kick uses
-# START; all later forward commands use RUN. Reverse (both backward), turns,
-# and coast are left symmetric.
-RIGHT_WHEEL_EXTRA_START_PP = 1
+# When both wheels share the same **forward** direction, adjust the right duty
+# (START / RUN delta in PWM points) to compensate hub mismatch. Reverse (both
+# backward), turns, and coast stay symmetric.
+RIGHT_WHEEL_EXTRA_START_PP = -1
 RIGHT_WHEEL_EXTRA_RUN_PP = 2
 
 # When manual drive begins from a full stop (`_active_drive` is None),
@@ -148,7 +147,7 @@ def _pair_duties_with_right_bias(
     extra = (
         RIGHT_WHEEL_EXTRA_START_PP if start_phase else RIGHT_WHEEL_EXTRA_RUN_PP
     )
-    return lb, min(100, rb + extra)
+    return lb, max(0, min(100, rb + extra))
 
 # Heartbeat interval for re-issuing the current SET while a D-pad
 # button or arrow key is held. Only matters when the active backend is
