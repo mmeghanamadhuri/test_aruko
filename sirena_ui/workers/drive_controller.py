@@ -999,12 +999,18 @@ class DriveController(QObject):
                 and left_speed == right_speed
                 and left_speed > 0
             )
-            run_turn_left_prep = False
-            if is_turn_left:
+            is_turn_right = (
+                ldir == self._nav.DIR_FORWARD
+                and rdir == self._nav.DIR_BACKWARD
+                and left_speed == right_speed
+                and left_speed > 0
+            )
+            entering_symmetric_pivot = False
+            if is_turn_left or is_turn_right:
                 with self._lock:
                     prev = self._active_drive
                 if prev is None:
-                    run_turn_left_prep = True
+                    entering_symmetric_pivot = True
                 else:
                     p_ld, p_ls, p_rd, p_rs = prev
                     if not (
@@ -1012,7 +1018,8 @@ class DriveController(QObject):
                         and p_rd == rdir
                         and p_ls == p_rs == left_speed
                     ):
-                        run_turn_left_prep = True
+                        entering_symmetric_pivot = True
+            run_turn_left_prep = is_turn_left and entering_symmetric_pivot
             if run_turn_left_prep:
                 cfg = getattr(self._nav, "config", None)
                 if cfg is not None:
@@ -1029,10 +1036,30 @@ class DriveController(QObject):
                     )
                     self._nav.stop()
                     time.sleep(settle)
-                    prime(left_speed)
-            self._commit_wheels(
-                ldir, left_speed, rdir, right_speed, start_phase=False,
-            )
+                    # Seat gears at least at D-pad pivot torque; autonomy
+                    # often uses NINA_AUTO_TURN_PCT (~9%) which is too weak
+                    # alone for straight back/fwd pulses.
+                    prep_sp = max(
+                        int(left_speed), int(_drive_pivot_speed_pct())
+                    )
+                    prep_sp = max(1, min(100, prep_sp))
+                    prime(prep_sp)
+            if entering_symmetric_pivot and (is_turn_left or is_turn_right):
+                # Match _do_drive pivot path: two commits (start_phase toggles
+                # only affect forward-forward bias). First frame at pivot-class
+                # duty breaks static friction; second applies the requested cruise.
+                kick_sp = max(int(left_speed), int(_drive_pivot_speed_pct()))
+                kick_sp = max(1, min(100, kick_sp))
+                self._commit_wheels(
+                    ldir, kick_sp, rdir, kick_sp, start_phase=True,
+                )
+                self._commit_wheels(
+                    ldir, left_speed, rdir, right_speed, start_phase=False,
+                )
+            else:
+                self._commit_wheels(
+                    ldir, left_speed, rdir, right_speed, start_phase=False,
+                )
         except Exception as exc:
             log.exception(
                 "drive_wheels(%s/%s, %s/%s) failed: %s",

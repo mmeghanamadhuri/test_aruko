@@ -313,7 +313,9 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # change pace mid-handoff. Bump via NINA_AUTO_CRUISE_PCT for
         # tests that want a faster wander.
         cruise_speed_pct=int(os.environ.get("NINA_AUTO_CRUISE_PCT", "8")),
-        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "9")),
+        # In-place pivots need more torque than straight cruise; 9% often
+        # stalls until the wheels get a push (see DriveController prep/kick).
+        turn_speed_pct=int(os.environ.get("NINA_AUTO_TURN_PCT", "12")),
         # 1200 mm (was 700 mm) is the new commit-to-forward
         # threshold. The previous 700 mm gave the BLDCs no room to
         # decelerate before reaching the obstacle: at ~0.4 m/s with
@@ -424,7 +426,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         # Match the wander pilot's cruise so a goto handoff doesn't
         # change the bot's perceived "speed" mid-run.
         cruise_speed_pct=int(os.environ.get("NINA_GOTO_CRUISE_PCT", "8")),
-        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "9")),
+        turn_speed_pct=int(os.environ.get("NINA_GOTO_TURN_PCT", "12")),
         # 18 deg deadband: inside this we drive forward (still with
         # a small heading correction); outside, we turn in place.
         # Wider than the wander pilot's implicit binary so we don't
