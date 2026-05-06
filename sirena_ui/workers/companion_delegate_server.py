@@ -27,7 +27,7 @@ import logging
 import os
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import Optional, Type
+from typing import Any, List, Optional, Type
 
 from PyQt5.QtCore import QObject, Qt, pyqtSignal
 
@@ -40,6 +40,8 @@ _server_thread: Optional[threading.Thread] = None
 # Set in ``start_companion_delegate_server`` — never pass ``NinaService`` through ``pyqtSignal``
 # (non-QObject payloads across threads can abort Qt with SIGABRT).
 _delegate_service_ref: Optional[NinaService] = None
+# Strong refs so PlaybackWorker (QThread) is not destroyed while running; do not parent QThread to QApplication.
+_delegate_playback_workers: List[Any] = []
 
 
 def _env_bool(name: str, default: bool = False) -> bool:
@@ -100,33 +102,35 @@ def _playback_runnable_fallback(service: NinaService, action_name: str) -> None:
 
 def _ensure_and_start_playback_worker(service: NinaService, action_name: str) -> None:
     """Runs on the Qt GUI thread — same stack as ``ActionsScreen._on_play``."""
-    from PyQt5.QtWidgets import QApplication
-
     from sirena_ui.workers.playback_worker import PlaybackWorker
 
-    try:
-        service.ensure_bus()
-    except Exception:
-        log.exception("companion delegate ensure_bus")
-        return
-
-    app = QApplication.instance()
+    # Do not call ``ensure_bus`` on the GUI thread: serial I/O must stay on the playback
+    # worker thread (see ``ensure_before_play``). Parenting QThread to QApplication also
+    # caused motion to stop while audio still ran.
     audio_path = service.action_audio_path(action_name)
     audio_offset = (
         service.action_audio_offset(action_name) if audio_path else 0.0
     )
-    # Parent + finished→deleteLater: a bare local ``PlaybackWorker`` was GC'd while the
-    # QThread was still running → "QThread: Destroyed while thread is still running" / SIGABRT.
     worker = PlaybackWorker(
         service,
         action_name,
         audio_path=audio_path,
         audio_offset_sec=audio_offset,
-        parent=app,
+        ensure_before_play=True,
+        parent=None,
     )
     worker.finished_ok.connect(lambda n: log.debug("delegate playback finished %s", n))
     worker.failed.connect(lambda msg: log.warning("delegate playback failed: %s", msg))
-    worker.finished.connect(worker.deleteLater)
+    _delegate_playback_workers.append(worker)
+
+    def _thread_finished() -> None:
+        try:
+            _delegate_playback_workers.remove(worker)
+        except ValueError:
+            pass
+        worker.deleteLater()
+
+    worker.finished.connect(_thread_finished)
     worker.start()
 
 

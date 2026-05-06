@@ -143,13 +143,18 @@ def play_named_action(action_name: str) -> Dict[str, Any]:
 
             with bus_lock:
                 schedule_audio()
-                ar.run_named_action(
-                    name,
-                    smooth=True,
-                    sub_hz=50.0,
-                    max_speed=1023,
-                    speed=0.5,
-                )
+                try:
+                    ar.run_named_action(
+                        name,
+                        smooth=True,
+                        sub_hz=50.0,
+                        max_speed=1023,
+                        speed=0.5,
+                    )
+                except Exception:
+                    # Motion failed after audio started — stop mpg123/aplay so we don't get "audio only".
+                    player.stop_all()
+                    raise
         except Exception:
             log.exception("play_named_action %s", name)
 

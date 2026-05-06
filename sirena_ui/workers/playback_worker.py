@@ -27,6 +27,8 @@ class PlaybackWorker(QThread):
         speed: float = 0.5,
         audio_path: Optional[Path] = None,
         audio_offset_sec: float = 0.0,
+        *,
+        ensure_before_play: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -40,6 +42,8 @@ class PlaybackWorker(QThread):
         self._audio_offset_sec = max(0.0, float(audio_offset_sec))
         self._audio_player = AudioPlayer()
         self._audio_timer: Optional[threading.Timer] = None
+        #: Call ``ensure_bus`` on the **worker** thread before motion (tablet delegate path).
+        self._ensure_before_play = ensure_before_play
 
     def _schedule_audio(self) -> None:
         if self._audio_path is None:
@@ -57,6 +61,12 @@ class PlaybackWorker(QThread):
         timer.start()
 
     def run(self) -> None:
+        if self._ensure_before_play:
+            try:
+                self._service.ensure_bus()
+            except Exception as exc:  # pragma: no cover - reported back to UI
+                self.failed.emit(explain_error(exc, self._service.settings))
+                return
         try:
             with self._service.bus_lock:
                 self._schedule_audio()
@@ -71,4 +81,5 @@ class PlaybackWorker(QThread):
         except Exception as exc:  # pragma: no cover - reported back to UI
             if self._audio_timer is not None:
                 self._audio_timer.cancel()
+            self._audio_player.stop_all()
             self.failed.emit(explain_error(exc, self._service.settings))
