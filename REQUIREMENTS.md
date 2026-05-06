@@ -249,13 +249,11 @@ reference if you hit anything weird.
    nav.emergency_stop()"
    ```
    Both wheels should run forward, stop, then backward. If a wheel
-   spins the wrong way, leave it for now — once the GUI is up, the
-   Drive screen's **Flip L** / **Flip R** toggles will fix it in two
-   clicks (saved to `~/.config/sirena/drive_polarity.json`, survives
-   reboot). The legacy `NINA_NAV_INVERT_LEFT=1` env var on the Jetson
-   still works as a boot-time default and is shipped in the kiosk
-   unit (see step 5.2.7), but you no longer have to SSH in to flip a
-   wheel — do it from the GUI.
+   spins the wrong way, set `invert_left` / `invert_right` in
+   `~/.config/sirena/drive_polarity.json`, or use **`NINA_NAV_INVERT_*`**
+   env vars before first run (see `sirena_ui/docs/NINA_APP.md`). The Qt
+   Drive screen no longer has Flip toggles; Android companion / link
+   API can still flip polarity at runtime where supported.
 10. Install the bridge as a systemd service. The installer enables
     **both** `pigpiod` and `motor-bridge.service` for autostart, so
     after this one-time step the bridge comes up on every Pi reboot

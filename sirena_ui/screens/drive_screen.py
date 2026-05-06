@@ -12,8 +12,8 @@ Two input modes are supported:
 * On-screen D-pad - press-and-HOLD the mouse button on a direction
   (don't single-click; the BLDC needs a couple of seconds for the
   rotor to actually catch after the kick-start pulse).
-* **90° left / 90° right** — single-click timed in-place pivots (~90°,
-  tunable via ``NINA_DRIVE_TURN_90_SEC`` / ``NINA_DRIVE_TURN_90_PCT``).
+* **Turn left / Turn right** — single-click timed ~90° in-place pivots
+  (``NINA_DRIVE_TURN_90_SEC`` / ``NINA_DRIVE_TURN_90_PCT``).
 * Keyboard - W/A/S/D drive forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -155,7 +156,18 @@ class DriveScreen(QWidget):
         # Slightly more weight to the control card now (was 58/42) so
         # the D-pad isn't squeezed out at 1024 wide.
         body.addWidget(self._build_camera_card(), stretch=55)
-        body.addWidget(self._build_control_card(), stretch=45)
+        _control = self._build_control_card()
+        # Scroll so Manual controls (straight test + 90° turns) stay
+        # reachable on 1024×600; the stack also caches this screen on
+        # first open—restart the app after deploy to pick up UI changes.
+        _ctrl_scroll = QScrollArea()
+        _ctrl_scroll.setWidgetResizable(True)
+        _ctrl_scroll.setFrameShape(QFrame.NoFrame)
+        _ctrl_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        _ctrl_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        _ctrl_scroll.setWidget(_control)
+        _ctrl_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        body.addWidget(_ctrl_scroll, stretch=45)
 
         # Push initial state into the HUD / pills.
         self._render_state(self._drive.state())
@@ -281,7 +293,7 @@ class DriveScreen(QWidget):
 
     def _build_control_card(self) -> Card:
         # Tight stack for the 1024 x 600 panel: title row + autonomy +
-        # D-pad + straight test + wheel polarity + brake/reverse + ESTOP.
+        # D-pad + straight test + turn pivots + brake/reverse + ESTOP.
         card = Card(padding=10, spacing=6)
 
         # Title + autonomy toggle on the same row so the toggle isn't
@@ -322,8 +334,8 @@ class DriveScreen(QWidget):
 
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
-        straight_row.addStretch(1)
-        self._straight_test_btn = QPushButton("Straight test (10 s)")
+        straight_row.setSpacing(6)
+        self._straight_test_btn = QPushButton("Straight 10s")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
@@ -335,89 +347,38 @@ class DriveScreen(QWidget):
             "Turn off autonomous mode and release the brake first."
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
-        straight_row.addWidget(self._straight_test_btn)
-        straight_row.addStretch(1)
+        straight_row.addWidget(self._straight_test_btn, stretch=1)
         card.add_layout(straight_row)
 
+        # Row freed from per-wheel Flip L/R toggles: full width for timed pivots.
         turn_row = QHBoxLayout()
         turn_row.setContentsMargins(0, 0, 0, 0)
         turn_row.setSpacing(8)
-        turn_row.addStretch(1)
-        self._turn_90_left_btn = QPushButton("90° left")
+        card.add_layout(turn_row)
+        self._turn_90_left_btn = QPushButton("Turn left")
         self._turn_90_left_btn.setObjectName("secondaryButton")
         self._turn_90_left_btn.setCursor(Qt.PointingHandCursor)
         self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
-        self._turn_90_left_btn.setMinimumHeight(32)
+        self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
-            "Timed in-place pivot ~90° counter-clockwise (robot frame). "
-            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "speed: NINA_DRIVE_TURN_90_PCT or manual cruise default."
+            "~90° in-place pivot counter-clockwise (robot frame). "
+            "NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "NINA_DRIVE_TURN_90_PCT or manual cruise default."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
-        turn_row.addWidget(self._turn_90_left_btn)
-        self._turn_90_right_btn = QPushButton("90° right")
+        turn_row.addWidget(self._turn_90_left_btn, stretch=1)
+        self._turn_90_right_btn = QPushButton("Turn right")
         self._turn_90_right_btn.setObjectName("secondaryButton")
         self._turn_90_right_btn.setCursor(Qt.PointingHandCursor)
         self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
-        self._turn_90_right_btn.setMinimumHeight(32)
+        self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
-            "Timed in-place pivot ~90° clockwise (robot frame). "
-            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "speed: NINA_DRIVE_TURN_90_PCT or manual cruise default."
+            "~90° in-place pivot clockwise (robot frame). "
+            "NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "NINA_DRIVE_TURN_90_PCT or manual cruise default."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
-        turn_row.addWidget(self._turn_90_right_btn)
-        turn_row.addStretch(1)
-        card.add_layout(turn_row)
-
-        # Wheel polarity calibration. The first time a Nina is built the
-        # JYQDs are commonly soldered to the hub motors with one wheel
-        # phase-wired backwards, so a "forward" command spins one wheel
-        # forward and one backward. Toggling these flips that wheel's
-        # polarity at the nav layer, and the choice is persisted to
-        # ~/.config/sirena/drive_polarity.json so the next boot picks
-        # it up. Replaces the older NINA_NAV_INVERT_LEFT / RIGHT env
-        # vars (those still work as a boot-time fallback if no
-        # persisted value exists yet).
-        polarity_row = QHBoxLayout()
-        polarity_row.setSpacing(6)
-        card.add_layout(polarity_row)
-        polarity_lbl = QLabel("Wheels")
-        polarity_lbl.setStyleSheet(
-            "color: #6e6e73; font-size: 12px; background-color: transparent;"
-        )
-        polarity_lbl.setToolTip(
-            "Per-wheel polarity flip. Use these when 'Forward' makes "
-            "the wheels spin in opposite directions."
-        )
-        polarity_row.addWidget(polarity_lbl)
-
-        self._invert_left_btn = QPushButton("Flip L: OFF")
-        self._invert_left_btn.setObjectName("togglePill")
-        self._invert_left_btn.setCheckable(True)
-        self._invert_left_btn.setFocusPolicy(Qt.NoFocus)
-        self._invert_left_btn.setMinimumHeight(28)
-        self._invert_left_btn.setMaximumHeight(28)
-        self._invert_left_btn.setToolTip(
-            "Flip the LEFT wheel's forward/backward polarity. Survives "
-            "reboot. Saved to ~/.config/sirena/drive_polarity.json."
-        )
-        self._invert_left_btn.clicked.connect(self._on_invert_left_toggle)
-        polarity_row.addWidget(self._invert_left_btn)
-
-        self._invert_right_btn = QPushButton("Flip R: OFF")
-        self._invert_right_btn.setObjectName("togglePill")
-        self._invert_right_btn.setCheckable(True)
-        self._invert_right_btn.setFocusPolicy(Qt.NoFocus)
-        self._invert_right_btn.setMinimumHeight(28)
-        self._invert_right_btn.setMaximumHeight(28)
-        self._invert_right_btn.setToolTip(
-            "Flip the RIGHT wheel's forward/backward polarity. Survives "
-            "reboot. Saved to ~/.config/sirena/drive_polarity.json."
-        )
-        self._invert_right_btn.clicked.connect(self._on_invert_right_toggle)
-        polarity_row.addWidget(self._invert_right_btn)
-        polarity_row.addStretch(1)
+        turn_row.addWidget(self._turn_90_right_btn, stretch=1)
 
         # Brake / Reverse on the SAME row as ESTOP so the bottom of the
         # card collapses from three rows into one.
@@ -485,18 +446,6 @@ class DriveScreen(QWidget):
     def _on_reverse_toggle(self, checked: bool) -> None:
         self._reverse_btn.setText(f"Reverse: {'ON' if checked else 'OFF'}")
         self._drive.set_reverse(checked)
-        self.setFocus()
-
-    def _on_invert_left_toggle(self, checked: bool) -> None:
-        self._invert_left_btn.setText(f"Flip L: {'ON' if checked else 'OFF'}")
-        self._drive.set_invert_left(checked)
-        # Return focus to the screen so WASD keeps reaching us instead
-        # of the button.
-        self.setFocus()
-
-    def _on_invert_right_toggle(self, checked: bool) -> None:
-        self._invert_right_btn.setText(f"Flip R: {'ON' if checked else 'OFF'}")
-        self._drive.set_invert_right(checked)
         self.setFocus()
 
     def _on_emergency_stop(self) -> None:
@@ -866,22 +815,6 @@ class DriveScreen(QWidget):
                 self._dpad.set_enabled(can_manual)
                 self._turn_90_left_btn.setEnabled(can_manual)
                 self._turn_90_right_btn.setEnabled(can_manual)
-
-        # Reflect persisted/runtime polarity in the toggle pills WITHOUT
-        # firing their `clicked` signal back into the controller (which
-        # would loop). blockSignals() is the cleanest way to do that
-        # since we don't have access to the underlying button's setter
-        # discrimination otherwise.
-        for btn, key, label_prefix in (
-            (self._invert_left_btn, "invert_left", "Flip L"),
-            (self._invert_right_btn, "invert_right", "Flip R"),
-        ):
-            on = bool(state.get(key, False))
-            if btn.isChecked() != on:
-                btn.blockSignals(True)
-                btn.setChecked(on)
-                btn.blockSignals(False)
-            btn.setText(f"{label_prefix}: {'ON' if on else 'OFF'}")
 
         message = state.get("driver_message", "")
         if state["connected"]:
