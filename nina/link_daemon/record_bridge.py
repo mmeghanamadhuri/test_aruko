@@ -13,7 +13,11 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
-from nina.link_daemon.dynamixel_bundle import bus_lock, get_action_runner_bundle
+from nina.link_daemon.dynamixel_bundle import (
+    bus_lock,
+    get_action_runner_bundle,
+    release_bundle_serial,
+)
 
 log = logging.getLogger("nina.link_daemon.record_bridge")
 
@@ -184,6 +188,8 @@ def queue_record_session(
                 samples_done=None,
                 countdown_remaining_sec=None,
             )
+        finally:
+            release_bundle_serial()
 
     threading.Thread(target=run, daemon=True, name=f"nina-record-{raw}").start()
     return {"ok": True, "queued": True, "name": raw}

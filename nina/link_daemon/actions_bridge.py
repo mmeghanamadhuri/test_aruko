@@ -21,7 +21,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from nina.link_daemon.config import load_config
-from nina.link_daemon.dynamixel_bundle import bus_lock, get_action_runner_bundle
+from nina.link_daemon.dynamixel_bundle import (
+    bus_lock,
+    get_action_runner_bundle,
+    release_bundle_serial,
+)
 
 log = logging.getLogger("nina.link_daemon.actions_bridge")
 
@@ -155,6 +159,9 @@ def play_named_action(action_name: str) -> Dict[str, Any]:
                     # Motion failed after audio started — stop mpg123/aplay so we don't get "audio only".
                     player.stop_all()
                     raise
+                finally:
+                    # Let go of /dev/ttyUSB* so Sirena UI (separate process) can drive Dynamixels.
+                    release_bundle_serial()
         except Exception:
             log.exception("play_named_action %s", name)
 
