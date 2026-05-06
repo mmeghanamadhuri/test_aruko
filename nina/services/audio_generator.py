@@ -70,6 +70,10 @@ class AudioGenerator:
         """
         Render `text` to an MP3 at `out_path` using gTTS.
 
+        Google's encoder typically emits **mono MPEG audio at 24000 Hz** (see
+        ``ffprobe`` on the file). Playback defaults in ``audio_player`` match
+        that rate so greetings avoid an extra resample step before ALSA.
+
         `tld` selects **which Google Translate host** handles the request (this
         is **not** device GPS). Accent tracks that endpoint: ``us`` →
         ``translate.google.us`` (most reliably **American English**, including

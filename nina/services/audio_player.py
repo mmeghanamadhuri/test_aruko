@@ -30,12 +30,13 @@ For MP3, set ``NINA_AUDIO_MPG123_DEVICE`` or ``NINA_GREET_APLAY_DEVICE`` so
 decoder may use a different PCM path and volume changes won't prevent
 startup glitches / underrun noise.
 
-Output sample rate: ``NINA_AUDIO_OUTPUT_RATE`` (Hz) defaults to **48000**,
-matching typical Jetson HDMI/USB DACs. Silence warmup WAVs and ``mpg123 -r``
-use this rate so the stream matches the device (MP3s are most often 44100 Hz;
-mpg123 resamples cleanly when the rate is forced). Set **44100** for 44.1 kHz
-hardware, or **auto** to restore legacy behaviour (no ``-r`` on mpg123,
-44100 Hz preroll — can mis-match 48 kHz sinks and cause artifacts).
+Output sample rate: **gTTS / Google greeting MP3s are mono at 24000 Hz**
+(ffprobe on ``nina/actions/audio/*.mp3``). ``NINA_AUDIO_OUTPUT_RATE`` defaults
+to **24000** so preroll silence and ``mpg123 -r`` match that stream (no extra
+decoder resampling; ALSA ``plug``/dmix still upsamples to the DAC if needed).
+Use **48000** if your sink only accepts 48 kHz PCM from mpg123, **44100** for
+CD-rate music MP3s, or **auto** for decoder-native rate (no ``-r``) with a
+**24000 Hz** preroll so warmup still matches typical greetings.
 
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
@@ -52,6 +53,11 @@ import time
 import wave
 from pathlib import Path
 from typing import List, Optional
+
+# gTTS (``AudioGenerator``) and Google Translate speech MP3s used for greetings
+# and action clips in this repo decode as mono ~64 kb/s at this rate (verify with
+# ``ffprobe -show_entries stream=sample_rate`` on any ``*.mp3``).
+_GREETING_MP3_SAMPLE_RATE_HZ = 24000
 
 
 def _repo_root() -> Path:
@@ -103,27 +109,29 @@ def _aplay_device_flag() -> Optional[str]:
 def _pcm_output_rate_hz() -> Optional[int]:
     """Sample rate (Hz) for preroll WAV and ``mpg123 -r``.
 
-    * **Default** 48000 — common for Jetson HDMI/USB Class 1 audio.
-    * ``NINA_AUDIO_OUTPUT_RATE=44100`` (etc.) — explicit hardware rate.
-    * ``auto`` / ``native`` — do not pass ``-r`` to mpg123; preroll uses 44100 Hz
-      (legacy; can mismatch 48 kHz devices).
+    * **Default** 24000 — matches typical gTTS / greeting MP3s in-repo.
+    * ``48000`` / ``44100`` / etc. — force decoder output and preroll to that rate.
+    * ``auto`` / ``native`` — do not pass ``-r`` to mpg123; preroll still uses
+      :data:`_GREETING_MP3_SAMPLE_RATE_HZ` so the warmup matches greeting clips.
     """
-    raw = (os.environ.get("NINA_AUDIO_OUTPUT_RATE") or "48000").strip().lower()
+    raw = (
+        os.environ.get("NINA_AUDIO_OUTPUT_RATE") or str(_GREETING_MP3_SAMPLE_RATE_HZ)
+    ).strip().lower()
     if raw in ("auto", "native"):
         return None
     try:
         hz = int(raw)
     except ValueError:
-        return 48000
+        return _GREETING_MP3_SAMPLE_RATE_HZ
     if hz <= 0:
         return None
     return max(8000, min(192000, hz))
 
 
 def _preroll_wav_sample_rate_hz() -> int:
-    """Warmup / silence WAV rate (must match ``mpg123 -r`` when rate is forced)."""
+    """Warmup / silence WAV rate (must match the PCM rate mpg123 will send next)."""
     forced = _pcm_output_rate_hz()
-    return 44100 if forced is None else forced
+    return _GREETING_MP3_SAMPLE_RATE_HZ if forced is None else forced
 
 
 def _parse_volume_pct_from_text(text: str) -> Optional[int]:
