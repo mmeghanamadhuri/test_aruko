@@ -111,8 +111,26 @@ RIGHT_WHEEL_EXTRA_RUN_PP = 2
 # so logs, lidar, and bench observation can characterise motion at a lower
 # duty. The cruise value can be below MIN_SPEED_PCT; it is sent only to the
 # nav layer (UI clamp does not apply to hardware PWM).
+# Straight-line manual cruise from rest (D-pad W/S only; L/R pivots use
+# DEFAULT_PIVOT_SPEED_PCT below).
 FROM_STOP_KICK_PCT = 14
 FROM_STOP_CRUISE_PCT = 5
+
+# In-place pivot duty: D-pad A/D from rest and Drive "Turn left/right" buttons
+# (unless overridden by env). Using the straight-line cruise (~5%) or the tiny
+# manual midpoint (~11%) often fails to spin both hubs on the Pi bridge.
+DEFAULT_PIVOT_SPEED_PCT = 20
+
+
+def _drive_pivot_speed_pct() -> int:
+    """D-pad left/right from stop. Env ``NINA_DRIVE_PIVOT_PCT`` overrides."""
+    raw = (os.environ.get("NINA_DRIVE_PIVOT_PCT") or "").strip()
+    if raw:
+        try:
+            return max(MIN_SPEED_PCT, min(100, int(raw)))
+        except ValueError:
+            pass
+    return int(DEFAULT_PIVOT_SPEED_PCT)
 
 
 def _drive_turn_90_duration_sec() -> float:
@@ -136,7 +154,7 @@ def _drive_turn_90_speed_pct() -> int:
             return max(MIN_SPEED_PCT, min(100, int(raw)))
         except ValueError:
             pass
-    return FIXED_MANUAL_DRIVE_SPEED_PCT
+    return int(DEFAULT_PIVOT_SPEED_PCT)
 
 
 def _clamp_speed(pct: int) -> int:
@@ -541,7 +559,10 @@ class DriveController(QObject):
         with self._lock:
             self._state["direction"] = direction
         self._emit_state()
-        speed = FIXED_MANUAL_DRIVE_SPEED_PCT
+        if direction in (_DIR_LEFT, _DIR_RIGHT):
+            speed = _drive_pivot_speed_pct()
+        else:
+            speed = FIXED_MANUAL_DRIVE_SPEED_PCT
         self._enqueue(lambda d=direction, s=speed: self._do_drive(d, s))
 
     def turn_90(self, which: str) -> None:
@@ -826,8 +847,13 @@ class DriveController(QObject):
             # held-while-pressed (matches forward/back) instead of the
             # old timed turn that auto-stopped after ~2.3s.
             if start_from_stop:
-                kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
-                cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
+                if direction in (_DIR_LEFT, _DIR_RIGHT):
+                    pivot = _drive_pivot_speed_pct()
+                    kick = max(MIN_SPEED_PCT, min(100, pivot))
+                    cruise = max(MIN_SPEED_PCT, min(100, pivot))
+                else:
+                    kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
+                    cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
                 self._nav.drive_continuous(ldir, rdir, kick)
                 self._commit_wheels(
                     ldir, kick, rdir, kick, start_phase=True,
@@ -835,11 +861,12 @@ class DriveController(QObject):
                 self._commit_wheels(
                     ldir, cruise, rdir, cruise, start_phase=False,
                 )
+                mode = "pivot" if direction in (_DIR_LEFT, _DIR_RIGHT) else "straight"
                 log.info(
-                    "drive from stop: kick %s%% then cruise %s%% (manual %s%%)",
+                    "drive from stop (%s): kick %s%% then cruise %s%%",
+                    mode,
                     kick,
                     cruise,
-                    FIXED_MANUAL_DRIVE_SPEED_PCT,
                 )
             else:
                 self._commit_wheels(

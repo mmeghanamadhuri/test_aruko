@@ -13,7 +13,8 @@ Two input modes are supported:
   (don't single-click; the BLDC needs a couple of seconds for the
   rotor to actually catch after the kick-start pulse).
 * **Turn left / Turn right** — single-click timed ~90° in-place pivots
-  (``NINA_DRIVE_TURN_90_SEC`` / ``NINA_DRIVE_TURN_90_PCT``).
+  (``NINA_DRIVE_TURN_90_SEC``; speed default **20%**, env ``NINA_DRIVE_TURN_90_PCT``).
+* D-pad **left/right** from rest uses the same **20%** pivot duty (``NINA_DRIVE_PIVOT_PCT``).
 * Keyboard - W/A/S/D drive forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
@@ -362,8 +363,8 @@ class DriveScreen(QWidget):
         self._turn_90_left_btn.setMinimumHeight(36)
         self._turn_90_left_btn.setToolTip(
             "~90° in-place pivot counter-clockwise (robot frame). "
-            "NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "NINA_DRIVE_TURN_90_PCT or manual cruise default."
+            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "speed: NINA_DRIVE_TURN_90_PCT or default 20% (in-place pivot)."
         )
         self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
         turn_row.addWidget(self._turn_90_left_btn, stretch=1)
@@ -374,8 +375,8 @@ class DriveScreen(QWidget):
         self._turn_90_right_btn.setMinimumHeight(36)
         self._turn_90_right_btn.setToolTip(
             "~90° in-place pivot clockwise (robot frame). "
-            "NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
-            "NINA_DRIVE_TURN_90_PCT or manual cruise default."
+            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "speed: NINA_DRIVE_TURN_90_PCT or default 20% (in-place pivot)."
         )
         self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
         turn_row.addWidget(self._turn_90_right_btn, stretch=1)
