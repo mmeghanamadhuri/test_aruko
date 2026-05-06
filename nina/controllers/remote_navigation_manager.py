@@ -196,6 +196,7 @@ class RemoteNavigationManager:
                     self.config.baudrate,
                     attempt,
                 )
+                self._reset_pi_motor_bridge_after_connect()
                 self._is_initialized = True
                 return
             if time.monotonic() >= deadline:
@@ -212,6 +213,26 @@ class RemoteNavigationManager:
             "motor_bridge.py running on the Pi? "
             "(`sudo systemctl status motor-bridge`)"
         )
+
+    def _reset_pi_motor_bridge_after_connect(self) -> None:
+        """Tell the Pi to ESTOP then STOP so JYQDs and bridge state are idle-safe.
+
+        Runs once after a successful PING when the Nina app (or any Jetson
+        client) opens the link — same effect as a manual emergency reset without
+        restarting ``motor_bridge.py``.
+        """
+        if not self._send_command("ESTOP"):
+            log.warning(
+                "Post-connect ESTOP did not get OK; Pi bridge may be out of sync"
+            )
+        time.sleep(0.05)
+        if not self._send_command("STOP"):
+            log.warning("Post-connect STOP did not get OK")
+        self._last_l_pwm = 0
+        self._last_r_pwm = 0
+        self._last_straight_sign = None
+        self._last_was_symmetric_straight = False
+        log.info("Pi motor bridge: ESTOP+STOP after Nina connect (hardware sync)")
 
     def shutdown(self) -> None:
         if not self._is_initialized:

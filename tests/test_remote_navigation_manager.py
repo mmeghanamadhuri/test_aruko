@@ -108,6 +108,16 @@ class _FakeSerialRegistry:
         for ln in lines:
             self.responses.append((ln + "\n").encode("utf-8"))
 
+    def queue_handshake(self, *before_pong: str) -> None:
+        """Responses for `RemoteNavigationManager.initialize()`.
+
+        Optional boot lines (e.g. READY), then PONG, then OK/OK for post-connect
+        ESTOP and STOP.
+        """
+        for ln in before_pong:
+            self.queue(ln)
+        self.queue("PONG", "OK", "OK")
+
 
 @pytest.fixture
 def fake_serial(monkeypatch: pytest.MonkeyPatch) -> _FakeSerialRegistry:
@@ -140,7 +150,7 @@ def _writes_as_strings(port: _FakeSerial) -> List[str]:
 
 
 def test_initialize_succeeds_on_first_pong(fake_serial: _FakeSerialRegistry) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -153,7 +163,7 @@ def test_initialize_succeeds_on_first_pong(fake_serial: _FakeSerialRegistry) -> 
 
     port = _last_open(fake_serial)
     assert port.port == "/dev/fake0"
-    assert _writes_as_strings(port) == ["PING"]
+    assert _writes_as_strings(port) == ["PING", "ESTOP", "STOP"]
     assert nav._is_initialized is True
 
 
@@ -161,7 +171,7 @@ def test_initialize_tolerates_boot_ready_before_pong(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
     """A bridge that just booted may emit READY before answering PING."""
-    fake_serial.queue("READY", "PONG")
+    fake_serial.queue_handshake("READY")
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -205,7 +215,7 @@ def test_async_evt_watchdog_does_not_desync_response_stream(
     slot of the next command, shifting every subsequent reply by one.
     With the filter, EVT lines are skipped and `OK` is still seen as
     the SET reply."""
-    fake_serial.queue("PONG")  # initialize
+    fake_serial.queue_handshake()  # initialize
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -219,14 +229,14 @@ def test_async_evt_watchdog_does_not_desync_response_stream(
     nav.set_wheels(left_dir="forward", left_speed=30, right_dir="forward", right_speed=30)
 
     port = _last_open(fake_serial)
-    assert _writes_as_strings(port) == ["PING", "SET F 30 F 30"]
+    assert _writes_as_strings(port) == ["PING", "ESTOP", "STOP", "SET F 30 F 30"]
     assert not fake_serial.responses, "EVT and OK should both have been consumed"
 
 
 def test_async_ready_after_reboot_is_skipped_mid_session(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -240,14 +250,14 @@ def test_async_ready_after_reboot_is_skipped_mid_session(
     nav.stop()
 
     port = _last_open(fake_serial)
-    assert _writes_as_strings(port) == ["PING", "STOP"]
+    assert _writes_as_strings(port) == ["PING", "ESTOP", "STOP", "STOP"]
 
 
 def test_err_response_returns_false_and_logs(
     fake_serial: _FakeSerialRegistry,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -282,7 +292,7 @@ def test_err_response_returns_false_and_logs(
 def test_set_wheels_emits_correct_direction_letters(
     fake_serial: _FakeSerialRegistry, ldir: str, rdir: str, expected: str,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -300,7 +310,7 @@ def test_set_wheels_emits_correct_direction_letters(
 
 
 def test_invert_left_flips_only_left_letter(fake_serial: _FakeSerialRegistry) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -325,7 +335,7 @@ def test_set_invert_left_runtime_override_flips_next_set(
     """The Drive screen's Flip L toggle calls set_invert_left() at
     runtime - the very next SET must reflect the flip even though the
     frozen RemoteNavigationConfig still says invert_left_dir=False."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -357,7 +367,7 @@ def test_set_invert_left_runtime_override_flips_next_set(
 def test_set_invert_right_runtime_override_flips_next_set(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -382,7 +392,7 @@ def test_runtime_invert_override_wins_over_frozen_config(
     """A runtime False must override a config-time True. This matters
     because the kiosk service still ships INVERT_LEFT=1, but if the
     operator clicks Flip L OFF on the GUI we have to honour them."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -403,7 +413,7 @@ def test_runtime_invert_override_wins_over_frozen_config(
 
 
 def test_speed_is_clamped_to_0_100(fake_serial: _FakeSerialRegistry) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -424,7 +434,7 @@ def test_set_wheels_start_kick_from_rest_issues_boost_then_target(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
     """Breakaway kick: two SET lines when configured and both sides were at rest."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -458,7 +468,7 @@ def test_set_wheels_straight_opposite_nudge_from_rest_then_crawl(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
     """Opposite-direction jog before straight crawl when configured."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -492,7 +502,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
     """Turn (differential) then straight while PWM stayed up: preload straight."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -534,7 +544,7 @@ def test_set_wheels_straight_after_turn_gets_opposite_nudge(
 
 def test_drive_continuous_sends_stop_before_set(fake_serial: _FakeSerialRegistry) -> None:
     """Remote drive_continuous mirrors local: STOP, settle, then motion."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -558,7 +568,7 @@ def test_drive_continuous_sends_stop_before_set(fake_serial: _FakeSerialRegistry
 
 
 def test_invalid_direction_raises(fake_serial: _FakeSerialRegistry) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -580,7 +590,7 @@ def test_invalid_direction_raises(fake_serial: _FakeSerialRegistry) -> None:
 def test_stop_emergency_stop_and_led_emit_correct_lines(
     fake_serial: _FakeSerialRegistry,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -597,7 +607,7 @@ def test_stop_emergency_stop_and_led_emit_correct_lines(
     nav.set_status("bogus")  # falls back to OFF, still one line on the wire
 
     port = _last_open(fake_serial)
-    assert _writes_as_strings(port)[1:] == [
+    assert _writes_as_strings(port)[3:] == [
         "STOP",
         "ESTOP",
         "LED CONNECTED",
@@ -617,7 +627,7 @@ def test_reconnect_is_throttled_when_pi_is_dead(
     should reopen at most once per `reconnect_min_interval_sec`. Burst
     callers must NOT re-open on every command, which previously made
     the GUI's drive_continuous tick busy-loop on a dead Pi."""
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",
@@ -648,7 +658,7 @@ def test_reconnect_succeeds_after_cooldown_elapses(
     fake_serial: _FakeSerialRegistry,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    fake_serial.queue("PONG")
+    fake_serial.queue_handshake()
     nav = RemoteNavigationManager(
         RemoteNavigationConfig(
             serial_port="/dev/fake0",

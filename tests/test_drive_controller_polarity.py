@@ -385,8 +385,8 @@ def test_polarity_apply_on_nav_without_setters_is_silent(
 def test_drive_from_stop_kicks_then_cruises_low(
     isolate_polarity_dir: Path,
 ) -> None:
-    """First motion after idle uses drive_continuous at kick duty (forward: R = L + START),
-    then set_wheels at kick (+ start bias) and cruise (+ run bias)."""
+    """First motion after idle uses drive_continuous at kick duty, then set_wheels
+    at kick and cruise (+ START/RUN bias when non-zero)."""
     from sirena_ui.workers import drive_controller as dc
 
     nav = FakeNav()
@@ -406,14 +406,12 @@ def test_drive_from_stop_kicks_then_cruises_low(
 
         assert _wait_for(saw_kick_and_cruise)
 
-        # drive_continuous first with kick speed
+        # drive_continuous first with symmetric kick speed (R trim via set_wheels only)
         dc_calls = [c for c in nav.calls if c[0] == "drive_continuous"]
         sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
         assert len(dc_calls) >= 1
         assert dc_calls[-1][1]["speed_percent"] == dc.FROM_STOP_KICK_PCT
-        assert dc_calls[-1][1]["right_speed_percent"] == (
-            dc.FROM_STOP_KICK_PCT + dc.RIGHT_WHEEL_EXTRA_START_PP
-        )
+        assert "right_speed_percent" not in dc_calls[-1][1]
         assert len(sw_calls) >= 2
         kick_sw = sw_calls[0][1]
         assert kick_sw["left_speed"] == dc.FROM_STOP_KICK_PCT
