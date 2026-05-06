@@ -22,7 +22,7 @@ Two input modes are supported:
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QImage, QPixmap
@@ -58,12 +58,9 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
-# Bench / field check: drive forward at boosted speed (not D-pad from-stop
-# cruise), then stop.  Default matches top of slider envelope; override with
-# NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
-STRAIGHT_TEST_MS = 15000
-# Poll after ensure_hardware(): init runs on a worker thread; driving before
-# _do_init completes was a no-op (_nav still None).
+# Bench / field check: multi-segment path at straight-test speed (not D-pad
+# from-stop cruise). Segment durations are overridable via NINA_STRAIGHT_SEQ_*.
+# PWM: NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_READY_POLL_MS = 50
 STRAIGHT_READY_MAX_POLLS = 100
 
@@ -74,6 +71,41 @@ def _straight_test_speed_pct() -> int:
     except ValueError:
         raw = MAX_SPEED_PCT
     return max(MIN_SPEED_PCT, min(100, raw))
+
+
+def _straight_seq_turn_ms() -> int:
+    try:
+        v = int(os.environ.get("NINA_STRAIGHT_SEQ_TURN_MS", "900"))
+    except ValueError:
+        v = 900
+    return max(100, min(60000, v))
+
+
+def _straight_sequence_spec() -> List[Tuple[str, int]]:
+    """(segment_kind, duration_ms) — kind is \"fwd\" or \"left\" (in-place)."""
+    try:
+        ms1 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD1_MS", "12000"))
+    except ValueError:
+        ms1 = 12000
+    try:
+        ms2 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD2_MS", "5000"))
+    except ValueError:
+        ms2 = 5000
+    try:
+        ms3 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD3_MS", "12000"))
+    except ValueError:
+        ms3 = 12000
+    ms1 = max(0, ms1)
+    ms2 = max(0, ms2)
+    ms3 = max(0, ms3)
+    t = _straight_seq_turn_ms()
+    return [
+        ("fwd", ms1),
+        ("left", t),
+        ("fwd", ms2),
+        ("left", t),
+        ("fwd", ms3),
+    ]
 
 
 class DriveScreen(QWidget):
@@ -92,9 +124,11 @@ class DriveScreen(QWidget):
 
         self._straight_test_timer = QTimer(self)
         self._straight_test_timer.setSingleShot(True)
-        self._straight_test_timer.timeout.connect(self._finish_straight_test)
-        self._straight_pending: Optional[Tuple[str, int]] = None
-        self._straight_ready_polls = 0
+        self._straight_test_timer.timeout.connect(self._on_straight_sequence_timer)
+        self._straight_pending = False
+        self._straight_sequence_spec: List[Tuple[str, int]] = []
+        self._straight_seq_index: int = -1
+        self._straight_seq_fwd_dir: str = "forward"
 
         # Live RGB feed wiring. The "Front camera" card on the left of
         # the Drive screen used to be a static placeholder; we now
@@ -289,15 +323,17 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.addStretch(1)
-        self._straight_test_btn = QPushButton("Straight 15 s (test)")
+        self._straight_test_btn = QPushButton("Straight sequence (test)")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Drive forward at straight-test speed (default: top of safe range; "
-            "NINA_STRAIGHT_TEST_SPEED_PCT) for 15 seconds, then stop. "
-            "Turn off autonomous mode and release the brake first."
+            "Straight forward 12 s, turn left, forward 5 s, turn left, forward 12 s "
+            "at NINA_STRAIGHT_TEST_SPEED_PCT (tune segment ms with NINA_STRAIGHT_SEQ_*). "
+            "Respects Reverse: both straight legs use the same gear direction. "
+            "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
+            "Turn off autonomous mode and release the brake before starting."
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
         straight_row.addWidget(self._straight_test_btn)
@@ -411,9 +447,7 @@ class DriveScreen(QWidget):
 
     def _on_brake_toggle(self, checked: bool) -> None:
         if checked and self._straight_test_timer.isActive():
-            self._straight_test_timer.stop()
-            self._drive.stop()
-            self._restore_after_straight_test()
+            self._finish_straight_test()
         self._brake_btn.setText(f"Brake: {'ON' if checked else 'OFF'}")
         self._drive.set_brake(checked)
         self.setFocus()
@@ -436,7 +470,6 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def _on_emergency_stop(self) -> None:
-        self._straight_test_timer.stop()
         self._drive.emergency_stop()
         # Sync the Brake toggle so the screen reflects the new state
         # immediately (the controller already engaged the brake on the
@@ -451,9 +484,8 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def _on_straight_test_clicked(self) -> None:
-        if self._straight_test_timer.isActive():
+        if self._straight_test_timer.isActive() or self._straight_pending:
             return
-        if self._autonomy.is_enabled():
             QMessageBox.warning(
                 self,
                 "Autonomous mode",
@@ -470,25 +502,20 @@ class DriveScreen(QWidget):
         self._drive.ensure_hardware()
         self._straight_test_btn.setEnabled(False)
         self._dpad.set_enabled(False)
-        st = self._drive.state()
-        direction = "forward"
-        if st.get("reverse"):
-            direction = "back"
-        pct = _straight_test_speed_pct()
-        self._straight_pending = (direction, pct)
+        self._straight_pending = True
         self._straight_ready_polls = 0
         QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
         self.setFocus()
 
     def _try_straight_when_ready(self) -> None:
-        """Start straight test only after BLDC init finishes (async worker)."""
-        if self._straight_pending is None:
+        """Start straight sequence only after BLDC init finishes (async worker)."""
+        if not self._straight_pending:
             return
         self._straight_ready_polls += 1
         self._drive.ensure_hardware()
         if not self._drive.state().get("connected"):
             if self._straight_ready_polls >= STRAIGHT_READY_MAX_POLLS:
-                self._straight_pending = None
+                self._straight_pending = False
                 QMessageBox.warning(
                     self,
                     "Drive not ready",
@@ -499,13 +526,62 @@ class DriveScreen(QWidget):
                 return
             QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
             return
-        direction, pct = self._straight_pending
-        self._straight_pending = None
-        self._drive.drive_wheels(direction, pct, direction, pct)
-        self._straight_test_timer.start(STRAIGHT_TEST_MS)
+        self._straight_pending = False
+        self._straight_seq_fwd_dir = (
+            "back" if self._drive.state().get("reverse") else "forward"
+        )
+        self._straight_sequence_spec = _straight_sequence_spec()
+        self._straight_seq_index = -1
+        self._apply_straight_sequence_segment(0)
         self.setFocus()
 
+    def _apply_straight_sequence_segment(self, index: int) -> None:
+        spec = self._straight_sequence_spec
+        n = len(spec)
+        while index < n and spec[index][1] <= 0:
+            index += 1
+        if index >= n:
+            self._finish_straight_test()
+            return
+        kind, ms = spec[index]
+        pct = _straight_test_speed_pct()
+        if kind == "fwd":
+            d = self._straight_seq_fwd_dir
+            self._drive.drive_wheels(d, pct, d, pct)
+        elif kind == "left":
+            # Same wheel sense as D-pad / face-follow: nose swings left.
+            self._drive.drive_wheels("back", pct, "forward", pct)
+        else:
+            self._drive.drive_wheels(
+                self._straight_seq_fwd_dir,
+                pct,
+                self._straight_seq_fwd_dir,
+                pct,
+            )
+        self._straight_seq_index = index
+        self._straight_test_timer.start(ms)
+
+    def _on_straight_sequence_timer(self) -> None:
+        self._straight_test_timer.stop()
+        try:
+            self._drive.stop(drain=True)
+        except Exception:
+            try:
+                self._drive.stop()
+            except Exception:
+                pass
+        next_i = self._straight_seq_index + 1
+        if next_i >= len(self._straight_sequence_spec):
+            self._restore_after_straight_test()
+            self.setFocus()
+            return
+        self._apply_straight_sequence_segment(next_i)
+
     def _restore_after_straight_test(self) -> None:
+        self._straight_test_timer.stop()
+        self._straight_sequence_spec = []
+        self._straight_seq_index = -1
+        self._straight_pending = False
         if not self._autonomy.is_enabled():
             self._straight_test_btn.setEnabled(True)
             st = self._drive.state()
@@ -514,8 +590,13 @@ class DriveScreen(QWidget):
             self._straight_test_btn.setEnabled(False)
 
     def _finish_straight_test(self) -> None:
-        self._straight_test_timer.stop()
-        self._drive.stop()
+        try:
+            self._drive.stop(drain=True)
+        except Exception:
+            try:
+                self._drive.stop()
+            except Exception:
+                pass
         self._restore_after_straight_test()
         self.setFocus()
 
@@ -531,8 +612,14 @@ class DriveScreen(QWidget):
 
     def _on_autonomy_enabled(self, on: bool) -> None:
         if on and self._straight_test_timer.isActive():
-            self._straight_test_timer.stop()
-            self._drive.stop()
+            try:
+                self._drive.stop(drain=True)
+            except Exception:
+                try:
+                    self._drive.stop()
+                except Exception:
+                    pass
+            self._restore_after_straight_test()
         self._autonomy_btn.blockSignals(True)
         self._autonomy_btn.setChecked(on)
         # Short label - we removed the explanatory banner below the
@@ -591,10 +678,9 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def on_leave(self) -> None:
-        self._straight_pending = None
         if self._straight_test_timer.isActive():
-            self._straight_test_timer.stop()
-            self._drive.stop()
+            self._finish_straight_test()
+        elif self._straight_pending:
             self._restore_after_straight_test()
 
     def _on_camera_frame(self, image: QImage) -> None:
@@ -656,9 +742,7 @@ class DriveScreen(QWidget):
         if self._straight_test_timer.isActive():
             key = event.key()
             if key == Qt.Key_Space:
-                self._straight_test_timer.stop()
-                self._drive.stop()
-                self._restore_after_straight_test()
+                self._finish_straight_test()
                 event.accept()
                 return
             if key == Qt.Key_Escape:
@@ -712,7 +796,7 @@ class DriveScreen(QWidget):
         # enablement: while autonomy is on, the D-pad stays disabled
         # regardless of the manual brake state.
         if not self._autonomy.is_enabled():
-            if self._straight_test_timer.isActive():
+            if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
                 self._dpad.set_enabled(False)
             else:
                 self._dpad.set_enabled(not state["brake"])

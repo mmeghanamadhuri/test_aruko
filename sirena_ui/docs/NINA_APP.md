@@ -715,8 +715,13 @@ export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
 export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
-# Drive "Straight 15 s" bench test: sustained PWM % (default: MAX_SPEED_PCT).
+# Drive "Straight sequence" bench test: PWM % each segment (default: MAX_SPEED_PCT).
+# Path: forward FWD1_MS, turn left TURN_MS, forward FWD2_MS, turn left, forward FWD3_MS.
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
+# export NINA_STRAIGHT_SEQ_FWD1_MS=12000
+# export NINA_STRAIGHT_SEQ_FWD2_MS=5000
+# export NINA_STRAIGHT_SEQ_FWD3_MS=12000
+# export NINA_STRAIGHT_SEQ_TURN_MS=900
 
 # Vision
 export NINA_VISION_CAMERA=0
