@@ -30,6 +30,13 @@ For MP3, set ``NINA_AUDIO_MPG123_DEVICE`` or ``NINA_GREET_APLAY_DEVICE`` so
 decoder may use a different PCM path and volume changes won't prevent
 startup glitches / underrun noise.
 
+Output sample rate: ``NINA_AUDIO_OUTPUT_RATE`` (Hz) defaults to **48000**,
+matching typical Jetson HDMI/USB DACs. Silence warmup WAVs and ``mpg123 -r``
+use this rate so the stream matches the device (MP3s are most often 44100 Hz;
+mpg123 resamples cleanly when the rate is forced). Set **44100** for 44.1 kHz
+hardware, or **auto** to restore legacy behaviour (no ``-r`` on mpg123,
+44100 Hz preroll — can mis-match 48 kHz sinks and cause artifacts).
+
 Install hint on the Jetson:
     sudo apt install -y alsa-utils mpg123
 """
@@ -93,6 +100,32 @@ def _aplay_device_flag() -> Optional[str]:
     return d or None
 
 
+def _pcm_output_rate_hz() -> Optional[int]:
+    """Sample rate (Hz) for preroll WAV and ``mpg123 -r``.
+
+    * **Default** 48000 — common for Jetson HDMI/USB Class 1 audio.
+    * ``NINA_AUDIO_OUTPUT_RATE=44100`` (etc.) — explicit hardware rate.
+    * ``auto`` / ``native`` — do not pass ``-r`` to mpg123; preroll uses 44100 Hz
+      (legacy; can mismatch 48 kHz devices).
+    """
+    raw = (os.environ.get("NINA_AUDIO_OUTPUT_RATE") or "48000").strip().lower()
+    if raw in ("auto", "native"):
+        return None
+    try:
+        hz = int(raw)
+    except ValueError:
+        return 48000
+    if hz <= 0:
+        return None
+    return max(8000, min(192000, hz))
+
+
+def _preroll_wav_sample_rate_hz() -> int:
+    """Warmup / silence WAV rate (must match ``mpg123 -r`` when rate is forced)."""
+    forced = _pcm_output_rate_hz()
+    return 44100 if forced is None else forced
+
+
 def _parse_volume_pct_from_text(text: str) -> Optional[int]:
     """First ``NN%`` in pactl/amixer output (e.g. 50% / ... dB)."""
     if not text:
@@ -104,7 +137,7 @@ def _parse_volume_pct_from_text(text: str) -> Optional[int]:
     return v if 0 <= v <= 150 else None
 
 
-def _ensure_preroll_wav(ms: int, sample_rate: int = 44100) -> Optional[Path]:
+def _ensure_preroll_wav(ms: int, sample_rate: int) -> Optional[Path]:
     if ms <= 0:
         return None
     cache = _repo_root() / "nina" / "data" / ".cache"
@@ -218,6 +251,9 @@ def mpg123_command_for(path: Path) -> Optional[List[str]]:
     ).strip()
     if dev:
         cmd.extend(["-o", "alsa", "-a", dev])
+    rate = _pcm_output_rate_hz()
+    if rate is not None:
+        cmd.extend(["-r", str(rate)])
     cmd.append(str(path))
     return cmd
 
@@ -286,7 +322,7 @@ def _play_aplay_silence_ms(ms: int) -> None:
     aplay = shutil.which("aplay")
     if not aplay:
         return
-    wav = _ensure_preroll_wav(ms)
+    wav = _ensure_preroll_wav(ms, _preroll_wav_sample_rate_hz())
     if wav is None:
         return
     cmd: List[str] = [aplay, "-q"]
