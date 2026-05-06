@@ -103,7 +103,7 @@ FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 # START; all later forward commands use RUN. Reverse (both backward), turns,
 # and coast are left symmetric.
 RIGHT_WHEEL_EXTRA_START_PP = 2
-RIGHT_WHEEL_EXTRA_RUN_PP = 5
+RIGHT_WHEEL_EXTRA_RUN_PP = 2
 
 # When manual drive begins from a full stop (`_active_drive` is None),
 # apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
