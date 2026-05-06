@@ -236,6 +236,7 @@ class LinkClient {
         lang: String,
         tld: String,
         audioOffsetSec: Double,
+        slow: Boolean = false,
     ): JSONObject =
         withContext(Dispatchers.IO) {
             val body =
@@ -245,6 +246,7 @@ class LinkClient {
                     .put("lang", lang)
                     .put("tld", tld)
                     .put("audio_offset", audioOffsetSec)
+                    .put("slow", slow)
             post("$baseUrl/v1/actions/audio/generate", bearer, body.toString())
         }
 

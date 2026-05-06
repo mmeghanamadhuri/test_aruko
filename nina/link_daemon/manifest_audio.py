@@ -115,8 +115,9 @@ def generate_action_audio_clip(
     text: str,
     *,
     lang: str = "en",
-    tld: str = "com",
+    tld: str = "us",
     offset: float = 0.0,
+    slow: bool = False,
 ) -> Path:
     text = (text or "").strip()
     if not text:
@@ -130,7 +131,7 @@ def generate_action_audio_clip(
     rel = f"audio/{action_name}.mp3"
     out_path = actions_dir / rel
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    AudioGenerator.generate(text, out_path, lang=lang, tld=tld)
+    AudioGenerator.generate(text, out_path, lang=lang, tld=tld, slow=slow)
     off_arg: Optional[float] = offset
     set_action_audio(manifest_path, action_name, rel, audio_offset=off_arg)
     return out_path

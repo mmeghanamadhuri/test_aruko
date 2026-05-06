@@ -529,11 +529,17 @@ private fun RecordTabContent(vm: CompanionViewModel, caps: JSONObject?) {
     }
 }
 
-private data class VoicePreset(val label: String, val lang: String, val tld: String)
+private data class VoicePreset(
+    val label: String,
+    val lang: String,
+    val tld: String,
+    val slow: Boolean = false,
+)
 
 private val SIRENA_VOICE_PRESETS: List<VoicePreset> =
     listOf(
-        VoicePreset("US English (default)", "en", "com"),
+        VoicePreset("US English (default)", "en", "us"),
+        VoicePreset("US English · robotic slow (US)", "en", "us", slow = true),
         VoicePreset("UK English", "en", "co.uk"),
         VoicePreset("Australian English", "en", "com.au"),
         VoicePreset("Indian English", "en", "co.in"),
@@ -852,6 +858,7 @@ private fun AudioTabContent(
                                 preset.lang,
                                 preset.tld,
                                 off,
+                                preset.slow,
                             )
                         busy = ""
                         infoLine = err ?: "Generated and saved to audio/${selectedName}.mp3"

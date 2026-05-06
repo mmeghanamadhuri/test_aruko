@@ -19,6 +19,8 @@ class AudioGenWorker(QThread):
         lang: str,
         tld: str,
         offset: float,
+        *,
+        slow: bool = False,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -28,6 +30,7 @@ class AudioGenWorker(QThread):
         self._lang = lang
         self._tld = tld
         self._offset = max(0.0, float(offset))
+        self._slow = slow
 
     def run(self) -> None:
         try:
@@ -37,6 +40,7 @@ class AudioGenWorker(QThread):
                 lang=self._lang,
                 tld=self._tld,
                 offset=self._offset,
+                slow=self._slow,
             )
             self.finished_ok.emit(self._action_name, str(path))
         except Exception as exc:  # pragma: no cover - reported back to UI

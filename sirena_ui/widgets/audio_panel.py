@@ -75,8 +75,8 @@ class AudioPanel(QWidget):
         form.addRow("Text to speak:", self._text_edit)
 
         self._voice_combo = QComboBox()
-        for label, lang, tld in VOICE_PRESETS:
-            self._voice_combo.addItem(label, (lang, tld))
+        for label, lang, tld, slow in VOICE_PRESETS:
+            self._voice_combo.addItem(label, (lang, tld, slow))
         form.addRow("Voice:", self._voice_combo)
 
         self._offset_spin = QDoubleSpinBox()
@@ -268,13 +268,20 @@ class AudioPanel(QWidget):
             )
             if confirm != QMessageBox.Yes:
                 return
-        lang, tld = self._voice_combo.currentData()
+        lang, tld, slow = self._voice_combo.currentData()
         offset = float(self._offset_spin.value())
 
         self._set_busy(True)
         self._set_status("Generating with gTTS (needs internet) ...")
         self._worker = AudioGenWorker(
-            self._service, name, text, lang, tld, offset, parent=self,
+            self._service,
+            name,
+            text,
+            lang,
+            tld,
+            offset,
+            slow=slow,
+            parent=self,
         )
         self._worker.finished_ok.connect(self._on_generate_done)
         self._worker.failed.connect(self._on_generate_failed)

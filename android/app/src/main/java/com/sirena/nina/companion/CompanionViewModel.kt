@@ -648,11 +648,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         lang: String,
         tld: String,
         audioOffsetSec: Double,
+        slow: Boolean = false,
     ): String? =
         try {
             val url = prefs.baseUrl.first()
             val bearer = prefs.bearerToken.first()
-            client.actionAudioGenerate(url, bearer, action, text, lang, tld, audioOffsetSec)
+            client.actionAudioGenerate(url, bearer, action, text, lang, tld, audioOffsetSec, slow)
             null
         } catch (e: Exception) {
             e.message

@@ -35,10 +35,10 @@ def main() -> int:
     parser.add_argument("--lang", default="en", help="gTTS language code (default: en).")
     parser.add_argument(
         "--tld",
-        default="com",
+        default="us",
         help=(
-            "Google TLD for accent selection (default: com for US English). "
-            "Common values: com, co.uk, com.au, co.in."
+            "Google Translate host TLD (default: us → translate.google.us, US English). "
+            "Others: com, co.uk, com.au, co.in."
         ),
     )
     parser.add_argument(

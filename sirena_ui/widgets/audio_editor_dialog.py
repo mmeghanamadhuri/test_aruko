@@ -24,16 +24,18 @@ from sirena_ui.workers.audio_gen_worker import AudioGenWorker
 from sirena_ui.workers.nina_service import NinaService
 
 
-# (display label, lang code, tld) — first entry is the default. Users
-# can edit the manifest by hand for exotic combos not listed here.
+# (display label, lang code, tld, slow) — first entry is the default. ``slow`` uses
+# gTTS's slow mode (more deliberate / “robotic”; US accent via ``en`` + ``com``).
+# Gender is not selectable in gTTS; this preset is tuned for a US, slower delivery.
 VOICE_PRESETS = [
-    ("US English (default)", "en", "com"),
-    ("UK English", "en", "co.uk"),
-    ("Australian English", "en", "com.au"),
-    ("Indian English", "en", "co.in"),
-    ("Hindi", "hi", "co.in"),
-    ("Spanish (Spain)", "es", "es"),
-    ("French (France)", "fr", "fr"),
+    ("US English (default)", "en", "us", False),
+    ("US English · robotic slow (US, female-leaning)", "en", "us", True),
+    ("UK English", "en", "co.uk", False),
+    ("Australian English", "en", "com.au", False),
+    ("Indian English", "en", "co.in", False),
+    ("Hindi", "hi", "co.in", False),
+    ("Spanish (Spain)", "es", "es", False),
+    ("French (France)", "fr", "fr", False),
 ]
 
 
@@ -84,8 +86,8 @@ class AudioEditorDialog(QDialog):
         form.addRow("Text to speak:", self._text_edit)
 
         self._voice_combo = QComboBox()
-        for label, lang, tld in VOICE_PRESETS:
-            self._voice_combo.addItem(label, (lang, tld))
+        for label, lang, tld, slow in VOICE_PRESETS:
+            self._voice_combo.addItem(label, (lang, tld, slow))
         form.addRow("Voice:", self._voice_combo)
 
         self._offset_spin = QDoubleSpinBox()
@@ -205,13 +207,20 @@ class AudioEditorDialog(QDialog):
             )
             if confirm != QMessageBox.Yes:
                 return
-        lang, tld = self._voice_combo.currentData()
+        lang, tld, slow = self._voice_combo.currentData()
         offset = float(self._offset_spin.value())
 
         self._set_busy(True)
         self._status_label.setText("Generating with gTTS (needs internet) ...")
         self._worker = AudioGenWorker(
-            self._service, self._action_name, text, lang, tld, offset, parent=self,
+            self._service,
+            self._action_name,
+            text,
+            lang,
+            tld,
+            offset,
+            slow=slow,
+            parent=self,
         )
         self._worker.finished_ok.connect(self._on_generate_done)
         self._worker.failed.connect(self._on_generate_failed)

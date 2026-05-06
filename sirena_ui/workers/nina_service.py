@@ -271,8 +271,9 @@ class NinaService:
         text: str,
         *,
         lang: str = "en",
-        tld: str = "com",
+        tld: str = "us",
         offset: float = 0.0,
+        slow: bool = False,
     ) -> Path:
         """
         Render an MP3 for `name` with gTTS, save to
@@ -283,7 +284,7 @@ class NinaService:
         audio_dir.mkdir(parents=True, exist_ok=True)
         rel = f"audio/{name}.mp3"
         out_path = self.settings.actions_dir / rel
-        AudioGenerator.generate(text, out_path, lang=lang, tld=tld)
+        AudioGenerator.generate(text, out_path, lang=lang, tld=tld, slow=slow)
         self.action_runner.set_action_audio(name, rel, audio_offset=offset)
         return out_path
 

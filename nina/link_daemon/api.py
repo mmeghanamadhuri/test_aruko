@@ -203,8 +203,10 @@ class ActionAudioGenerateBody(BaseModel):
     action: str = Field(..., min_length=1, max_length=160)
     text: str = Field(..., min_length=1, max_length=2000)
     lang: str = Field(default="en", min_length=2, max_length=16)
-    tld: str = Field(default="com", min_length=2, max_length=16)
+    tld: str = Field(default="us", min_length=2, max_length=16)
     audio_offset: float = Field(default=0.0, ge=0.0, le=120.0)
+    #: gTTS ``slow`` mode — slower, more deliberate delivery (reads “robotic”).
+    slow: bool = Field(default=False)
 
 
 class DeleteManifestActionBody(BaseModel):
@@ -778,6 +780,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
                 lang=body.lang.strip(),
                 tld=body.tld.strip(),
                 offset=body.audio_offset,
+                slow=body.slow,
             )
             return {
                 "ok": True,
