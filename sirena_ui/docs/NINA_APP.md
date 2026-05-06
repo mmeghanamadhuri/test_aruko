@@ -717,19 +717,11 @@ export NINA_NAV_REMOTE_PORT=/dev/ttyUSB0       # only used in remote mode
 export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on Pi
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
-# Drive "Straight sequence" bench test: PWM % each segment (default: MAX_SPEED_PCT).
-# Path: forward 10 s, ~90° left (boosted PWM), forward 4 s, ~90° left, forward 10 s.
-# Forward PWM: NINA_STRAIGHT_TEST_SPEED_PCT (default MAX_SPEED_PCT).
-# Pivot PWM: NINA_STRAIGHT_SEQ_TURN_PCT or straight-test + NINA_STRAIGHT_SEQ_TURN_BOOST_PCT (default +12).
-# Pivot ms: NINA_STRAIGHT_SEQ_TURN_MS or NINA_NAV_TURN_SEC scaled by (NINA_NAV_SPEED / turn duty).
+# Drive "Straight test" bench run: straight only for NINA_STRAIGHT_TEST_MS (default 10 s), then stop.
+# Legacy duration alias: NINA_STRAIGHT_SEQ_FWD1_MS. PWM: NINA_STRAIGHT_TEST_SPEED_PCT (default MAX_SPEED_PCT).
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
-# export NINA_STRAIGHT_SEQ_TURN_BOOST_PCT=12
-# export NINA_STRAIGHT_SEQ_FWD1_MS=10000
-# export NINA_STRAIGHT_SEQ_FWD2_MS=4000
-# export NINA_STRAIGHT_SEQ_FWD3_MS=10000
-# export NINA_NAV_TURN_SEC=2.3
-# export NINA_NAV_SPEED=8
-# export NINA_STRAIGHT_SEQ_TURN_MS=1800
+# export NINA_STRAIGHT_TEST_MS=10000
+# export NINA_STRAIGHT_SEQ_FWD1_MS=10000   # legacy alias for duration only
 
 # Vision
 export NINA_VISION_CAMERA=0
@@ -786,12 +778,14 @@ export NINA_FOLLOW_YAW_GAIN=5.5
 # export NINA_FOLLOW_ANG_DEAD_CLOSE=0.14
 # Suppress reverse for this many follow ticks after Start (~50 ms/tick); default 24 ≈ 1.2 s.
 # export NINA_FOLLOW_NO_BACK_INITIAL_TICKS=24
-# Lost-target search: slow stepped in-place rotation (~step_deg per pulse), pause to look, repeat to ~360°.
-# Tune STEP_MS + SEARCH_PCT on hardware so each pulse matches step_deg; LOOK_TICKS × TICK_MS ≈ dwell per station.
-export NINA_FOLLOW_SEARCH_STEP_DEG=30
-export NINA_FOLLOW_SEARCH_STEP_MS=900
-export NINA_FOLLOW_SEARCH_LOOK_TICKS=4
-export NINA_FOLLOW_SEARCH_PCT=5
+# Lost-target search: stepped in-place rotation (default 6×60°). After each turn, pause ~LOOK_SEC
+# while stopped so each tick can detect the face; LOOK_TICKS overrides that (raw tick count) if set.
+# Tune STEP_MS + SEARCH_PCT on hardware so each pulse matches step_deg.
+export NINA_FOLLOW_SEARCH_STEP_DEG=60
+export NINA_FOLLOW_SEARCH_STEP_MS=1400
+# export NINA_FOLLOW_SEARCH_LOOK_TICKS=100   # optional: override seconds-based pause
+export NINA_FOLLOW_SEARCH_LOOK_SEC=5
+export NINA_FOLLOW_SEARCH_PCT=28
 # Consecutive no-face ticks after a lock before 360° scan (debounce).
 export NINA_FOLLOW_LOST_TICKS=4
 # Consecutive face ticks before we trust detections (clear lost / exit search).

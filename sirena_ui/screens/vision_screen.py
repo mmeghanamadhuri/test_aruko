@@ -801,6 +801,11 @@ class VisionScreen(QWidget):
         target = self._follow_combo.currentData()
         if not self._follow.start(target):
             return
+        try:
+            w, h = worker.capture_dimensions()
+            self._follow.set_frame_size(w, h)
+        except Exception:
+            pass
         if self._follow_start_btn is not None:
             self._follow_start_btn.setEnabled(False)
         if self._follow_stop_btn is not None:

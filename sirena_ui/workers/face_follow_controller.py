@@ -27,11 +27,14 @@ Near standoff, ``NINA_FOLLOW_HOLD_CREEP_PCT`` + ``NINA_FOLLOW_HOLD_YAW_GAIN``
 keep smooth arc corrections instead of short in-place nudges.
 
 Several consecutive no-face ticks (after a lock) start a stepped in-place
-scan: turn ~``NINA_FOLLOW_SEARCH_STEP_DEG`` (default 30°), pause
-``NINA_FOLLOW_SEARCH_LOOK_TICKS`` control ticks to look for a face, repeat
-until roughly 360° (``ceil(360/step_deg)`` steps), then stop follow if the
-target never reappears. Single-frame YuNet blips do not reset the lost
-counter, so the scan runs when the subject leaves the frame.
+scan: turn ~``NINA_FOLLOW_SEARCH_STEP_DEG`` (default 60°), pause about
+``NINA_FOLLOW_SEARCH_LOOK_SEC`` (default 5 s) while stopped to look for the
+target on each control tick, repeat for ``ceil(360/step_deg)`` steps (6× at
+60°), then stop follow if the target never reappears. If the tracked face
+becomes visible during a turn or during a pause, rotation stops and search
+state resets to normal follow. Search turns use ``NINA_FOLLOW_SEARCH_PCT``
+(default higher duty for torque). Single-frame YuNet blips do not reset the
+lost counter, so the scan runs when the subject leaves the frame.
 """
 
 from __future__ import annotations
@@ -58,11 +61,33 @@ _SPEED_APPROACH_PCT = int(os.environ.get("NINA_FOLLOW_APPROACH_PCT", "11"))
 _SPEED_CRUISE_PCT = int(os.environ.get("NINA_FOLLOW_CRUISE_PCT", "9"))
 _SPEED_BACK_PCT = int(os.environ.get("NINA_FOLLOW_BACK_PCT", "9"))
 
+# Control-loop period (ms). Lower = snappier first lock after detections appear.
+# Used here to convert search "look" seconds into tick counts.
+_FOLLOW_TICK_MS = max(16, int(os.environ.get("NINA_FOLLOW_TICK_MS", "50")))
+
 # Lost-target search: stepped in-place rotation (see _handle_lost).
-_SEARCH_SPEED_PCT = int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "5"))
-_SEARCH_STEP_DEG = max(1, int(os.environ.get("NINA_FOLLOW_SEARCH_STEP_DEG", "30")))
-_SEARCH_STEP_MS = max(50, int(os.environ.get("NINA_FOLLOW_SEARCH_STEP_MS", "900")))
-_SEARCH_LOOK_TICKS = max(0, int(os.environ.get("NINA_FOLLOW_SEARCH_LOOK_TICKS", "4")))
+_SEARCH_SPEED_PCT = max(1, min(100, int(os.environ.get("NINA_FOLLOW_SEARCH_PCT", "28"))))
+_SEARCH_STEP_DEG = max(1, int(os.environ.get("NINA_FOLLOW_SEARCH_STEP_DEG", "60")))
+_SEARCH_STEP_MS = max(50, int(os.environ.get("NINA_FOLLOW_SEARCH_STEP_MS", "1400")))
+try:
+    _SEARCH_LOOK_SEC = float(os.environ.get("NINA_FOLLOW_SEARCH_LOOK_SEC", "5"))
+except ValueError:
+    _SEARCH_LOOK_SEC = 5.0
+_SEARCH_LOOK_SEC = max(0.5, min(120.0, _SEARCH_LOOK_SEC))
+_look_ticks_raw = (os.environ.get("NINA_FOLLOW_SEARCH_LOOK_TICKS") or "").strip()
+if _look_ticks_raw:
+    try:
+        _SEARCH_LOOK_TICKS = max(0, int(_look_ticks_raw))
+    except ValueError:
+        _SEARCH_LOOK_TICKS = max(
+            1,
+            int(math.ceil(_SEARCH_LOOK_SEC * 1000.0 / float(_FOLLOW_TICK_MS))),
+        )
+else:
+    _SEARCH_LOOK_TICKS = max(
+        1,
+        int(math.ceil(_SEARCH_LOOK_SEC * 1000.0 / float(_FOLLOW_TICK_MS))),
+    )
 _SEARCH_STEP_COUNT = max(1, int(math.ceil(360.0 / float(_SEARCH_STEP_DEG))))
 # Lateral steering while approaching: normalized err_x [-1,1] -> differential PWM.
 _YAW_GAIN = float(os.environ.get("NINA_FOLLOW_YAW_GAIN", "5.5"))
@@ -125,8 +150,7 @@ try:
     )
 except ValueError:
     _FOLLOW_ANG_DEAD_CLOSE = 0.14
-# Control-loop period (ms). Lower = snappier first lock after detections appear.
-_FOLLOW_TICK_MS = max(16, int(os.environ.get("NINA_FOLLOW_TICK_MS", "50")))
+_FOLLOW_ANG_DEAD_CLOSE = max(0.02, min(0.45, _FOLLOW_ANG_DEAD_CLOSE))
 
 # Desired standoff: face bbox area (px²) the controller tries to hold, independent
 # of size at first lock. Set NINA_FOLLOW_TARGET_BBOX_AREA for a fixed px², or use
@@ -455,7 +479,8 @@ class FaceFollowController(QObject):
             self._search_in_turn = False
             self._search_look_remaining = 0
             self._search_steps_done = 0
-            self._latched = False
+            # Stay "latched" so we do not re-run first-lock status + face_latched greeting.
+            self._latched = True
             self.status_message.emit("Follow: target reacquired")
 
         x1, y1, x2, y2 = chosen.bbox

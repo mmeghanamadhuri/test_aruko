@@ -58,9 +58,8 @@ _KEY_TO_DIRECTION = {
     Qt.Key_D: "right",
 }
 
-# Bench / field check: multi-segment path — forward 10 s / 4 s / 10 s with two ~90° left
-# pivots at boosted PWM (see NINA_STRAIGHT_SEQ_TURN_*). Overridable via env.
-# Straight PWM: NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
+# Bench / field check: drive straight for NINA_STRAIGHT_TEST_MS (default 10 s), then stop.
+# PWM: NINA_STRAIGHT_TEST_SPEED_PCT (8–100; use only where mechanically safe).
 STRAIGHT_READY_POLL_MS = 50
 STRAIGHT_READY_MAX_POLLS = 100
 
@@ -73,77 +72,20 @@ def _straight_test_speed_pct() -> int:
     return max(MIN_SPEED_PCT, min(100, raw))
 
 
-def _straight_seq_turn_ms() -> int:
-    """Pivot duration for ~90°; scales down when turn PWM exceeds nav reference."""
-    raw_ms = (os.environ.get("NINA_STRAIGHT_SEQ_TURN_MS") or "").strip()
-    if raw_ms:
-        try:
-            v = int(raw_ms)
-        except ValueError:
-            v = 2300
-    else:
-        try:
-            sec = float(os.environ.get("NINA_NAV_TURN_SEC", "2.3"))
-        except ValueError:
-            sec = 2.3
-        sec = max(0.1, min(60.0, sec))
-        try:
-            ref_spd = float(os.environ.get("NINA_NAV_SPEED", "8"))
-        except ValueError:
-            ref_spd = 8.0
-        ref_spd = max(1.0, ref_spd)
-        turn_spd = float(_straight_seq_turn_speed_pct())
-        turn_spd = max(1.0, turn_spd)
-        # 2.3 s @ ref_spd is the calibrated ~90° pivot; higher duty needs less time.
-        sec_adj = sec * (ref_spd / turn_spd)
-        sec_adj = max(0.1, min(60.0, sec_adj))
-        v = int(round(sec_adj * 1000.0))
-    return max(100, min(120_000, v))
-
-
-def _straight_seq_turn_speed_pct() -> int:
-    """PWM for in-place turns: straight-test duty + boost (default +12), or TURN_PCT."""
-    raw = (os.environ.get("NINA_STRAIGHT_SEQ_TURN_PCT") or "").strip()
+def _straight_sequence_spec() -> List[Tuple[str, int]]:
+    """Single forward segment: (\"fwd\", duration_ms)."""
+    raw = (os.environ.get("NINA_STRAIGHT_TEST_MS") or "").strip()
+    if not raw:
+        raw = (os.environ.get("NINA_STRAIGHT_SEQ_FWD1_MS") or "").strip()
     if raw:
         try:
-            p = int(raw)
+            ms = int(raw)
         except ValueError:
-            p = _straight_test_speed_pct()
+            ms = 10_000
     else:
-        try:
-            boost = int(os.environ.get("NINA_STRAIGHT_SEQ_TURN_BOOST_PCT", "12"))
-        except ValueError:
-            boost = 12
-        boost = max(0, min(50, boost))
-        p = _straight_test_speed_pct() + boost
-    return max(MIN_SPEED_PCT, min(100, p))
-
-
-def _straight_sequence_spec() -> List[Tuple[str, int]]:
-    """(segment_kind, duration_ms) — kind is \"fwd\" or \"left\" (in-place)."""
-    try:
-        ms1 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD1_MS", "10000"))
-    except ValueError:
-        ms1 = 10000
-    try:
-        ms2 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD2_MS", "4000"))
-    except ValueError:
-        ms2 = 4000
-    try:
-        ms3 = int(os.environ.get("NINA_STRAIGHT_SEQ_FWD3_MS", "10000"))
-    except ValueError:
-        ms3 = 10000
-    ms1 = max(0, ms1)
-    ms2 = max(0, ms2)
-    ms3 = max(0, ms3)
-    t = _straight_seq_turn_ms()
-    return [
-        ("fwd", ms1),
-        ("left", t),
-        ("fwd", ms2),
-        ("left", t),
-        ("fwd", ms3),
-    ]
+        ms = 10_000
+    ms = max(100, min(120_000, ms))
+    return [("fwd", ms)]
 
 
 class DriveScreen(QWidget):
@@ -379,19 +321,16 @@ class DriveScreen(QWidget):
         straight_row = QHBoxLayout()
         straight_row.setContentsMargins(0, 0, 0, 0)
         straight_row.addStretch(1)
-        self._straight_test_btn = QPushButton("Straight sequence (test)")
+        self._straight_test_btn = QPushButton("Straight test (10 s)")
         self._straight_test_btn.setObjectName("secondaryButton")
         self._straight_test_btn.setCursor(Qt.PointingHandCursor)
         self._straight_test_btn.setFocusPolicy(Qt.NoFocus)
         self._straight_test_btn.setMinimumHeight(32)
         self._straight_test_btn.setToolTip(
-            "Straight forward 10 s, ~90° left (higher PWM), forward 4 s, ~90° left, forward 10 s. "
-            "Forward legs: NINA_STRAIGHT_TEST_SPEED_PCT. "
-            "Pivots: NINA_STRAIGHT_SEQ_TURN_PCT or straight + NINA_STRAIGHT_SEQ_TURN_BOOST_PCT "
-            "(default +12); duration from NINA_NAV_TURN_SEC scaled by duty vs NINA_NAV_SPEED, "
-            "or set NINA_STRAIGHT_SEQ_TURN_MS. Segment ms: NINA_STRAIGHT_SEQ_FWD*_MS. "
-            "Respects Reverse on straight legs only. Space cancels; brake, E-STOP, autonomy, "
-            "or leaving Drive stops the run. Turn off autonomous mode and release the brake first."
+            "Drives straight for NINA_STRAIGHT_TEST_MS (default 10 s; legacy: NINA_STRAIGHT_SEQ_FWD1_MS) "
+            "at NINA_STRAIGHT_TEST_SPEED_PCT, then stops. Respects Reverse. "
+            "Space cancels; brake, E-STOP, autonomy, or leaving Drive stops the run. "
+            "Turn off autonomous mode and release the brake first."
         )
         self._straight_test_btn.clicked.connect(self._on_straight_test_clicked)
         straight_row.addWidget(self._straight_test_btn)
@@ -544,6 +483,7 @@ class DriveScreen(QWidget):
     def _on_straight_test_clicked(self) -> None:
         if self._straight_test_timer.isActive() or self._straight_pending:
             return
+        if self._autonomy.is_enabled():
             QMessageBox.warning(
                 self,
                 "Autonomous mode",
@@ -566,7 +506,7 @@ class DriveScreen(QWidget):
         self.setFocus()
 
     def _try_straight_when_ready(self) -> None:
-        """Start straight sequence only after BLDC init finishes (async worker)."""
+        """Start straight test only after BLDC init finishes (async worker)."""
         if not self._straight_pending:
             return
         self._straight_ready_polls += 1
@@ -601,22 +541,10 @@ class DriveScreen(QWidget):
         if index >= n:
             self._finish_straight_test()
             return
-        kind, ms = spec[index]
+        _, ms = spec[index]
         pct_fwd = _straight_test_speed_pct()
-        pct_turn = _straight_seq_turn_speed_pct()
-        if kind == "fwd":
-            d = self._straight_seq_fwd_dir
-            self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
-        elif kind == "left":
-            # Same wheel sense as D-pad / nav turn_left; duration matches NINA_NAV_TURN_SEC (~90°).
-            self._drive.drive_wheels("back", pct_turn, "forward", pct_turn)
-        else:
-            self._drive.drive_wheels(
-                self._straight_seq_fwd_dir,
-                pct_fwd,
-                self._straight_seq_fwd_dir,
-                pct_fwd,
-            )
+        d = self._straight_seq_fwd_dir
+        self._drive.drive_wheels(d, pct_fwd, d, pct_fwd)
         self._straight_seq_index = index
         self._straight_test_timer.start(ms)
 
