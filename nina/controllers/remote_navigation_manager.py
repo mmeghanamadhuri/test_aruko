@@ -54,6 +54,7 @@ Reconnection:
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -62,6 +63,18 @@ from typing import Optional
 from nina.config.settings import NAV_START_KICK_SEC_MAX
 
 log = logging.getLogger("nina.navigation.remote")
+
+# Re-issue SET during in-place turns so the Pi motor-bridge watchdog
+# (default 1.5 s, see NINA_BRIDGE_WATCHDOG_SEC) does not stop the
+# wheels mid-turn while the Jetson blocks in time.sleep().
+def _remote_turn_keepalive_sec() -> float:
+    raw = (os.environ.get("NINA_NAV_REMOTE_TURN_TICK_SEC") or "").strip()
+    if raw:
+        try:
+            return max(0.1, min(1.0, float(raw)))
+        except ValueError:
+            pass
+    return 0.35
 
 
 @dataclass(frozen=True)
@@ -500,12 +513,29 @@ class RemoteNavigationManager:
         speed: int,
         duration: Optional[float],
     ) -> None:
-        d = duration if duration is not None else self.config.turn_duration_sec
+        d = max(0.0, float(duration if duration is not None else self.config.turn_duration_sec))
+        # Mirror local NavigationManager: park, settle, then spin. Without
+        # stop+settle, odd DIR/PWM sequencing can leave one wheel idle on
+        # some bridges.
+        self.stop()
+        time.sleep(max(0.0, float(self.config.settle_delay_sec)))
         self.set_wheels(
             left_dir=left_dir, left_speed=speed,
             right_dir=right_dir, right_speed=speed,
         )
-        time.sleep(max(0.0, d))
+        tick = _remote_turn_keepalive_sec()
+        deadline = time.monotonic() + d
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            sleep_for = min(tick, remaining)
+            time.sleep(sleep_for)
+            if remaining > tick:
+                self.set_wheels(
+                    left_dir=left_dir, left_speed=speed,
+                    right_dir=right_dir, right_speed=speed,
+                )
         self.stop()
 
     def _dir_letter(self, side: str, direction: str) -> str:

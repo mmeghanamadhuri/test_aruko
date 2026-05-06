@@ -14,6 +14,8 @@ Design goals:
     Vision worker / GUI thread on the gTTS HTTP request.
   * Playback prefers cached MP3 via mpg123/ffplay; common Jetson images
     have only `aplay` — without mpg123, greetings fall back to `espeak`.
+    Actual subprocess playback runs on a daemon thread so the Qt GUI
+    thread never blocks on audio I/O.
 
 Public API:
 
@@ -493,7 +495,8 @@ class FaceGreeter(QObject):
             return
         self.reset_cooldown(name)
 
-    def _play_clip(self, path: Path, name: str) -> bool:
+    def _play_clip_blocking(self, path: Path, name: str) -> bool:
+        """Synchronous playback (subprocess) — blocks; call from a worker thread."""
         text = f"Hello {name}"
         try:
             suf = Path(path).suffix.lower()
@@ -522,6 +525,22 @@ class FaceGreeter(QObject):
         log.warning("FaceGreeter: espeak fallback also failed for %s", name)
         self.reset_cooldown(name)
         return False
+
+    def _play_clip(self, path: Path, name: str) -> bool:
+        """Play cached ``path`` without blocking the Qt GUI thread."""
+        path = Path(path)
+        name = str(name)
+        greeter = self
+
+        def run() -> None:
+            try:
+                greeter._play_clip_blocking(path, name)
+            except Exception:  # pragma: no cover
+                log.exception("FaceGreeter: background play crashed for %s", name)
+                greeter.reset_cooldown(name)
+
+        threading.Thread(target=run, daemon=True, name="face-greet-audio").start()
+        return True
 
 
 class FaceGreetReceiver(QObject):

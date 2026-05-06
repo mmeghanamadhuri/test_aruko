@@ -14,7 +14,7 @@ Each enrolled face is stored as:
 Persistence is plain JSON so the file is human-readable and version-control
 friendly. Matching uses cosine similarity, which is what SFace was trained
 for; OpenCV recommends a threshold of ~0.363 for "same person" -- we keep a
-slightly stricter default of 0.4 so we err on the side of "Unknown".
+slightly stricter default of 0.48 so we err on the side of "Unknown".
 
 The class deliberately has no dependency on cv2 / numpy: callers pass plain
 Python lists / iterables of floats, and we do the dot product by hand. That
@@ -32,7 +32,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
 
 
-DEFAULT_MATCH_THRESHOLD = 0.40
+DEFAULT_MATCH_THRESHOLD = 0.48
 
 
 def _l2_normalize(values: Sequence[float]) -> List[float]:

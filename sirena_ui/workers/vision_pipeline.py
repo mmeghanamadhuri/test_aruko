@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional, Tuple
 
-from nina.services.face_db import FaceDB
+from nina.services.face_db import DEFAULT_MATCH_THRESHOLD, FaceDB
 from sirena_ui.workers.vision_types import (
     KIND_FACE,
     KIND_OBJECT,
@@ -540,7 +540,7 @@ class VisionPipeline:
         camera_index: Optional[int] = None,
         width: int = 640,
         height: int = 480,
-        face_score_threshold: float = 0.7,
+        face_score_threshold: float = 0.8,
         object_confidence: Optional[float] = None,
         prefer_tensorrt: Optional[bool] = None,
         face_db_path: Optional[Path] = None,
@@ -552,7 +552,13 @@ class VisionPipeline:
         )
         self._width = int(width)
         self._height = int(height)
-        self._face_threshold = float(face_score_threshold)
+        raw_yunet = (os.environ.get("NINA_FACE_YUNET_SCORE") or "").strip()
+        if raw_yunet:
+            try:
+                face_score_threshold = float(raw_yunet)
+            except ValueError:
+                pass
+        self._face_threshold = max(0.05, min(0.99, float(face_score_threshold)))
         # Object-detection confidence floor. Default 0.80 keeps the
         # "Detected" rail and the bbox overlay tight - we'd rather
         # drop a marginal box than flicker false positives across the
@@ -587,7 +593,15 @@ class VisionPipeline:
         if face_db_path is None:
             repo_root = Path(__file__).resolve().parents[2]
             face_db_path = repo_root / "nina" / "data" / "faces.json"
-        self._face_db: FaceDB = FaceDB(face_db_path)
+        match_thr = float(DEFAULT_MATCH_THRESHOLD)
+        raw_mt = (os.environ.get("NINA_FACE_MATCH_THRESHOLD") or "").strip()
+        if raw_mt:
+            try:
+                match_thr = float(raw_mt)
+            except ValueError:
+                match_thr = float(DEFAULT_MATCH_THRESHOLD)
+        match_thr = max(0.15, min(0.95, float(match_thr)))
+        self._face_db: FaceDB = FaceDB(face_db_path, match_threshold=match_thr)
 
         self._lock = threading.RLock()
         self._last_frame = None  # most recent annotated BGR frame

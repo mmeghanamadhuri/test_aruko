@@ -332,6 +332,7 @@ the Pi.
 | `NINA_NAV_REMOTE_PORT`         | `/dev/ttyUSB0`     | Serial device on the Jetson                        |
 | `NINA_NAV_REMOTE_BAUD`         | `115200`           | Must match `motor_bridge.py --baud` on the Pi      |
 | `NINA_NAV_REMOTE_TIMEOUT_SEC`  | `0.4`              | Per-line response wait                             |
+| `NINA_NAV_REMOTE_TURN_TICK_SEC` | `0.35`          | **Jetson**, remote mode only: how often to re-send `SET` during `turn_left` / `turn_right` / Drive **Turn** buttons so the Pi watchdog does not cut the pivot short. Keep below `NINA_BRIDGE_WATCHDOG_SEC`. |
 | `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward — boot-time default when no `drive_polarity.json` yet; once the JSON exists, its value wins. |
 | `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward — same as `NINA_NAV_INVERT_LEFT`. |
 | `NINA_BRIDGE_PORT` (on the Pi) | `/dev/serial0`     | Serial device on the Pi                            |
@@ -408,7 +409,12 @@ now owns.
     enabled, also lazy-loads the **SFace** recogniser
     (`cv2.FaceRecognizerSF`, ~38 MB ONNX cached at
     `nina/models/weights/face_recognition_sface_2021dec.onnx`) so
-    enrolled faces are matched to a name in real time.
+    enrolled faces are matched to a name in real time. **Tuning:** YuNet
+    detection score defaults to **0.80** (stricter than stock OpenCV
+    examples); override with `NINA_FACE_YUNET_SCORE` (0.05–0.99). Cosine
+    match threshold for naming a face defaults to **0.48**; override with
+    `NINA_FACE_MATCH_THRESHOLD` (higher = fewer false name assignments,
+    more "generic face" boxes).
   - **Object detection** — Ultralytics YOLOv8n on COCO-80. On Jetson
     the pipeline auto-exports a **TensorRT FP16** engine on first
     run (`nina/models/weights/yolov8n.engine`) and caches it; PyTorch

@@ -39,6 +39,9 @@ GUI thread still catches up (avoids backlog of full-size ``QImage`` values).
 screen (Drive / Vision / Perception on_enter). Multiple simultaneous
 slots duplicate queued ``QImage`` deliveries every frame and can saturate
 the GUI thread.
+
+Greetings for recognised faces use a background audio thread so mpg123 /
+aplay never block the Qt event loop.
 """
 
 from __future__ import annotations
@@ -141,6 +144,9 @@ class VisionWorker(QObject):
         # Detections drawn on the leading (pre-inference) preview — last
         # completed frame's boxes until fresh inference lands.
         self._stale_preview_detections: List[Detection] = []
+        # Deduplicate `faces_recognized` bursts when the same identity is
+        # seen frame-after-frame (reduces Qt queued-slot load on the GUI).
+        self._last_faces_recognized_key: Optional[Tuple[str, ...]] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -474,7 +480,12 @@ class VisionWorker(QObject):
                 seen.add(det.identity)
                 recognised.append(det.identity)
         if recognised:
-            self.faces_recognized.emit(recognised)
+            key = tuple(sorted(recognised))
+            if key != self._last_faces_recognized_key:
+                self._last_faces_recognized_key = key
+                self.faces_recognized.emit(recognised)
+        else:
+            self._last_faces_recognized_key = None
 
     @staticmethod
     def _maybe_downscale_for_preview(frame_bgr):
