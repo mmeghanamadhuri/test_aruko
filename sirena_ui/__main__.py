@@ -12,6 +12,7 @@ from PyQt5.QtWidgets import QApplication
 
 from sirena_ui.main_window import MainWindow
 from sirena_ui.styles import STYLESHEET, asset_path
+from sirena_ui.workers.companion_delegate_server import start_companion_delegate_server
 from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.osk import OnScreenKeyboardManager
 
@@ -60,6 +61,7 @@ def main() -> int:
     app._osk = OnScreenKeyboardManager(app)  # type: ignore[attr-defined]
 
     service = NinaService()
+    start_companion_delegate_server(service)
     window = MainWindow(service)
     window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
     window.show()

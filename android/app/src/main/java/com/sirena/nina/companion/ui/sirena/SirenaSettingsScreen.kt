@@ -163,6 +163,10 @@ fun SirenaSettingsScreen(
                             FeatureToggleRow("Actions static (media files)", caps?.optBoolean("actions_static_enabled") == true)
                             FeatureToggleRow("Record bridge", caps?.optBoolean("record_bridge_enabled") == true)
                             FeatureToggleRow("Action bridge (playback)", caps?.optBoolean("action_bridge_enabled") == true)
+                            FeatureToggleRow(
+                                "Desktop delegate (Sirena owns bus)",
+                                caps?.optBoolean("action_delegate_configured") == true,
+                            )
                             caps?.optString("action_audio_generate_endpoint")?.takeIf { it.isNotBlank() }?.let {
                                 KeyValueRow("Generate audio", it)
                             }
@@ -402,6 +406,7 @@ private fun CapabilitiesBridgesCard(caps: JSONObject?) {
             }
             FeatureToggleRow("Robot / drive", caps.optBoolean("robot_bridge_enabled"))
             FeatureToggleRow("Action playback", caps.optBoolean("action_bridge_enabled"))
+            FeatureToggleRow("Desktop action delegate", caps.optBoolean("action_delegate_configured"))
             FeatureToggleRow("Recording", caps.optBoolean("record_bridge_enabled"))
             FeatureToggleRow("Vision", caps.optBoolean("vision_bridge_enabled"))
             FeatureToggleRow("Static media & manifest audio", caps.optBoolean("actions_static_enabled"))

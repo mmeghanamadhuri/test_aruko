@@ -83,6 +83,9 @@ class LinkDaemonConfig:
     actions_manifest_path: Path = field(default_factory=_default_actions_manifest_path)
     #: When True, POST /v1/actions/play runs Dynamixel playback (do not use while Sirena UI holds the bus).
     enable_action_bridge: bool = False
+    #: When set, POST /v1/actions/play forwards to this URL (e.g. http://127.0.0.1:8791) so the desktop
+    #: Sirena process that already owns the Dynamixel bus performs playback. See ``companion_delegate_server``.
+    action_delegate_url: Optional[str] = None
     #: When True, POST /v1/actions/record/start queues a recording session (same bus as Sirena UI).
     enable_record_bridge: bool = False
     #: When True, GET /v1/vision/stream serves MJPEG (OpenCV + sirena_ui VisionPipeline when available).
@@ -145,6 +148,9 @@ def load_config() -> LinkDaemonConfig:
             Path(manifest_raw) if manifest_raw else _default_actions_manifest_path()
         ),
         enable_action_bridge=_env_bool("NINA_LINK_ENABLE_ACTION_BRIDGE", False),
+        action_delegate_url=(
+            os.environ.get("NINA_LINK_ACTION_DELEGATE_URL", "").strip() or None
+        ),
         enable_record_bridge=_env_bool("NINA_LINK_ENABLE_RECORD_BRIDGE", False),
         enable_vision_bridge=_env_bool("NINA_LINK_ENABLE_VISION_BRIDGE", False),
         enable_actions_static=_env_bool("NINA_LINK_ENABLE_ACTIONS_STATIC", False),

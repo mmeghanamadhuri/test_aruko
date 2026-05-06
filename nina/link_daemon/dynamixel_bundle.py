@@ -12,20 +12,23 @@ from typing import Any, Optional, Tuple
 
 log = logging.getLogger("nina.link_daemon.dynamixel_bundle")
 
-_bundle: Optional[Tuple[Any, Any]] = None  # (ActionRunner, DynamixelManager)
+_bundle: Optional[Tuple[Any, Any, Any]] = None  # (ActionRunner, DynamixelManager, NinaSettings)
 _init_lock = threading.Lock()
 bus_lock = threading.RLock()
 
 
-def get_action_runner_bundle() -> Tuple[Any, Any]:
-    """Lazy-init the same stack as ``python -m nina.app run-action``."""
+def get_action_runner_bundle() -> Tuple[Any, Any, Any]:
+    """Lazy-init the same stack as ``python -m nina.app run-action``.
+
+    Returns ``(action_runner, dynamixel_manager, nina_settings)``.
+    """
     global _bundle
     with _init_lock:
         if _bundle is None:
             from nina.app.main import build_app, ensure_motors_ready
 
-            _settings, dxl, action_runner, _ss = build_app()
+            settings, dxl, action_runner, _ss = build_app()
             ensure_motors_ready(dxl)
-            _bundle = (action_runner, dxl)
+            _bundle = (action_runner, dxl, settings)
             log.info("Dynamixel bundle: ActionRunner ready")
         return _bundle

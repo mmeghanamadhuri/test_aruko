@@ -152,6 +152,7 @@ fun SirenaHealthScreen(
         caps?.let { c ->
             BridgeRow("Robot drive", c.optBoolean("robot_bridge_enabled"))
             BridgeRow("Action playback", c.optBoolean("action_bridge_enabled"))
+            BridgeRow("Desktop action delegate", c.optBoolean("action_delegate_configured"))
             BridgeRow("Record session", c.optBoolean("record_bridge_enabled"))
             BridgeRow("Vision / camera", c.optBoolean("vision_bridge_enabled"))
             BridgeRow("SLAM / lidar", c.optBoolean("slam_bridge_enabled"))

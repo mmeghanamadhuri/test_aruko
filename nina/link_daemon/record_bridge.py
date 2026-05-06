@@ -92,7 +92,7 @@ def queue_record_session(
             if _cancel_event.is_set():
                 raise RecordingCancelled()
             _set_state(phase="starting", name=raw, error=None)
-            ar, dxl = get_action_runner_bundle()
+            ar, dxl, _settings = get_action_runner_bundle()
             dxl_for_cancel = dxl
             from nina.app.main import ensure_motors_ready
 

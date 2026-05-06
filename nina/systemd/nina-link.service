@@ -25,8 +25,10 @@ Environment=NINA_LINK_HOTSPOT_ATTEMPTS=5
 # Environment=NINA_LINK_ENABLE_ROBOT_BRIDGE=1
 # Environment=NINA_LINK_DRIVE_SPEED_PERCENT=35
 # Environment=NINA_LINK_DRIVE_DURATION_MS=280
-# Optional: HTTP playback for manifest actions (same Dynamixel bus as Sirena UI — pick one)
-# Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+# Optional: HTTP playback for manifest actions. With desktop Sirena UI open, forward to its bus:
+#   Environment=NINA_LINK_ENABLE_ACTION_BRIDGE=1
+#   Environment=NINA_LINK_ACTION_DELEGATE_URL=http://127.0.0.1:8791
+# (Sirena UI: NINA_UI_ACTION_DELEGATE=1 — see sirena_ui/workers/companion_delegate_server.py)
 # Optional: HTTP record (same bus), vision MJPEG, static audio files, session script:
 # Environment=NINA_LINK_ENABLE_RECORD_BRIDGE=1
 # Environment=NINA_LINK_ENABLE_VISION_BRIDGE=1

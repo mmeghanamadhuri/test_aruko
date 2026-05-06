@@ -461,6 +461,7 @@ def create_app(cfg: LinkDaemonConfig, coordinator: LinkCoordinator) -> FastAPI:
             "actions_endpoint": "/v1/actions",
             "action_play_endpoint": "/v1/actions/play",
             "action_bridge_enabled": cfg.enable_action_bridge,
+            "action_delegate_configured": bool(cfg.action_delegate_url),
             "record_bridge_enabled": cfg.enable_record_bridge,
             "record_start_endpoint": "/v1/actions/record/start",
             "record_stop_endpoint": "/v1/actions/record/stop",
