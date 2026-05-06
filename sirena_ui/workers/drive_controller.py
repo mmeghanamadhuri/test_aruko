@@ -16,6 +16,7 @@ exactly, so it is a drop-in replacement:
   set_brake(on)
   set_reverse(on)
   drive(direction)     direction in {forward, back, left, right}
+  turn_90(which)       \"left\" or \"right\" — one timed ~90° in-place pivot
   stop()
 
 Hardware-touching operations (init, brake, drive, stop, shutdown) are
@@ -112,6 +113,30 @@ RIGHT_WHEEL_EXTRA_RUN_PP = 2
 # nav layer (UI clamp does not apply to hardware PWM).
 FROM_STOP_KICK_PCT = 14
 FROM_STOP_CRUISE_PCT = 5
+
+
+def _drive_turn_90_duration_sec() -> float:
+    """Pivot duration for Drive screen 90° buttons (see ``NINA_DRIVE_TURN_90_SEC``)."""
+    raw = (os.environ.get("NINA_DRIVE_TURN_90_SEC") or "").strip()
+    if raw:
+        try:
+            return max(0.1, min(60.0, float(raw)))
+        except ValueError:
+            pass
+    try:
+        return max(0.1, min(60.0, float(os.environ.get("NINA_NAV_TURN_SEC", "2.3"))))
+    except ValueError:
+        return 2.3
+
+
+def _drive_turn_90_speed_pct() -> int:
+    raw = (os.environ.get("NINA_DRIVE_TURN_90_PCT") or "").strip()
+    if raw:
+        try:
+            return max(MIN_SPEED_PCT, min(100, int(raw)))
+        except ValueError:
+            pass
+    return FIXED_MANUAL_DRIVE_SPEED_PCT
 
 
 def _clamp_speed(pct: int) -> int:
@@ -519,6 +544,21 @@ class DriveController(QObject):
         speed = FIXED_MANUAL_DRIVE_SPEED_PCT
         self._enqueue(lambda d=direction, s=speed: self._do_drive(d, s))
 
+    def turn_90(self, which: str) -> None:
+        """One in-place pivot (~90°): *which* is ``\"left\"`` or ``\"right\"``.
+
+        Uses the nav layer ``turn_left`` / ``turn_right`` (blocks the worker
+        for ~``NINA_NAV_TURN_SEC`` or ``NINA_DRIVE_TURN_90_SEC``). No-op if
+        brake is on or *which* is invalid.
+        """
+        if which not in (_DIR_LEFT, _DIR_RIGHT):
+            log.warning("turn_90: expected '%s' or '%s', got %r", _DIR_LEFT, _DIR_RIGHT, which)
+            return
+        with self._lock:
+            if self._state["brake"]:
+                return
+        self._enqueue(lambda w=which: self._do_turn_90(w))
+
     def stop(self, *, drain: bool = False) -> None:
         """Request soft stop. With ``drain=True``, drop pending worker
         commands first so a queued heartbeat SET cannot run after this
@@ -807,6 +847,29 @@ class DriveController(QObject):
                 )
         except Exception as exc:
             log.exception("drive(%s, %s) failed: %s", direction, speed_pct, exc)
+
+    def _do_turn_90(self, which: str) -> None:
+        if self._nav is None:
+            return
+        try:
+            with self._lock:
+                self._active_drive = None
+                self._state["direction"] = (
+                    "left" if which == _DIR_LEFT else "right"
+                )
+            self._emit_state()
+            speed = _drive_turn_90_speed_pct()
+            duration = _drive_turn_90_duration_sec()
+            if which == _DIR_LEFT:
+                self._nav.turn_left(speed_percent=speed, duration=duration)
+            else:
+                self._nav.turn_right(speed_percent=speed, duration=duration)
+        except Exception as exc:
+            log.exception("turn_90(%s) failed: %s", which, exc)
+        finally:
+            with self._lock:
+                self._state["direction"] = "idle"
+            self._emit_state()
 
     def _do_apply_live_speed(self, direction: str, speed_pct: int) -> None:
         """Update PWM duty on the running motors without re-issuing the

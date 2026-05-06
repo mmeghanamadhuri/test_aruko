@@ -12,6 +12,8 @@ Two input modes are supported:
 * On-screen D-pad - press-and-HOLD the mouse button on a direction
   (don't single-click; the BLDC needs a couple of seconds for the
   rotor to actually catch after the kick-start pulse).
+* **90° left / 90° right** — single-click timed in-place pivots (~90°,
+  tunable via ``NINA_DRIVE_TURN_90_SEC`` / ``NINA_DRIVE_TURN_90_PCT``).
 * Keyboard - W/A/S/D drive forward / left / back / right while held,
   Space stops, Esc fires the EMERGENCY STOP. Auto-repeat events are
   ignored so a held key looks like one press + one release to the
@@ -337,6 +339,37 @@ class DriveScreen(QWidget):
         straight_row.addStretch(1)
         card.add_layout(straight_row)
 
+        turn_row = QHBoxLayout()
+        turn_row.setContentsMargins(0, 0, 0, 0)
+        turn_row.setSpacing(8)
+        turn_row.addStretch(1)
+        self._turn_90_left_btn = QPushButton("90° left")
+        self._turn_90_left_btn.setObjectName("secondaryButton")
+        self._turn_90_left_btn.setCursor(Qt.PointingHandCursor)
+        self._turn_90_left_btn.setFocusPolicy(Qt.NoFocus)
+        self._turn_90_left_btn.setMinimumHeight(32)
+        self._turn_90_left_btn.setToolTip(
+            "Timed in-place pivot ~90° counter-clockwise (robot frame). "
+            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "speed: NINA_DRIVE_TURN_90_PCT or manual cruise default."
+        )
+        self._turn_90_left_btn.clicked.connect(lambda: self._on_turn_90_clicked("left"))
+        turn_row.addWidget(self._turn_90_left_btn)
+        self._turn_90_right_btn = QPushButton("90° right")
+        self._turn_90_right_btn.setObjectName("secondaryButton")
+        self._turn_90_right_btn.setCursor(Qt.PointingHandCursor)
+        self._turn_90_right_btn.setFocusPolicy(Qt.NoFocus)
+        self._turn_90_right_btn.setMinimumHeight(32)
+        self._turn_90_right_btn.setToolTip(
+            "Timed in-place pivot ~90° clockwise (robot frame). "
+            "Duration: NINA_DRIVE_TURN_90_SEC or NINA_NAV_TURN_SEC; "
+            "speed: NINA_DRIVE_TURN_90_PCT or manual cruise default."
+        )
+        self._turn_90_right_btn.clicked.connect(lambda: self._on_turn_90_clicked("right"))
+        turn_row.addWidget(self._turn_90_right_btn)
+        turn_row.addStretch(1)
+        card.add_layout(turn_row)
+
         # Wheel polarity calibration. The first time a Nina is built the
         # JYQDs are commonly soldered to the hub motors with one wheel
         # phase-wired backwards, so a "forward" command spins one wheel
@@ -500,6 +533,8 @@ class DriveScreen(QWidget):
         self._drive.ensure_hardware()
         self._straight_test_btn.setEnabled(False)
         self._dpad.set_enabled(False)
+        self._turn_90_left_btn.setEnabled(False)
+        self._turn_90_right_btn.setEnabled(False)
         self._straight_pending = True
         self._straight_ready_polls = 0
         QTimer.singleShot(STRAIGHT_READY_POLL_MS, self._try_straight_when_ready)
@@ -573,8 +608,13 @@ class DriveScreen(QWidget):
             self._straight_test_btn.setEnabled(True)
             st = self._drive.state()
             self._dpad.set_enabled(not st["brake"])
+            can_turn = not st["brake"]
+            self._turn_90_left_btn.setEnabled(can_turn)
+            self._turn_90_right_btn.setEnabled(can_turn)
         else:
             self._straight_test_btn.setEnabled(False)
+            self._turn_90_left_btn.setEnabled(False)
+            self._turn_90_right_btn.setEnabled(False)
 
     def _finish_straight_test(self) -> None:
         try:
@@ -585,6 +625,25 @@ class DriveScreen(QWidget):
             except Exception:
                 pass
         self._restore_after_straight_test()
+        self.setFocus()
+
+    def _on_turn_90_clicked(self, which: str) -> None:
+        if self._autonomy.is_enabled():
+            QMessageBox.warning(
+                self,
+                "Autonomous mode",
+                "Turn off autonomous mode before using manual 90° turns.",
+            )
+            return
+        if self._brake_btn.isChecked():
+            QMessageBox.information(
+                self,
+                "Brake engaged",
+                "Release the brake (Brake: OFF) before running a 90° turn.",
+            )
+            return
+        self._drive.ensure_hardware()
+        self._drive.turn_90(which)
         self.setFocus()
 
     def _on_autonomy_toggle(self, on: bool) -> None:
@@ -622,10 +681,22 @@ class DriveScreen(QWidget):
 
         # Disable the manual D-pad / brake / reverse while autonomy is
         # in charge so the operator can't fight it on the wheels.
-        self._dpad.set_enabled(not on)
-        self._brake_btn.setEnabled(not on)
-        self._reverse_btn.setEnabled(not on)
-        self._straight_test_btn.setEnabled(not on)
+        if on:
+            self._dpad.set_enabled(False)
+            self._brake_btn.setEnabled(False)
+            self._reverse_btn.setEnabled(False)
+            self._straight_test_btn.setEnabled(False)
+            self._turn_90_left_btn.setEnabled(False)
+            self._turn_90_right_btn.setEnabled(False)
+        else:
+            st = self._drive.state()
+            manual = not st["brake"]
+            self._dpad.set_enabled(manual)
+            self._brake_btn.setEnabled(True)
+            self._reverse_btn.setEnabled(True)
+            self._straight_test_btn.setEnabled(True)
+            self._turn_90_left_btn.setEnabled(manual)
+            self._turn_90_right_btn.setEnabled(manual)
         # _auto_banner was removed in the 1024 x 600 refit; nothing to
         # update here. The title-row pill conveys the same state.
 
@@ -787,8 +858,14 @@ class DriveScreen(QWidget):
         if not self._autonomy.is_enabled():
             if self._straight_test_timer.isActive() or self._straight_seq_index >= 0:
                 self._dpad.set_enabled(False)
+                self._turn_90_left_btn.setEnabled(False)
+                self._turn_90_right_btn.setEnabled(False)
             else:
-                self._dpad.set_enabled(not state["brake"])
+                st = self._drive.state()
+                can_manual = not st["brake"]
+                self._dpad.set_enabled(can_manual)
+                self._turn_90_left_btn.setEnabled(can_manual)
+                self._turn_90_right_btn.setEnabled(can_manual)
 
         # Reflect persisted/runtime polarity in the toggle pills WITHOUT
         # firing their `clicked` signal back into the controller (which
