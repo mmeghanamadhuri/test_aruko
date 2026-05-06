@@ -385,7 +385,7 @@ def test_polarity_apply_on_nav_without_setters_is_silent(
 def test_drive_from_stop_kicks_then_cruises_low(
     isolate_polarity_dir: Path,
 ) -> None:
-    """First motion after idle uses drive_continuous at the kick duty,
+    """First motion after idle uses drive_continuous at kick duty (forward: R = L + START),
     then set_wheels at kick (+ start bias) and cruise (+ run bias)."""
     from sirena_ui.workers import drive_controller as dc
 
@@ -411,6 +411,9 @@ def test_drive_from_stop_kicks_then_cruises_low(
         sw_calls = [c for c in nav.calls if c[0] == "set_wheels"]
         assert len(dc_calls) >= 1
         assert dc_calls[-1][1]["speed_percent"] == dc.FROM_STOP_KICK_PCT
+        assert dc_calls[-1][1]["right_speed_percent"] == (
+            dc.FROM_STOP_KICK_PCT + dc.RIGHT_WHEEL_EXTRA_START_PP
+        )
         assert len(sw_calls) >= 2
         kick_sw = sw_calls[0][1]
         assert kick_sw["left_speed"] == dc.FROM_STOP_KICK_PCT

@@ -278,13 +278,19 @@ class RemoteNavigationManager:
         left_dir: str,
         right_dir: str,
         speed_percent: Optional[int] = None,
+        *,
+        right_speed_percent: Optional[int] = None,
     ) -> None:
         """Per-wheel motion that does not auto-stop (held D-pad style)."""
         if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
-        speed = self._resolve_speed(speed_percent)
+        left_speed = self._resolve_speed(speed_percent)
+        if right_speed_percent is None:
+            right_speed = left_speed
+        else:
+            right_speed = self._resolve_speed(right_speed_percent)
         # Mirror local `NavigationManager.drive_continuous`: park PWM,
         # brief settle, then arm the new motion. Without this, remote
         # mode only issued set_wheels() and straight-line nudge never ran
@@ -292,10 +298,22 @@ class RemoteNavigationManager:
         self.stop()
         time.sleep(max(0.0, float(self.config.settle_delay_sec)))
         self.set_wheels(
-            left_dir=left_dir, left_speed=speed,
-            right_dir=right_dir, right_speed=speed,
+            left_dir=left_dir, left_speed=left_speed,
+            right_dir=right_dir, right_speed=right_speed,
         )
-        log.info("drive_continuous L=%s R=%s speed=%s%%", left_dir, right_dir, speed)
+        if right_speed != left_speed:
+            log.info(
+                "drive_continuous L=%s R=%s L_spd=%s%% R_spd=%s%%",
+                left_dir,
+                right_dir,
+                left_speed,
+                right_speed,
+            )
+        else:
+            log.info(
+                "drive_continuous L=%s R=%s speed=%s%%",
+                left_dir, right_dir, left_speed,
+            )
 
     def set_wheels(
         self,

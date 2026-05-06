@@ -258,7 +258,7 @@ class NavigationManager:
       backward(speed_percent=None)
       turn_left(speed_percent=None, duration=None)
       turn_right(speed_percent=None, duration=None)
-      drive_continuous(left_dir, right_dir, speed_percent=None)
+      drive_continuous(left_dir, right_dir, speed_percent=None, *, right_speed_percent=None)
       set_wheels(left_dir=, left_speed=, right_dir=, right_speed=)
       stop()                       # PWM=0, EL stays HIGH (RPi-style soft stop)
       emergency_stop()             # PWM=0, EL drops LOW (chip disabled)
@@ -411,6 +411,8 @@ class NavigationManager:
         left_dir: str,
         right_dir: str,
         speed_percent: Optional[int] = None,
+        *,
+        right_speed_percent: Optional[int] = None,
     ) -> None:
         """Per-wheel motion that does NOT auto-stop.
 
@@ -419,24 +421,44 @@ class NavigationManager:
         forward_forever/backward_forever pattern: stop, settle, then
         arm both drivers (DIR + EL, PWM 0) and apply both duties in
         quick succession so neither wheel leads the other at start.
+
+        If *right_speed_percent* is ``None``, the right wheel uses the same
+        resolved duty as the left (*speed_percent*). Otherwise the right
+        duty is resolved separately (e.g. forward kick trim before
+        ``set_wheels`` applies further bias).
         """
         if left_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid left_dir '{left_dir}'")
         if right_dir not in (self.DIR_FORWARD, self.DIR_BACKWARD):
             raise ValueError(f"Invalid right_dir '{right_dir}'")
-        speed = self._resolve_speed(speed_percent)
+        left_speed = self._resolve_speed(speed_percent)
+        if right_speed_percent is None:
+            right_speed = left_speed
+        else:
+            right_speed = self._resolve_speed(right_speed_percent)
         self.stop()
         time.sleep(self.config.settle_delay_sec)
         self._start_both_wheels(
             left_dir=left_dir,
-            left_speed=speed,
+            left_speed=left_speed,
             right_dir=right_dir,
-            right_speed=speed,
+            right_speed=right_speed,
         )
-        log.info(
-            "drive_continuous L=%s R=%s speed=%s%%",
-            left_dir, right_dir, speed,
-        )
+        if right_speed != left_speed:
+            log.info(
+                "drive_continuous L=%s R=%s L_spd=%s%% R_spd=%s%%",
+                left_dir,
+                right_dir,
+                left_speed,
+                right_speed,
+            )
+        else:
+            log.info(
+                "drive_continuous L=%s R=%s speed=%s%%",
+                left_dir,
+                right_dir,
+                left_speed,
+            )
 
     def set_wheels(
         self,

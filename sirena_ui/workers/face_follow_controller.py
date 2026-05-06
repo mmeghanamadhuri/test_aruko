@@ -21,8 +21,9 @@ make hold engage sooner so the robot stops when visually close.
 the robot every tick: forward speed scales down when ``|err_x|`` is large
 (``NINA_FOLLOW_ERR_FWD_SCALE_MIN`` / ``NINA_FOLLOW_ERR_FWD_SCALE_POWER``) so it
 slows while correcting; yaw scales up with ``NINA_FOLLOW_YAW_ERR_BOOST`` at large
-errors. Right-wheel PWM commands are offset so ``RIGHT_WHEEL_EXTRA_RUN_PP`` in
-``DriveController`` does not cancel steering toward a face on the right.
+errors. Right-wheel ``drive_wheels`` commands are offset so the delta
+``RIGHT_WHEEL_EXTRA_RUN_PP`` applied in ``DriveController`` (forward-forward)
+does not cancel computed steering.
 Near standoff, ``NINA_FOLLOW_HOLD_CREEP_PCT`` + ``NINA_FOLLOW_HOLD_YAW_GAIN``
 keep smooth arc corrections instead of short in-place nudges.
 
@@ -190,11 +191,10 @@ def _follow_steering_command(
     require reversing a wheel, we command a short in-place turn instead (same
     handedness as before: ``err_x > 0`` → face is right → turn right).
 
-    ``DriveController`` adds ``RIGHT_WHEEL_EXTRA_RUN_PP`` to the **right** duty
-    on every forward-forward command (straight-line hardware trim). We subtract
-    that here on the right **command** so the delivered PWM matches the
-    differential we compute (otherwise corrections when the face is to the
-    right are largely cancelled).
+    ``DriveController`` applies ``RIGHT_WHEEL_EXTRA_RUN_PP`` to the **right** duty
+    on every forward-forward command (algebraically: negative → lower right). We
+    adjust the right **command** by the same amount so delivered PWM matches the
+    differential we compute.
     """
     max_w = max(1, min(100, int(max_wheel)))
     err_clamped = max(-1.0, min(1.0, err_x))

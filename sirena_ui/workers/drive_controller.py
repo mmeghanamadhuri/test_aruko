@@ -99,10 +99,11 @@ MAX_SPEED_PCT = 14
 FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 
 # When both wheels share the same **forward** direction, adjust the right duty
-# (START / RUN delta in PWM points) to compensate hub mismatch. Reverse (both
+# by START (first commit after a stop) / RUN (held forward-forward) in PWM points.
+# Defaults −2 / −2 → right is 2% below left on straight ahead. Reverse (both
 # backward), turns, and coast stay symmetric.
-RIGHT_WHEEL_EXTRA_START_PP = -1
-RIGHT_WHEEL_EXTRA_RUN_PP = 2
+RIGHT_WHEEL_EXTRA_START_PP = -2
+RIGHT_WHEEL_EXTRA_RUN_PP = -2
 
 # When manual drive begins from a full stop (`_active_drive` is None),
 # apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
@@ -132,7 +133,7 @@ def _pair_duties_with_right_bias(
     *,
     start_phase: bool,
 ) -> Tuple[int, int]:
-    """Left duty unchanged; right duty += START/RUN when both wheels move
+    """Left duty unchanged; right duty + START/RUN delta when both wheels move
     **forward** together. Reverse (both **backward**), opposite directions
     (turn-in-place), and coast (any zero duty) stay symmetric."""
     lb, rb = int(left_base), int(right_base)
@@ -787,11 +788,18 @@ class DriveController(QObject):
             if start_from_stop:
                 kick = max(MIN_SPEED_PCT, int(FROM_STOP_KICK_PCT))
                 cruise = max(0, min(100, int(FROM_STOP_CRUISE_PCT)))
-                self._nav.drive_continuous(
-                    left_dir=ldir,
-                    right_dir=rdir,
-                    speed_percent=kick,
-                )
+                if ldir == self._nav.DIR_FORWARD and rdir == self._nav.DIR_FORWARD:
+                    kick_r = max(
+                        0, min(100, int(kick) + int(RIGHT_WHEEL_EXTRA_START_PP))
+                    )
+                    self._nav.drive_continuous(
+                        ldir,
+                        rdir,
+                        kick,
+                        right_speed_percent=kick_r,
+                    )
+                else:
+                    self._nav.drive_continuous(ldir, rdir, kick)
                 self._commit_wheels(
                     ldir, kick, rdir, kick, start_phase=True,
                 )
