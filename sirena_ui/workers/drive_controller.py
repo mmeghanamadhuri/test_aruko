@@ -99,11 +99,11 @@ MAX_SPEED_PCT = 14
 FIXED_MANUAL_DRIVE_SPEED_PCT = (MIN_SPEED_PCT + MAX_SPEED_PCT) // 2
 
 # When both wheels share the same **forward** direction, optional right duty
-# delta (START / RUN, PWM points). START=0 keeps kick symmetric; RUN=5 makes
-# cruise / held forward-forward right 5% above left. Reverse (both backward),
+# delta (START / RUN, PWM points). START=0 keeps kick symmetric; RUN=3 makes
+# cruise / held forward-forward right 3% above left. Reverse (both backward),
 # turns, and coast stay symmetric.
 RIGHT_WHEEL_EXTRA_START_PP = 0
-RIGHT_WHEEL_EXTRA_RUN_PP = 5
+RIGHT_WHEEL_EXTRA_RUN_PP = 3
 
 # When manual drive begins from a full stop (`_active_drive` is None),
 # apply a short kick at FROM_STOP_KICK_PCT, then drop to FROM_STOP_CRUISE_PCT
