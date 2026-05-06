@@ -100,6 +100,8 @@ def _playback_runnable_fallback(service: NinaService, action_name: str) -> None:
 
 def _ensure_and_start_playback_worker(service: NinaService, action_name: str) -> None:
     """Runs on the Qt GUI thread — same stack as ``ActionsScreen._on_play``."""
+    from PyQt5.QtWidgets import QApplication
+
     from sirena_ui.workers.playback_worker import PlaybackWorker
 
     try:
@@ -108,19 +110,23 @@ def _ensure_and_start_playback_worker(service: NinaService, action_name: str) ->
         log.exception("companion delegate ensure_bus")
         return
 
+    app = QApplication.instance()
     audio_path = service.action_audio_path(action_name)
     audio_offset = (
         service.action_audio_offset(action_name) if audio_path else 0.0
     )
+    # Parent + finished→deleteLater: a bare local ``PlaybackWorker`` was GC'd while the
+    # QThread was still running → "QThread: Destroyed while thread is still running" / SIGABRT.
     worker = PlaybackWorker(
         service,
         action_name,
         audio_path=audio_path,
         audio_offset_sec=audio_offset,
-        parent=None,
+        parent=app,
     )
     worker.finished_ok.connect(lambda n: log.debug("delegate playback finished %s", n))
     worker.failed.connect(lambda msg: log.warning("delegate playback failed: %s", msg))
+    worker.finished.connect(worker.deleteLater)
     worker.start()
 
 
