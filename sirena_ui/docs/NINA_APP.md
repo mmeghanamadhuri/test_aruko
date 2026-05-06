@@ -716,12 +716,15 @@ export NINA_NAV_REMOTE_BAUD=115200             # must match motor_bridge.py on P
 export NINA_NAV_INVERT_LEFT=0                  # flip left wheel forward/backward
 export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backward
 # Drive "Straight sequence" bench test: PWM % each segment (default: MAX_SPEED_PCT).
-# Path: forward FWD1_MS, turn left TURN_MS, forward FWD2_MS, turn left, forward FWD3_MS.
+# Path: forward FWD1_MS, ~90° left pivot, forward FWD2_MS, ~90° left, forward FWD3_MS.
+# Pivot duration defaults to NINA_NAV_TURN_SEC (2.3 s, same as turn_left); override with:
+# export NINA_NAV_TURN_SEC=2.3
+# export NINA_STRAIGHT_SEQ_TURN_MS=2300
+# Pivot PWM defaults to NINA_NAV_SPEED (8); override with NINA_STRAIGHT_SEQ_TURN_PCT=8
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
 # export NINA_STRAIGHT_SEQ_FWD1_MS=12000
 # export NINA_STRAIGHT_SEQ_FWD2_MS=5000
 # export NINA_STRAIGHT_SEQ_FWD3_MS=12000
-# export NINA_STRAIGHT_SEQ_TURN_MS=900
 
 # Vision
 export NINA_VISION_CAMERA=0
