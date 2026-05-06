@@ -380,6 +380,15 @@ class MotorBridge:
                         # reverse kicks only.
                         if _symmetric_light_reverse_kick(lspeed, ldir, rspeed, rdir):
                             nav.kick_and_set(lspeed, ldir, rspeed, rdir)
+                        elif ldir != rdir and target_active:
+                            # In-place pivot / differential: wheels disagree on direction.
+                            # `warm_reverse_and_set` forward-puffs only the reverse side,
+                            # runs a long GPIO sequence, and often returns OK *after* the
+                            # Jetson's default serial timeout — the next SET then desyncs
+                            # and turns feel dead or intermittent. Bench Pi apps normally
+                            # use `kick_and_set` for F/B pivots; it is faster and pairs
+                            # with the DriveController's repeat SETs / heartbeats.
+                            nav.kick_and_set(lspeed, ldir, rspeed, rdir)
                         else:
                             nav.warm_reverse_and_set(lspeed, ldir, rspeed, rdir)
                     else:

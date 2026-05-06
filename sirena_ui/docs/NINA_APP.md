@@ -331,7 +331,7 @@ the Pi.
 | `NINA_NAV_MODE`                | `local`            | `local` (Jetson GPIO) or `remote` (Pi bridge)      |
 | `NINA_NAV_REMOTE_PORT`         | `/dev/ttyUSB0`     | Serial device on the Jetson                        |
 | `NINA_NAV_REMOTE_BAUD`         | `115200`           | Must match `motor_bridge.py --baud` on the Pi      |
-| `NINA_NAV_REMOTE_TIMEOUT_SEC`  | `0.4`              | Per-line response wait                             |
+| `NINA_NAV_REMOTE_TIMEOUT_SEC`  | `1.2`              | Per-line OK wait (Pi may take ~0.5s for kick + warm-reverse before `OK`) |
 | `NINA_NAV_REMOTE_TURN_TICK_SEC` | `0.35`          | **Jetson**, remote mode only: how often to re-send `SET` during `turn_left` / `turn_right` / Drive **Turn** buttons so the Pi watchdog does not cut the pivot short. Keep below `NINA_BRIDGE_WATCHDOG_SEC`. |
 | `NINA_NAV_INVERT_LEFT`         | `0`                | Flip left wheel forward/backward — boot-time default when no `drive_polarity.json` yet; once the JSON exists, its value wins. |
 | `NINA_NAV_INVERT_RIGHT`        | `0`                | Flip right wheel forward/backward — same as `NINA_NAV_INVERT_LEFT`. |

@@ -77,7 +77,7 @@ class NavigationSettings:
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
     remote_baudrate: int = 115200
-    remote_response_timeout_sec: float = 0.4
+    remote_response_timeout_sec: float = 1.2
 
 
 @dataclass(frozen=True)
@@ -248,7 +248,7 @@ def load_settings(repo_root: Path) -> NinaSettings:
         remote_serial_port=os.environ.get("NINA_NAV_REMOTE_PORT", "/dev/ttyUSB0"),
         remote_baudrate=int(os.environ.get("NINA_NAV_REMOTE_BAUD", "115200")),
         remote_response_timeout_sec=float(
-            os.environ.get("NINA_NAV_REMOTE_TIMEOUT_SEC", "0.4")
+            os.environ.get("NINA_NAV_REMOTE_TIMEOUT_SEC", "1.2")
         ),
     )
 

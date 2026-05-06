@@ -322,6 +322,24 @@ def test_warm_reverse_zero_speed_wheel_skips_puff(nav_module: Any) -> None:
     ]
 
 
+def test_bridge_set_pivot_uses_kick_not_warm_puff(
+    nav_module: Any, bridge_module: Any
+) -> None:
+    """Differential SET (pivot) must use kick_and_set: warm_reverse's puff
+    path is slow and does not match how standalone Pi harnesses spin."""
+    nav_module.setup_gpio()
+    bridge = _make_bridge(bridge_module)
+    fake = nav_module._test_fake_pi
+    fake.calls.clear()
+
+    bridge._dispatch("SET B 30 F 30")
+
+    l_pwm = [c[3] for c in _filter(fake.calls, "hardware_PWM", nav_module.PWM_L)]
+    assert l_pwm[0] == nav_module.KICK_PWM_PERCENT * 10000, (
+        "pivot should start with kick PWM, not warm-reverse puff"
+    )
+
+
 def test_bridge_set_reverse_uses_warm_reverse(
     nav_module: Any, bridge_module: Any
 ) -> None:

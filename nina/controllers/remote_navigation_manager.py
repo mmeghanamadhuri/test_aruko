@@ -108,7 +108,9 @@ class RemoteNavigationConfig:
     """
     serial_port: str = "/dev/ttyUSB0"
     baudrate: int = 115200
-    response_timeout_sec: float = 0.4
+    # Pi can take >400 ms to finish `warm_reverse_and_set` + kick before
+    # it prints OK; 0.4s was marginal and caused missed responses on pivots.
+    response_timeout_sec: float = 1.2
     connect_timeout_sec: float = 2.0
     reconnect_min_interval_sec: float = 1.0
     default_speed_percent: int = 8
