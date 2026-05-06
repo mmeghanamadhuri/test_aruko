@@ -190,8 +190,10 @@ class VisionScreen(QWidget):
         # Also reflect the latest known status immediately so the pill
         # doesn't lag the first frame.
         self._apply_status(self._status_to_dict(worker.status()))
+        self._connect_vision_preview_signals()
 
     def on_leave(self) -> None:
+        self._disconnect_vision_preview_signals()
         self._follow.stop()
         # Drop our reference on the camera when the user navigates
         # away. Other screens (Drive, Perception) may still hold a
@@ -439,9 +441,7 @@ class VisionScreen(QWidget):
 
     def _wire_signals(self) -> None:
         worker = self._service.vision
-        worker.frame_ready.connect(self._on_frame)
         worker.detections_changed.connect(self._on_detections_changed)
-        worker.fps_changed.connect(self._on_fps)
         worker.status_changed.connect(self._apply_status)
         worker.face_enable_failed.connect(self._on_face_enable_failed)
         worker.object_enable_failed.connect(self._on_object_enable_failed)
@@ -458,6 +458,36 @@ class VisionScreen(QWidget):
         # offline, ...) as a single warning dialog instead of a silent
         # console log.
         self._announcer.error.connect(self._on_announcer_error)
+
+    def _connect_vision_preview_signals(self) -> None:
+        worker = self._service.vision
+        try:
+            try:
+                worker.frame_ready.disconnect(self._on_frame)
+            except TypeError:
+                pass
+            worker.frame_ready.connect(self._on_frame)
+            try:
+                worker.fps_changed.disconnect(self._on_fps)
+            except TypeError:
+                pass
+            worker.fps_changed.connect(self._on_fps)
+        except Exception:
+            pass
+
+    def _disconnect_vision_preview_signals(self) -> None:
+        worker = self._service.vision
+        try:
+            try:
+                worker.frame_ready.disconnect(self._on_frame)
+            except TypeError:
+                pass
+            try:
+                worker.fps_changed.disconnect(self._on_fps)
+            except TypeError:
+                pass
+        except Exception:
+            pass
 
     def _on_detections_changed(self, detections: List[Detection]) -> None:
         if self._follow.is_active():

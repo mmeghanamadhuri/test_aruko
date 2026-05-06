@@ -342,6 +342,8 @@ the Pi.
 | `NINA_UI_OSK_ARGS`             | (empty)            | Shell-style extra args, e.g. `--theme=Nightshade --not-show-in-launcher`. |
 | `NINA_UI_FULLSCREEN`           | unset              | `1` puts the GUI in frameless kiosk mode sized exactly to the panel's QScreen geometry (no `_NET_WM_STATE_FULLSCREEN` flag, so the on-screen keyboard can stack above). |
 | `NINA_UI_FULLSCREEN_STRICT`    | unset              | `1` switches kiosk mode to true X11 fullscreen-exclusive (`_NET_WM_STATE_FULLSCREEN`). Only set this if you have **no** OSK and want the WM to absolutely guarantee no other window stacks above the kiosk — the on-screen keyboard will be invisible behind it in this mode. |
+| `NINA_UI_CPROFILE`             | unset              | `1` enables Python `cProfile` for the full app run; on exit writes `NINA_UI_CPROFILE_OUT` (default `sirena_ui_cprofile.stats`). Inspect with `python -m pstats` or snakeviz. |
+| `NINA_UI_CPROFILE_OUT`         | `sirena_ui_cprofile.stats` | Output path when `NINA_UI_CPROFILE=1`. |
 | `NINA_UI_RESTART_CMD`          | unset              | Optional shell command run after a successful **Home → Pull changes** `git pull`, instead of re-exec'ing Python. Kiosk/systemd installs often set e.g. `systemctl --user restart nina-ui-kiosk` so the app restarts through `launch-sirena.sh` with the same environment. |
 
 #### Touchscreen on-screen keyboard

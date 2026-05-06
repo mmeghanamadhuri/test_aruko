@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import atexit
+import os
 import sys
 
 from PyQt5.QtCore import Qt
@@ -14,6 +16,11 @@ from sirena_ui.workers.nina_service import NinaService
 from sirena_ui.workers.osk import OnScreenKeyboardManager
 
 
+def _env_truthy(name: str) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
+    return raw in ("1", "true", "yes", "y", "on")
+
+
 def main() -> int:
     QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
     QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
@@ -22,6 +29,26 @@ def main() -> int:
     app.setOrganizationName("Sirena Technologies")
     app.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
     app.setStyleSheet(STYLESHEET)
+
+    if _env_truthy("NINA_UI_CPROFILE"):
+        import cProfile
+
+        _pr = cProfile.Profile()
+        _pr.enable()
+
+        def _dump_cprofile() -> None:
+            _pr.disable()
+            out = os.environ.get(
+                "NINA_UI_CPROFILE_OUT",
+                "sirena_ui_cprofile.stats",
+            )
+            _pr.dump_stats(out)
+            print(
+                f"NINA_UI_CPROFILE: wrote {out} "
+                f"(python -m pstats {out} / snakeviz)"
+            )
+
+        atexit.register(_dump_cprofile)
 
     # Touchscreen on-screen keyboard. Pops up `onboard` (or whatever
     # NINA_UI_OSK_BIN is set to) the first time a text-input widget
@@ -36,6 +63,7 @@ def main() -> int:
     window = MainWindow(service)
     window.setWindowIcon(QIcon(asset_path("sirena_app_icon.png")))
     window.show()
+
     return app.exec_()
 
 

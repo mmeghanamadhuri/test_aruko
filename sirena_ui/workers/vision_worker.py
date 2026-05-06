@@ -34,6 +34,11 @@ GUI previews use a downscaled frame (``NINA_VISION_PREVIEW_MAX_W``).
 Each buffer update queues ``frame_ready`` immediately via a flush signal,
 and a Qt timer at ``NINA_VISION_PREVIEW_MS`` provides a fallback so a slow
 GUI thread still catches up (avoids backlog of full-size ``QImage`` values).
+
+**Performance:** connect ``frame_ready`` only from the *visible* camera
+screen (Drive / Vision / Perception on_enter). Multiple simultaneous
+slots duplicate queued ``QImage`` deliveries every frame and can saturate
+the GUI thread.
 """
 
 from __future__ import annotations

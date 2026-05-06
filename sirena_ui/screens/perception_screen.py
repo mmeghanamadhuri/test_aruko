@@ -350,7 +350,6 @@ class PerceptionScreen(QWidget):
 
     def _wire_signals(self) -> None:
         try:
-            self._service.vision.frame_ready.connect(self._on_camera_frame)
             self._service.vision.status_changed.connect(self._on_camera_status)
         except Exception:
             log.debug("PerceptionScreen: VisionWorker signals unavailable")
@@ -373,6 +372,23 @@ class PerceptionScreen(QWidget):
             except Exception:
                 log.debug("PerceptionScreen: grid.goal_clicked unavailable")
 
+    def _connect_vision_frame_preview(self) -> None:
+        try:
+            sig = self._service.vision.frame_ready
+            try:
+                sig.disconnect(self._on_camera_frame)
+            except TypeError:
+                pass
+            sig.connect(self._on_camera_frame)
+        except Exception:
+            pass
+
+    def _disconnect_vision_frame_preview(self) -> None:
+        try:
+            self._service.vision.frame_ready.disconnect(self._on_camera_frame)
+        except TypeError:
+            pass
+
     # ------------------------------------------------------------------
     # Lifecycle hooks (called by MainWindow.navigate)
     # ------------------------------------------------------------------
@@ -386,6 +402,7 @@ class PerceptionScreen(QWidget):
             except Exception as exc:
                 log.warning("vision.acquire failed: %s", exc)
         self._service.reset_face_greet_cooldown()
+        self._connect_vision_frame_preview()
 
         try:
             self._service.vision.set_face_enabled(True)
@@ -439,6 +456,7 @@ class PerceptionScreen(QWidget):
         self._on_autonomy_enabled(self._autonomy.is_enabled())
 
     def on_leave(self) -> None:
+        self._disconnect_vision_frame_preview()
         self._depth_timer.stop()
         try:
             self._autonomy.set_depth_visualization_enabled(False)

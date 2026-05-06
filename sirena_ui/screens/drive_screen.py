@@ -179,7 +179,8 @@ class DriveScreen(QWidget):
         self._cam_feed_label: Optional[QLabel] = None
         self._cam_placeholder: Optional[QWidget] = None
         try:
-            self._service.vision.frame_ready.connect(self._on_camera_frame)
+            # frame_ready is connected only in on_enter so hidden screens
+            # do not each duplicate 30 Hz QImage deliveries on the GUI thread.
             self._service.vision.status_changed.connect(self._on_camera_status)
         except Exception:
             # In headless / vision-disabled builds the worker may
@@ -214,6 +215,23 @@ class DriveScreen(QWidget):
 
         # Push initial state into the HUD / pills.
         self._render_state(self._drive.state())
+
+    def _connect_vision_frame_preview(self) -> None:
+        try:
+            sig = self._service.vision.frame_ready
+            try:
+                sig.disconnect(self._on_camera_frame)
+            except TypeError:
+                pass
+            sig.connect(self._on_camera_frame)
+        except Exception:
+            pass
+
+    def _disconnect_vision_frame_preview(self) -> None:
+        try:
+            self._service.vision.frame_ready.disconnect(self._on_camera_frame)
+        except TypeError:
+            pass
 
     # ---------- camera card ----------
 
@@ -714,11 +732,13 @@ class DriveScreen(QWidget):
         # Same policy as Vision: fresh face-recognition greetings when
         # this screen takes the live feed (Drive shares VisionWorker).
         self._service.reset_face_greet_cooldown()
+        self._connect_vision_frame_preview()
         # Grab focus so WASD/Space/Esc reach our key handlers without
         # the user having to click into the screen body first.
         self.setFocus()
 
     def on_leave(self) -> None:
+        self._disconnect_vision_frame_preview()
         if self._straight_test_timer.isActive():
             self._finish_straight_test()
         elif self._straight_pending:
