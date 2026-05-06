@@ -102,7 +102,7 @@ def _straight_seq_turn_ms() -> int:
 
 
 def _straight_seq_turn_speed_pct() -> int:
-    """PWM for in-place turns only: higher than straight legs unless overridden."""
+    """PWM for in-place turns: straight-test duty + boost (default +12), or TURN_PCT."""
     raw = (os.environ.get("NINA_STRAIGHT_SEQ_TURN_PCT") or "").strip()
     if raw:
         try:
@@ -111,10 +111,10 @@ def _straight_seq_turn_speed_pct() -> int:
             p = _straight_test_speed_pct()
     else:
         try:
-            boost = int(os.environ.get("NINA_STRAIGHT_SEQ_TURN_BOOST_PCT", "4"))
+            boost = int(os.environ.get("NINA_STRAIGHT_SEQ_TURN_BOOST_PCT", "12"))
         except ValueError:
-            boost = 4
-        boost = max(0, min(30, boost))
+            boost = 12
+        boost = max(0, min(50, boost))
         p = _straight_test_speed_pct() + boost
     return max(MIN_SPEED_PCT, min(100, p))
 
@@ -370,7 +370,7 @@ class DriveScreen(QWidget):
             "Straight forward 10 s, ~90° left (higher PWM), forward 4 s, ~90° left, forward 10 s. "
             "Forward legs: NINA_STRAIGHT_TEST_SPEED_PCT. "
             "Pivots: NINA_STRAIGHT_SEQ_TURN_PCT or straight + NINA_STRAIGHT_SEQ_TURN_BOOST_PCT "
-            "(default +4); duration from NINA_NAV_TURN_SEC scaled by duty vs NINA_NAV_SPEED, "
+            "(default +12); duration from NINA_NAV_TURN_SEC scaled by duty vs NINA_NAV_SPEED, "
             "or set NINA_STRAIGHT_SEQ_TURN_MS. Segment ms: NINA_STRAIGHT_SEQ_FWD*_MS. "
             "Respects Reverse on straight legs only. Space cancels; brake, E-STOP, autonomy, "
             "or leaving Drive stops the run. Turn off autonomous mode and release the brake first."

@@ -718,10 +718,10 @@ export NINA_NAV_INVERT_RIGHT=0                 # flip right wheel forward/backwa
 # Drive "Straight sequence" bench test: PWM % each segment (default: MAX_SPEED_PCT).
 # Path: forward 10 s, ~90° left (boosted PWM), forward 4 s, ~90° left, forward 10 s.
 # Forward PWM: NINA_STRAIGHT_TEST_SPEED_PCT (default MAX_SPEED_PCT).
-# Pivot PWM: NINA_STRAIGHT_SEQ_TURN_PCT or straight-test + NINA_STRAIGHT_SEQ_TURN_BOOST_PCT (default +4).
+# Pivot PWM: NINA_STRAIGHT_SEQ_TURN_PCT or straight-test + NINA_STRAIGHT_SEQ_TURN_BOOST_PCT (default +12).
 # Pivot ms: NINA_STRAIGHT_SEQ_TURN_MS or NINA_NAV_TURN_SEC scaled by (NINA_NAV_SPEED / turn duty).
 # export NINA_STRAIGHT_TEST_SPEED_PCT=14
-# export NINA_STRAIGHT_SEQ_TURN_BOOST_PCT=4
+# export NINA_STRAIGHT_SEQ_TURN_BOOST_PCT=12
 # export NINA_STRAIGHT_SEQ_FWD1_MS=10000
 # export NINA_STRAIGHT_SEQ_FWD2_MS=4000
 # export NINA_STRAIGHT_SEQ_FWD3_MS=10000
