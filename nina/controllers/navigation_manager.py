@@ -218,6 +218,8 @@ class NavigationConfig:
     opposite_zero_settle_sec: float = _DEFAULT_OPP_ZERO_SETTLE_SEC
     # Symmetric turn_left pivot (see `NavigationSettings.pivot_turn_left_extra_pp`).
     pivot_turn_left_extra_pp: int = 6
+    turn_left_prep_back_sec: float = 0.12
+    turn_left_prep_fwd_sec: float = 0.12
 
 
 # Default Nina pinout: 1:1 mirror of the working RPi reference build.
@@ -383,7 +385,12 @@ class NavigationManager:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """In-place pivot left: left wheel reverses, right wheel forwards."""
+        """In-place pivot left: left wheel reverses, right wheel forwards.
+
+        After stop/settle, may run a short symmetric straight back then
+        forward (``turn_left_prep_*_sec``) before the pivot, to seat drivetrain
+        before opposite-wheel directions.
+        """
         speed = self._resolve_speed(speed_percent)
         self._timed_turn(
             left_dir=self.DIR_BACKWARD,
@@ -440,6 +447,13 @@ class NavigationManager:
             right_speed = self._resolve_speed(right_speed_percent)
         self.stop()
         time.sleep(self.config.settle_delay_sec)
+        if (
+            left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+            and left_speed == right_speed
+            and left_speed > 0
+        ):
+            self._turn_left_straight_prep(left_speed)
         self._start_both_wheels(
             left_dir=left_dir,
             left_speed=left_speed,
@@ -780,6 +794,40 @@ class NavigationManager:
             and ls == rs
         )
 
+    def _turn_left_straight_prep(self, speed: int) -> None:
+        """Brief symmetric straight back then forward to seat JYQD / backlash before a left pivot."""
+        cfg = self.config
+        b = max(0.0, min(0.5, float(cfg.turn_left_prep_back_sec)))
+        f = max(0.0, min(0.5, float(cfg.turn_left_prep_fwd_sec)))
+        if b <= 0 and f <= 0:
+            return
+        sp = max(0, min(100, int(speed)))
+        settle = max(0.0, float(cfg.settle_delay_sec))
+        if b > 0:
+            self._start_both_wheels(
+                left_dir=self.DIR_BACKWARD,
+                left_speed=sp,
+                right_dir=self.DIR_BACKWARD,
+                right_speed=sp,
+            )
+            time.sleep(b)
+            self.stop()
+            time.sleep(settle)
+        if f > 0:
+            self._start_both_wheels(
+                left_dir=self.DIR_FORWARD,
+                left_speed=sp,
+                right_dir=self.DIR_FORWARD,
+                right_speed=sp,
+            )
+            time.sleep(f)
+            self.stop()
+            time.sleep(settle)
+
+    def prime_turn_left_straight(self, speed: int) -> None:
+        """Straight back / forward before a left pivot. Caller should stop+settle if needed."""
+        self._turn_left_straight_prep(speed)
+
     def _command_both(self, direction: str, speed: int) -> None:
         """Mirrors the RPi forward_forever / backward_forever sequence:
         stop, sleep settle, then set both wheels to the new direction."""
@@ -803,6 +851,11 @@ class NavigationManager:
         """Mirrors the RPi turn_left / turn_right sequence."""
         self.stop()
         time.sleep(self.config.settle_delay_sec)
+        if (
+            left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+        ):
+            self._turn_left_straight_prep(speed)
         self._start_both_wheels(
             left_dir=left_dir,
             left_speed=speed,

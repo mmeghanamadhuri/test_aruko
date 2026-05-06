@@ -131,6 +131,8 @@ class RemoteNavigationConfig:
     # before a fresh SET in `drive_continuous`.
     settle_delay_sec: float = 0.1
     pivot_turn_left_extra_pp: int = 6
+    turn_left_prep_back_sec: float = 0.12
+    turn_left_prep_fwd_sec: float = 0.12
 
 
 class RemoteNavigationManager:
@@ -285,7 +287,10 @@ class RemoteNavigationManager:
         speed_percent: Optional[int] = None,
         duration: Optional[float] = None,
     ) -> None:
-        """In-place pivot left: left wheel reverses, right wheel forwards."""
+        """In-place pivot left: left wheel reverses, right wheel forwards.
+
+        May prepend straight back / straight forward pulses per ``turn_left_prep_*``.
+        """
         speed = self._resolve_speed(speed_percent)
         self._timed_turn(
             left_dir=self.DIR_BACKWARD,
@@ -334,6 +339,13 @@ class RemoteNavigationManager:
         # on turn → straight or other shape changes while PWM stayed up.
         self.stop()
         time.sleep(max(0.0, float(self.config.settle_delay_sec)))
+        if (
+            left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+            and left_speed == right_speed
+            and left_speed > 0
+        ):
+            self._turn_left_straight_prep(left_speed)
         self.set_wheels(
             left_dir=left_dir, left_speed=left_speed,
             right_dir=right_dir, right_speed=right_speed,
@@ -550,6 +562,40 @@ class RemoteNavigationManager:
     # Internals
     # ------------------------------------------------------------------
 
+    def _turn_left_straight_prep(self, speed: int) -> None:
+        """Symmetric straight back then forward before a left pivot (matches local)."""
+        cfg = self.config
+        b = max(0.0, min(0.5, float(cfg.turn_left_prep_back_sec)))
+        f = max(0.0, min(0.5, float(cfg.turn_left_prep_fwd_sec)))
+        if b <= 0 and f <= 0:
+            return
+        sp = max(0, min(100, int(speed)))
+        z = max(0.0, float(cfg.settle_delay_sec))
+        if b > 0:
+            self.set_wheels(
+                left_dir=self.DIR_BACKWARD,
+                left_speed=sp,
+                right_dir=self.DIR_BACKWARD,
+                right_speed=sp,
+            )
+            time.sleep(b)
+            self.stop()
+            time.sleep(z)
+        if f > 0:
+            self.set_wheels(
+                left_dir=self.DIR_FORWARD,
+                left_speed=sp,
+                right_dir=self.DIR_FORWARD,
+                right_speed=sp,
+            )
+            time.sleep(f)
+            self.stop()
+            time.sleep(z)
+
+    def prime_turn_left_straight(self, speed: int) -> None:
+        """Straight back / forward before a left pivot. Caller should stop+settle if needed."""
+        self._turn_left_straight_prep(speed)
+
     def _resolve_speed(self, requested: Optional[int]) -> int:
         if requested is None:
             return int(self.config.default_speed_percent)
@@ -568,6 +614,11 @@ class RemoteNavigationManager:
         # some bridges.
         self.stop()
         time.sleep(max(0.0, float(self.config.settle_delay_sec)))
+        if (
+            left_dir == self.DIR_BACKWARD
+            and right_dir == self.DIR_FORWARD
+        ):
+            self._turn_left_straight_prep(speed)
         self.set_wheels(
             left_dir=left_dir, left_speed=speed,
             right_dir=right_dir, right_speed=speed,

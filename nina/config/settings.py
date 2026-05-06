@@ -60,6 +60,12 @@ class NavigationSettings:
     insufficient in the field. Env: ``NINA_NAV_PIVOT_TURN_LEFT_EXTRA_PP`` (0..20,
     default 6). Legacy alias: ``NINA_NAV_PIVOT_R_FWD_EXTRA_PP`` (used if the new
     name is unset).
+
+    ``turn_left_prep_back_sec`` / ``turn_left_prep_fwd_sec`` (default **0.12** s
+    each) run a **symmetric straight** back pulse then forward pulse before an
+    in-place **turn_left** (timed turn or first ``drive_continuous`` left pivot).
+    Set to **0** to skip. Env: ``NINA_NAV_TURN_LEFT_PREP_BACK_SEC``,
+    ``NINA_NAV_TURN_LEFT_PREP_FWD_SEC`` (clamped ~0..0.5 s).
     """
     backend_name: str
     pwm_frequency_hz: int
@@ -82,6 +88,9 @@ class NavigationSettings:
     settle_delay_sec: float = 0.1
     # In-place turn_left (L=back R=fwd): symmetric +% on both sides for breakaway.
     pivot_turn_left_extra_pp: int = 6
+    # Before turn_left: brief straight back then straight forward (0 = skip).
+    turn_left_prep_back_sec: float = 0.12
+    turn_left_prep_fwd_sec: float = 0.12
     # Remote-mode (Pi serial bridge) settings; ignored when mode='local'.
     mode: str = "local"
     remote_serial_port: str = "/dev/ttyUSB0"
@@ -260,6 +269,24 @@ def load_settings(repo_root: Path) -> NinaSettings:
                         or os.environ.get("NINA_NAV_PIVOT_R_FWD_EXTRA_PP")
                         or "6"
                     )
+                ),
+            ),
+        ),
+        turn_left_prep_back_sec=max(
+            0.0,
+            min(
+                0.5,
+                float(
+                    os.environ.get("NINA_NAV_TURN_LEFT_PREP_BACK_SEC", "0.12")
+                ),
+            ),
+        ),
+        turn_left_prep_fwd_sec=max(
+            0.0,
+            min(
+                0.5,
+                float(
+                    os.environ.get("NINA_NAV_TURN_LEFT_PREP_FWD_SEC", "0.12")
                 ),
             ),
         ),

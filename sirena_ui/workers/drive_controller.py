@@ -48,6 +48,7 @@ import logging
 import os
 import queue
 import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional, Tuple
 
@@ -992,6 +993,43 @@ class DriveController(QObject):
                 with self._lock:
                     self._active_drive = None
                 return
+            is_turn_left = (
+                ldir == self._nav.DIR_BACKWARD
+                and rdir == self._nav.DIR_FORWARD
+                and left_speed == right_speed
+                and left_speed > 0
+            )
+            run_turn_left_prep = False
+            if is_turn_left:
+                with self._lock:
+                    prev = self._active_drive
+                if prev is None:
+                    run_turn_left_prep = True
+                else:
+                    p_ld, p_ls, p_rd, p_rs = prev
+                    if not (
+                        p_ld == ldir
+                        and p_rd == rdir
+                        and p_ls == p_rs == left_speed
+                    ):
+                        run_turn_left_prep = True
+            if run_turn_left_prep:
+                cfg = getattr(self._nav, "config", None)
+                if cfg is not None:
+                    tb = float(getattr(cfg, "turn_left_prep_back_sec", 0))
+                    tf = float(getattr(cfg, "turn_left_prep_fwd_sec", 0))
+                    if tb <= 0 and tf <= 0:
+                        run_turn_left_prep = False
+            if run_turn_left_prep:
+                prime = getattr(self._nav, "prime_turn_left_straight", None)
+                if callable(prime):
+                    settle = max(
+                        0.0,
+                        float(getattr(self._nav.config, "settle_delay_sec", 0.1)),
+                    )
+                    self._nav.stop()
+                    time.sleep(settle)
+                    prime(left_speed)
             self._commit_wheels(
                 ldir, left_speed, rdir, right_speed, start_phase=False,
             )
