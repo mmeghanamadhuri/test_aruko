@@ -33,10 +33,11 @@ import time
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Set, Tuple
 
 from nina.services.face_db import DEFAULT_MATCH_THRESHOLD, FaceDB
 from sirena_ui.workers.vision_types import (
+    KIND_ARUCO,
     KIND_FACE,
     KIND_OBJECT,
     Detection,
@@ -516,6 +517,90 @@ def _resolve_yolo_weights() -> Path:
 # Default annotation colours (BGR for OpenCV).
 _FACE_COLOR = (52, 199, 89)     # Sirena-friendly green
 _OBJECT_COLOR = (10, 132, 255)  # Sirena-friendly blue
+_ARUCO_COLOR = (0, 165, 255)    # orange — stands out from faces / YOLO
+
+
+def _aruco_dictionary_const() -> int:
+    """OpenCV predefined dictionary id (default 4x4, 50 codes)."""
+    if cv2 is None:
+        return 0
+    raw = (os.environ.get("NINA_ARUCO_DICT") or "DICT_4X4_50").strip().upper()
+    return int(getattr(cv2.aruco, raw, cv2.aruco.DICT_4X4_50))
+
+
+def _aruco_target_id_set() -> Set[int]:
+    raw = (os.environ.get("NINA_ARUCO_TARGET_IDS") or "0").strip()
+    out = set()
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            out.add(int(part))
+        except ValueError:
+            continue
+    return out if out else {0}
+
+
+def _detect_aruco_detections(frame_bgr) -> List[Detection]:
+    """Return ArUco markers as ``Detection`` list (``KIND_ARUCO``)."""
+    if cv2 is None or not hasattr(cv2, "aruco"):
+        return []
+    try:
+        gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+    except Exception:
+        return []
+
+    dictionary = cv2.aruco.getPredefinedDictionary(_aruco_dictionary_const())
+    parameters = cv2.aruco.DetectorParameters()
+    corners = None
+    ids = None
+    try:
+        if hasattr(cv2.aruco, "ArucoDetector"):
+            det = cv2.aruco.ArucoDetector(dictionary, parameters)
+            corners, ids, _rej = det.detectMarkers(gray)
+        else:  # pragma: no cover - older OpenCV
+            corners, ids, _rej = cv2.aruco.detectMarkers(
+                gray, dictionary, parameters=parameters
+            )
+    except Exception as exc:
+        log.debug("ArUco detect failed: %s", exc)
+        return []
+
+    if ids is None or len(ids) == 0:
+        return []
+
+    want = _aruco_target_id_set()
+    h, w = frame_bgr.shape[:2]
+    out: List[Detection] = []
+    for i, cset in enumerate(corners):
+        mid = int(ids[i][0])
+        if mid not in want:
+            continue
+        pts = cset[0]
+        xs = [float(p[0]) for p in pts]
+        ys = [float(p[1]) for p in pts]
+        x1 = max(0, int(min(xs)))
+        y1 = max(0, int(min(ys)))
+        x2 = min(w - 1, int(max(xs)))
+        y2 = min(h - 1, int(max(ys)))
+        if x2 <= x1 or y2 <= y1:
+            continue
+        out.append(
+            Detection(
+                kind=KIND_ARUCO,
+                label=f"ArUco ID {mid}",
+                confidence=1.0,
+                bbox=(x1, y1, x2, y2),
+                identity=str(mid),
+            )
+        )
+    # Prefer the largest marker (nearest / dominant in frame).
+    out.sort(
+        key=lambda d: (d.bbox[2] - d.bbox[0]) * (d.bbox[3] - d.bbox[1]),
+        reverse=True,
+    )
+    return out
 
 
 class VisionPipeline:
@@ -586,6 +671,7 @@ class VisionPipeline:
 
         self._face_enabled = False
         self._object_enabled = False
+        self._aruco_enabled = False
 
         # Face recognition DB. Persisted alongside the rest of Nina's
         # mutable state under nina/data/. Lazy: we don't load anything
@@ -974,6 +1060,17 @@ class VisionPipeline:
             self._object_enabled = bool(enabled)
             return None
 
+    def set_aruco_enabled(self, enabled: bool) -> Optional[str]:
+        """Toggle ArUco marker detection (RGB only; uses cv2.aruco)."""
+        if enabled:
+            if cv2 is None:
+                return "OpenCV not installed"
+            if not hasattr(cv2, "aruco"):
+                return "OpenCV has no aruco module (need opencv-contrib or full OpenCV)"
+        with self._lock:
+            self._aruco_enabled = bool(enabled)
+        return None
+
     # ------------------------------------------------------------------
     # Frame loop
     # ------------------------------------------------------------------
@@ -1003,6 +1100,7 @@ class VisionPipeline:
             face = self._face if self._face_enabled else None
             sface = self._sface if self._face_enabled else None
             obj = self._object if self._object_enabled else None
+            do_aruco = self._aruco_enabled
             face_db = self._face_db
 
         detections: List[Detection] = []
@@ -1033,6 +1131,11 @@ class VisionPipeline:
                 detections.extend(obj.detect(frame))
             except Exception as exc:
                 log.warning("object.detect failed: %s", exc)
+        if do_aruco:
+            try:
+                detections.extend(_detect_aruco_detections(frame))
+            except Exception as exc:
+                log.warning("ArUco detection failed: %s", exc)
 
         annotated = self._annotate(frame, detections)
         with self._lock:
@@ -1255,7 +1358,12 @@ class VisionPipeline:
             return frame_bgr
         out = frame_bgr.copy()
         for det in detections:
-            color = _FACE_COLOR if det.kind == KIND_FACE else _OBJECT_COLOR
+            if det.kind == KIND_FACE:
+                color = _FACE_COLOR
+            elif det.kind == KIND_ARUCO:
+                color = _ARUCO_COLOR
+            else:
+                color = _OBJECT_COLOR
             x1, y1, x2, y2 = det.bbox
             cv2.rectangle(out, (x1, y1), (x2, y2), color, 2)
             # For recognised faces show "name match%"; otherwise show the

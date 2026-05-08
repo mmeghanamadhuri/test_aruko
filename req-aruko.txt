@@ -1,0 +1,22 @@
+# ArUco follow (Nina Vision → Start ArUco)
+# ----------------------------------------
+# The marker detector uses cv2.aruco. Standard wheels named
+# opencv-python-headless sometimes ship WITHOUT the aruco module.
+# The contrib build includes aruco and is API-compatible for the rest
+# of Nina vision (YuNet, drawing, VideoCapture).
+#
+# IMPORTANT — avoid a broken mixed install:
+#   Do NOT pip-install both opencv-python-headless and
+#   opencv-contrib-python-headless in the same environment.
+#
+# Typical upgrade path (same venv you use for sirena_ui):
+#   pip uninstall -y opencv-python-headless opencv-python opencv-contrib-python
+#   pip install -r req-aruko.txt
+#
+# If you use Jetson/apt OpenCV for Python instead of pip, ensure that
+# build includes contrib + aruco (some apt packages split this).
+#
+# Optional: already satisfied by sirena_ui requirements — only if missing:
+#   gTTS>=2.3
+
+opencv-contrib-python-headless>=4.5.4,<5.0

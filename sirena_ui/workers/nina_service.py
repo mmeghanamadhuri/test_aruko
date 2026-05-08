@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import threading
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from nina.navigation.obstacle_field import ObstacleField
 
 from PyQt5.QtCore import Qt
 
@@ -197,6 +200,19 @@ class NinaService:
                 self.dxl.close()
             finally:
                 self._bus_ready = False
+
+    def fuse_obstacle_for_follow(self) -> "ObstacleField":
+        """Fuse lidar + depth for manual follow modes (no ultrasonics / IR)."""
+        from nina.navigation.obstacle_field import fuse
+
+        a = self.settings.autonomy
+        return fuse(
+            lidar=self.slam.latest_scan(),
+            ultrasonics=(),
+            ir=None,
+            depth=self.autonomy.try_read_depth_for_avoidance(),
+            cliff_min_mm=a.cliff_min_mm,
+        )
 
     def list_actions(self) -> Dict[str, str]:
         return self.action_runner.list_actions()

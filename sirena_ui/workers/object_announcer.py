@@ -201,6 +201,13 @@ class ObjectAnnouncer(QObject):
         """Convenience for "I don't see anything yet." with no labels."""
         self._speak("I don't see anything yet.")
 
+    def speak_sentence(self, sentence: str) -> None:
+        """Speak arbitrary text (cached like other announcements)."""
+        s = (sentence or "").strip()
+        if not s:
+            return
+        self._speak(s)
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------

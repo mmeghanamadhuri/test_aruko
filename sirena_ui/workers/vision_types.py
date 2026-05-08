@@ -14,6 +14,7 @@ from typing import Optional, Tuple
 # Detection categories the UI groups results by.
 KIND_FACE = "face"
 KIND_OBJECT = "object"
+KIND_ARUCO = "aruco"
 
 
 @dataclass

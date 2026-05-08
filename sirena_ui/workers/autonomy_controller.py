@@ -809,6 +809,12 @@ class AutonomyController(QObject):
         except Exception:
             return None
 
+    def try_read_depth_for_avoidance(self) -> Optional[DepthFrame]:
+        """Latest depth frame if the RealSense pipeline is open, else None."""
+        with self._lock:
+            ok = bool(self._depth_open_ok)
+        return self._safe_read_depth(ok)
+
     def _is_simulation_summary(self) -> str:
         bits: List[str] = []
         if not self._health.lidar[0]:

@@ -26,6 +26,7 @@ Public surface (used by `VisionScreen`):
     stop()
     set_face_enabled(bool)
     set_object_enabled(bool)
+    set_aruco_enabled(bool)
     set_resolution(width, height)
     snapshot() -> Path | None
     status() -> VisionStatus
@@ -94,6 +95,7 @@ class VisionWorker(QObject):
     # corresponding toggle back to OFF so it doesn't lie about state.
     face_enable_failed = pyqtSignal(str)
     object_enable_failed = pyqtSignal(str)
+    aruco_enable_failed = pyqtSignal(str)
     # Worker thread requests an immediate GUI preview refresh (in addition
     # to the periodic coalesce timer) so RGB is not delayed by a full tick.
     _preview_flush_requested = pyqtSignal()
@@ -246,6 +248,9 @@ class VisionWorker(QObject):
 
     def set_object_enabled(self, enabled: bool) -> None:
         self._enqueue(lambda: self._cmd_set_object(bool(enabled)))
+
+    def set_aruco_enabled(self, enabled: bool) -> None:
+        self._enqueue(lambda: self._cmd_set_aruco(bool(enabled)))
 
     def set_object_confidence(self, value: float) -> None:
         """Update YOLO's confidence floor live.
@@ -410,6 +415,12 @@ class VisionWorker(QObject):
         self._emit_status(self._pipeline.status())
         if err and enabled:
             self.object_enable_failed.emit(err)
+
+    def _cmd_set_aruco(self, enabled: bool) -> None:
+        err = self._pipeline.set_aruco_enabled(enabled)
+        self._emit_status(self._pipeline.status())
+        if err and enabled:
+            self.aruco_enable_failed.emit(err)
 
     def _cmd_enroll(self, name: str, target_samples: int) -> None:
         self._announce(f"Capturing face samples for '{name}'...")
