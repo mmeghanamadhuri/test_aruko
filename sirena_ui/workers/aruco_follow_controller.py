@@ -79,9 +79,9 @@ except ValueError:
 _ARRIVE_CENTER_MAX_ERR = max(0.02, min(0.4, _ARRIVE_CENTER_MAX_ERR))
 _ARRIVE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_ARUCO_ARRIVE_CONFIRM_TICKS", "4")))
 try:
-    _TURN_ONLY_ERR = float(os.environ.get("NINA_ARUCO_TURN_ONLY_ERR", "0.28"))
+    _TURN_ONLY_ERR = float(os.environ.get("NINA_ARUCO_TURN_ONLY_ERR", "0.65"))
 except ValueError:
-    _TURN_ONLY_ERR = 0.28
+    _TURN_ONLY_ERR = 0.65
 _TURN_ONLY_ERR = max(0.05, min(0.9, _TURN_ONLY_ERR))
 _LOST_RECENTER_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_LOST_RECENTER_PCT", "8"))))
 try:
@@ -90,6 +90,28 @@ except ValueError:
     _STRAIGHT_LOCK_ERR = 0.05
 _STRAIGHT_LOCK_ERR = max(0.01, min(0.25, _STRAIGHT_LOCK_ERR))
 _DEBUG_EVERY_TICKS = max(1, int(os.environ.get("NINA_ARUCO_DEBUG_EVERY_TICKS", "4")))
+_CADENCE_ENABLED = (os.environ.get("NINA_ARUCO_CADENCE_ENABLED", "0").strip().lower() in ("1", "true", "yes", "on", "y"))
+try:
+    _CADENCE_MOVE_SEC = float(os.environ.get("NINA_ARUCO_MOVE_SEC", "5.0"))
+except ValueError:
+    _CADENCE_MOVE_SEC = 5.0
+_CADENCE_MOVE_SEC = max(0.2, min(30.0, _CADENCE_MOVE_SEC))
+try:
+    _CADENCE_STOP_SEC = float(os.environ.get("NINA_ARUCO_STOP_SEC", "2.0"))
+except ValueError:
+    _CADENCE_STOP_SEC = 2.0
+_CADENCE_STOP_SEC = max(0.0, min(30.0, _CADENCE_STOP_SEC))
+_CADENCE_MOVE_TICKS = max(1, int(round(_CADENCE_MOVE_SEC * 1000.0 / float(_TICK_MS))))
+_CADENCE_STOP_TICKS = max(0, int(round(_CADENCE_STOP_SEC * 1000.0 / float(_TICK_MS))))
+try:
+    _STARTUP_BACK_SEC = float(os.environ.get("NINA_ARUCO_STARTUP_BACK_SEC", "2.0"))
+except ValueError:
+    _STARTUP_BACK_SEC = 2.0
+_STARTUP_BACK_SEC = max(0.0, min(10.0, _STARTUP_BACK_SEC))
+_STARTUP_BACK_TICKS = max(0, int(round(_STARTUP_BACK_SEC * 1000.0 / float(_TICK_MS))))
+_STARTUP_BACK_PCT = max(
+    1, min(100, int(os.environ.get("NINA_ARUCO_STARTUP_BACK_PCT", str(_SPEED_BACK_PCT))))
+)
 try:
     _FOLLOW_CLOSE_RATIO = float(os.environ.get("NINA_ARUCO_CLOSE_RATIO", "1.25"))
 except ValueError:
@@ -188,6 +210,9 @@ class ArucoFollowController(QObject):
         self._arrive_streak = 0
         self._last_err_x = 0.0
         self._debug_tick = 0
+        self._cadence_move_phase = True
+        self._cadence_ticks_remaining = _CADENCE_MOVE_TICKS
+        self._startup_back_ticks_remaining = _STARTUP_BACK_TICKS
 
     def set_frame_size(self, w: int, h: int) -> None:
         self._frame_wh = (max(1, int(w)), max(1, int(h)))
@@ -233,6 +258,9 @@ class ArucoFollowController(QObject):
         self._arrive_streak = 0
         self._last_err_x = 0.0
         self._debug_tick = 0
+        self._cadence_move_phase = True
+        self._cadence_ticks_remaining = _CADENCE_MOVE_TICKS
+        self._startup_back_ticks_remaining = _STARTUP_BACK_TICKS
         self._active = True
         self._search_step_timer.stop()
         self._timer.start()
@@ -247,6 +275,20 @@ class ArucoFollowController(QObject):
             _STOP_AREA_FRAC,
             _ARRIVE_CONFIRM_TICKS,
         )
+        log.info(
+            "Aruco cadence: enabled=%s move=%.2fs(%s ticks) stop=%.2fs(%s ticks)",
+            _CADENCE_ENABLED,
+            _CADENCE_MOVE_SEC,
+            _CADENCE_MOVE_TICKS,
+            _CADENCE_STOP_SEC,
+            _CADENCE_STOP_TICKS,
+        )
+        log.info(
+            "Aruco startup nudge: back=%.2fs(%s ticks) pct=%s",
+            _STARTUP_BACK_SEC,
+            _STARTUP_BACK_TICKS,
+            _STARTUP_BACK_PCT,
+        )
         try:
             self._drive.ensure_hardware()
         except Exception as exc:
@@ -260,6 +302,7 @@ class ArucoFollowController(QObject):
         self._lost_since = None
         self._arrive_streak = 0
         self._last_err_x = 0.0
+        self._startup_back_ticks_remaining = _STARTUP_BACK_TICKS
         self._timer.stop()
         self._search_step_timer.stop()
         self._latest = []
@@ -323,6 +366,32 @@ class ArucoFollowController(QObject):
             rd,
             max(1, int(round(rs_i * scale))),
         )
+
+    def _apply_forward_cadence(
+        self, ld: str, ls_i: int, rd: str, rs_i: int
+    ) -> Tuple[str, int, str, int]:
+        """Optional move/pause cadence for forward commands (5s/2s by default)."""
+        if not _CADENCE_ENABLED:
+            return ld, ls_i, rd, rs_i
+        is_forward = ld == "forward" and rd == "forward" and ls_i > 0 and rs_i > 0
+        if not is_forward:
+            # Keep sequence deterministic: next forward resumes in move phase.
+            self._cadence_move_phase = True
+            self._cadence_ticks_remaining = _CADENCE_MOVE_TICKS
+            return ld, ls_i, rd, rs_i
+        if self._cadence_ticks_remaining <= 0:
+            if self._cadence_move_phase:
+                self._cadence_move_phase = False
+                self._cadence_ticks_remaining = _CADENCE_STOP_TICKS
+                log.debug("Aruco cadence phase -> STOP")
+            else:
+                self._cadence_move_phase = True
+                self._cadence_ticks_remaining = _CADENCE_MOVE_TICKS
+                log.debug("Aruco cadence phase -> MOVE")
+        self._cadence_ticks_remaining -= 1
+        if self._cadence_move_phase:
+            return ld, ls_i, rd, rs_i
+        return ld, 0, rd, 0
 
     def _tick(self) -> None:
         if not self._active:
@@ -435,6 +504,24 @@ class ArucoFollowController(QObject):
         err_x = (cx - 0.5 * fw) / max(fw * 0.5, 1.0)
         err_x = max(-1.0, min(1.0, err_x))
         self._last_err_x = err_x
+        self._debug_tick += 1
+
+        # One-time startup nudge: ensure both wheels wake up before forward tracking.
+        if self._startup_back_ticks_remaining > 0:
+            self._startup_back_ticks_remaining -= 1
+            try:
+                self._drive.drive_wheels(
+                    "back", _STARTUP_BACK_PCT, "back", _STARTUP_BACK_PCT
+                )
+            except Exception as exc:
+                log.debug("startup back nudge: %s", exc)
+            if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                log.debug(
+                    "Aruco startup nudge: remaining=%s ticks pct=%s",
+                    self._startup_back_ticks_remaining,
+                    _STARTUP_BACK_PCT,
+                )
+            return
 
         area = float(max(1, _bbox_area(chosen)))
         frame_area = float(max(1, fw * fh))
@@ -442,7 +529,6 @@ class ArucoFollowController(QObject):
         standoff = self._target_standoff_area_px()
         ratio = area / standoff
         max_sp = _SPEED_APPROACH_PCT
-        self._debug_tick += 1
 
         fwd_clear = int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "1200"))
         estop = int(os.environ.get("NINA_AUTO_ESTOP_MM", "850"))
@@ -501,6 +587,7 @@ class ArucoFollowController(QObject):
                         fwd_clear_mm=fwd_clear,
                         estop_mm=estop,
                     )
+                    ld, ls_i, rd, rs_i = self._apply_forward_cadence(ld, ls_i, rd, rs_i)
                     if ls_i <= 0 or rs_i <= 0:
                         self._drive_stop_safe()
                         return
@@ -565,6 +652,7 @@ class ArucoFollowController(QObject):
                     fwd_clear_mm=fwd_clear,
                     estop_mm=estop,
                 )
+                ld, ls_i, rd, rs_i = self._apply_forward_cadence(ld, ls_i, rd, rs_i)
                 if ls_i <= 0 or rs_i <= 0:
                     self._drive_stop_safe()
                     return
@@ -588,20 +676,12 @@ class ArucoFollowController(QObject):
                     )
                 return
 
-            if abs(err_x) <= eff_dead:
-                self._drive_stop_safe()
-                if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
-                    log.debug(
-                        "Aruco hold-stop: err=%.3f <= dead=%.3f area=%.3f ratio=%.3f",
-                        err_x,
-                        eff_dead,
-                        area_frac,
-                        ratio,
-                    )
-                return
+            # Near marker but not arrived: keep moving forward slowly instead of
+            # holding stop, so the main behavior remains forward motion.
+            near_err = err_x if abs(err_x) > eff_dead else 0.0
             ld, ls_i, rd, rs_i = _follow_steering_aruco(
                 float(_SPEED_CRUISE_PCT),
-                err_x,
+                near_err,
                 yaw_gain=_YAW_GAIN,
                 max_wheel=max_sp,
             )
@@ -610,6 +690,7 @@ class ArucoFollowController(QObject):
                 fwd_clear_mm=fwd_clear,
                 estop_mm=estop,
             )
+            ld, ls_i, rd, rs_i = self._apply_forward_cadence(ld, ls_i, rd, rs_i)
             if ls_i <= 0 or rs_i <= 0:
                 self._drive_stop_safe()
                 return
@@ -619,7 +700,7 @@ class ArucoFollowController(QObject):
                 log.debug("drive hold steer: %s", exc)
             if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
                 log.debug(
-                    "Aruco hold-steer: err=%.3f area=%.3f ratio=%.3f cmd=(%s,%s,%s,%s)",
+                    "Aruco near-creep: err=%.3f area=%.3f ratio=%.3f cmd=(%s,%s,%s,%s)",
                     err_x,
                     area_frac,
                     ratio,
