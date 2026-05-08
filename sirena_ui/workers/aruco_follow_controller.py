@@ -94,6 +94,10 @@ _SAFE_FORWARD_ONLY = (
     os.environ.get("NINA_ARUCO_SAFE_FORWARD_ONLY", "1").strip().lower()
     in ("1", "true", "yes", "on", "y")
 )
+_ALLOW_REVERSE = (
+    os.environ.get("NINA_ARUCO_ALLOW_REVERSE", "0").strip().lower()
+    in ("1", "true", "yes", "on", "y")
+)
 try:
     _FOLLOW_CLOSE_RATIO = float(os.environ.get("NINA_ARUCO_CLOSE_RATIO", "1.25"))
 except ValueError:
@@ -254,7 +258,7 @@ class ArucoFollowController(QObject):
         self.status_message.emit("ArUco: seeking marker…")
         log.info(
             "Aruco start: tick=%sms straight_lock=%.3f turn_only=%.3f "
-            "arrive_area=%.3f stop_area=%.3f arrive_ticks=%s safe_fwd_only=%s",
+            "arrive_area=%.3f stop_area=%.3f arrive_ticks=%s safe_fwd_only=%s allow_reverse=%s",
             _TICK_MS,
             _STRAIGHT_LOCK_ERR,
             _TURN_ONLY_ERR,
@@ -262,6 +266,7 @@ class ArucoFollowController(QObject):
             _STOP_AREA_FRAC,
             _ARRIVE_CONFIRM_TICKS,
             _SAFE_FORWARD_ONLY,
+            _ALLOW_REVERSE,
         )
         try:
             self._drive.ensure_hardware()
@@ -323,7 +328,9 @@ class ArucoFollowController(QObject):
         if fm is None:
             return ld, ls_i, rd, rs_i
         if fm < estop_mm:
-            return "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
+            if _ALLOW_REVERSE:
+                return "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
+            return ld, 0, rd, 0
         forward_move = ld == "forward" and rd == "forward" and ls_i > 0 and rs_i > 0
         if not forward_move:
             return ld, ls_i, rd, rs_i
@@ -386,7 +393,9 @@ class ArucoFollowController(QObject):
         if now - self._lost_since < _LOST_SEC:
             # Short dropout: bias a gentle in-place turn toward the last seen marker
             # direction so wheel-drift doesn't permanently walk us away.
-            if abs(self._last_err_x) >= 0.08:
+            if _SAFE_FORWARD_ONLY:
+                self._drive_stop_safe()
+            elif abs(self._last_err_x) >= 0.08:
                 try:
                     if self._last_err_x > 0:
                         self._drive.drive_wheels("forward", _LOST_RECENTER_PCT, "back", _LOST_RECENTER_PCT)
@@ -483,12 +492,15 @@ class ArucoFollowController(QObject):
                 return
 
             if ratio > _area_close_back:
-                try:
-                    self._drive.drive_wheels(
-                        "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
-                    )
-                except Exception as exc:
-                    log.debug("drive back: %s", exc)
+                if _ALLOW_REVERSE:
+                    try:
+                        self._drive.drive_wheels(
+                            "back", _SPEED_BACK_PCT, "back", _SPEED_BACK_PCT
+                        )
+                    except Exception as exc:
+                        log.debug("drive back: %s", exc)
+                else:
+                    self._drive_stop_safe()
                 return
 
             if ratio < _FOLLOW_AREA_FAR:
