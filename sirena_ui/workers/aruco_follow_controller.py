@@ -63,10 +63,33 @@ _DEFAULT_MARKER_FRAC = 0.012
 # When bbox area / full frame area reaches this, treat as "close enough" and stop
 # (marker looks large in the image). Independent of fine centering.
 try:
-    _STOP_AREA_FRAC = float(os.environ.get("NINA_ARUCO_STOP_AREA_FRAC", "0.02"))
+    _STOP_AREA_FRAC = float(os.environ.get("NINA_ARUCO_STOP_AREA_FRAC", "0.05"))
 except ValueError:
-    _STOP_AREA_FRAC = 0.02
+    _STOP_AREA_FRAC = 0.05
 _STOP_AREA_FRAC = max(0.004, min(0.45, _STOP_AREA_FRAC))
+try:
+    _ARRIVE_MIN_AREA_FRAC = float(os.environ.get("NINA_ARUCO_ARRIVE_MIN_AREA_FRAC", "0.035"))
+except ValueError:
+    _ARRIVE_MIN_AREA_FRAC = 0.035
+_ARRIVE_MIN_AREA_FRAC = max(0.004, min(0.45, _ARRIVE_MIN_AREA_FRAC))
+try:
+    _ARRIVE_CENTER_MAX_ERR = float(os.environ.get("NINA_ARUCO_ARRIVE_CENTER_ERR", "0.08"))
+except ValueError:
+    _ARRIVE_CENTER_MAX_ERR = 0.08
+_ARRIVE_CENTER_MAX_ERR = max(0.02, min(0.4, _ARRIVE_CENTER_MAX_ERR))
+_ARRIVE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_ARUCO_ARRIVE_CONFIRM_TICKS", "4")))
+try:
+    _TURN_ONLY_ERR = float(os.environ.get("NINA_ARUCO_TURN_ONLY_ERR", "0.28"))
+except ValueError:
+    _TURN_ONLY_ERR = 0.28
+_TURN_ONLY_ERR = max(0.05, min(0.9, _TURN_ONLY_ERR))
+_LOST_RECENTER_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_LOST_RECENTER_PCT", "8"))))
+try:
+    _STRAIGHT_LOCK_ERR = float(os.environ.get("NINA_ARUCO_STRAIGHT_LOCK_ERR", "0.05"))
+except ValueError:
+    _STRAIGHT_LOCK_ERR = 0.05
+_STRAIGHT_LOCK_ERR = max(0.01, min(0.25, _STRAIGHT_LOCK_ERR))
+_DEBUG_EVERY_TICKS = max(1, int(os.environ.get("NINA_ARUCO_DEBUG_EVERY_TICKS", "4")))
 try:
     _FOLLOW_CLOSE_RATIO = float(os.environ.get("NINA_ARUCO_CLOSE_RATIO", "1.25"))
 except ValueError:
@@ -162,6 +185,9 @@ class ArucoFollowController(QObject):
         self._searching = False
         self._search_phase = 0  # 0=turn right, 1=pause, 2=turn left, 3=pause
         self._lost_since: Optional[float] = None
+        self._arrive_streak = 0
+        self._last_err_x = 0.0
+        self._debug_tick = 0
 
     def set_frame_size(self, w: int, h: int) -> None:
         self._frame_wh = (max(1, int(w)), max(1, int(h)))
@@ -204,10 +230,23 @@ class ArucoFollowController(QObject):
         self._searching = False
         self._search_phase = 0
         self._lost_since = None
+        self._arrive_streak = 0
+        self._last_err_x = 0.0
+        self._debug_tick = 0
         self._active = True
         self._search_step_timer.stop()
         self._timer.start()
         self.status_message.emit("ArUco: seeking marker…")
+        log.info(
+            "Aruco start: tick=%sms straight_lock=%.3f turn_only=%.3f "
+            "arrive_area=%.3f stop_area=%.3f arrive_ticks=%s",
+            _TICK_MS,
+            _STRAIGHT_LOCK_ERR,
+            _TURN_ONLY_ERR,
+            _ARRIVE_MIN_AREA_FRAC,
+            _STOP_AREA_FRAC,
+            _ARRIVE_CONFIRM_TICKS,
+        )
         try:
             self._drive.ensure_hardware()
         except Exception as exc:
@@ -219,6 +258,8 @@ class ArucoFollowController(QObject):
         self._searching = False
         self._search_phase = 0
         self._lost_since = None
+        self._arrive_streak = 0
+        self._last_err_x = 0.0
         self._timer.stop()
         self._search_step_timer.stop()
         self._latest = []
@@ -227,6 +268,7 @@ class ArucoFollowController(QObject):
         except Exception as exc:
             log.debug("drive.stop: %s", exc)
         self.status_message.emit("ArUco: off")
+        log.info("Aruco stop")
 
     def is_active(self) -> bool:
         return bool(self._active)
@@ -326,7 +368,23 @@ class ArucoFollowController(QObject):
         if self._lost_since is None:
             self._lost_since = now
         if now - self._lost_since < _LOST_SEC:
-            self._drive_stop_safe()
+            # Short dropout: bias a gentle in-place turn toward the last seen marker
+            # direction so wheel-drift doesn't permanently walk us away.
+            if abs(self._last_err_x) >= 0.08:
+                try:
+                    if self._last_err_x > 0:
+                        self._drive.drive_wheels("forward", _LOST_RECENTER_PCT, "back", _LOST_RECENTER_PCT)
+                    else:
+                        self._drive.drive_wheels("back", _LOST_RECENTER_PCT, "forward", _LOST_RECENTER_PCT)
+                except Exception:
+                    self._drive_stop_safe()
+            else:
+                self._drive_stop_safe()
+            log.debug(
+                "Aruco transient lost: dt=%.2fs last_err=%.3f",
+                now - self._lost_since,
+                self._last_err_x,
+            )
             return
 
         if not self._searching:
@@ -335,6 +393,7 @@ class ArucoFollowController(QObject):
             self._search_step_timer.stop()
             self._drive_stop_safe()
             self.status_message.emit("ArUco: lost — searching (±60°)…")
+            log.warning("Aruco lost > %.2fs: enter search", _LOST_SEC)
             self._begin_search_phase()
             return
 
@@ -366,6 +425,7 @@ class ArucoFollowController(QObject):
         self._search_phase += 1
         if self._search_phase >= 4:
             self._search_phase = 0
+        log.debug("Aruco search phase -> %s", self._search_phase)
         self._begin_search_phase()
 
     def _handle_track(self, chosen: Detection) -> None:
@@ -374,6 +434,7 @@ class ArucoFollowController(QObject):
         cx = 0.5 * (x1 + x2)
         err_x = (cx - 0.5 * fw) / max(fw * 0.5, 1.0)
         err_x = max(-1.0, min(1.0, err_x))
+        self._last_err_x = err_x
 
         area = float(max(1, _bbox_area(chosen)))
         frame_area = float(max(1, fw * fh))
@@ -381,6 +442,7 @@ class ArucoFollowController(QObject):
         standoff = self._target_standoff_area_px()
         ratio = area / standoff
         max_sp = _SPEED_APPROACH_PCT
+        self._debug_tick += 1
 
         fwd_clear = int(os.environ.get("NINA_AUTO_FWD_CLEAR_MM", "1200"))
         estop = int(os.environ.get("NINA_AUTO_ESTOP_MM", "850"))
@@ -392,9 +454,16 @@ class ArucoFollowController(QObject):
             eff_dead = max(_ANG_DEAD, _FOLLOW_ANG_DEAD_CLOSE)
 
         try:
-            # Marker fills enough of the image → stop follow (user: "looks large").
-            if area_frac >= _STOP_AREA_FRAC:
-                self._finish_arrived()
+            centered_for_arrival = abs(err_x) <= _ARRIVE_CENTER_MAX_ERR
+            close_for_arrival = area_frac >= _ARRIVE_MIN_AREA_FRAC
+            if area_frac >= _STOP_AREA_FRAC and centered_for_arrival:
+                self._arrive_streak += 1
+            elif close_for_arrival and centered_for_arrival:
+                self._arrive_streak += 1
+            else:
+                self._arrive_streak = 0
+            if self._arrive_streak >= _ARRIVE_CONFIRM_TICKS:
+                self._finish_arrived("arrival-confirmed")
                 return
 
             if ratio > _area_close_back:
@@ -407,11 +476,72 @@ class ArucoFollowController(QObject):
                 return
 
             if ratio < _FOLLOW_AREA_FAR:
-                if (
-                    ratio >= _area_blend_far
-                    and abs(err_x) <= max(_ANG_DEAD, _FOLLOW_ANG_DEAD_CLOSE)
-                ):
-                    self._finish_arrived()
+                # Wheel-lock intent: when the marker is visually centered, force
+                # pure forward command (no left/right steering component).
+                if abs(err_x) <= _STRAIGHT_LOCK_ERR:
+                    if ratio <= _area_blend_far:
+                        lock_sp = float(_SPEED_APPROACH_PCT)
+                    else:
+                        t = (ratio - _area_blend_far) / max(
+                            1e-6, _FOLLOW_AREA_FAR - _area_blend_far
+                        )
+                        t = max(0.0, min(1.0, t))
+                        lock_sp = float(
+                            _SPEED_APPROACH_PCT
+                            + (_SPEED_CRUISE_PCT - _SPEED_APPROACH_PCT) * t
+                        )
+                    ld, ls_i, rd, rs_i = _follow_steering_aruco(
+                        lock_sp,
+                        0.0,
+                        yaw_gain=_YAW_GAIN,
+                        max_wheel=max_sp,
+                    )
+                    ld, ls_i, rd, rs_i = self._apply_forward_obstacle(
+                        ld, ls_i, rd, rs_i,
+                        fwd_clear_mm=fwd_clear,
+                        estop_mm=estop,
+                    )
+                    if ls_i <= 0 or rs_i <= 0:
+                        self._drive_stop_safe()
+                        return
+                    try:
+                        self._drive.drive_wheels(ld, ls_i, rd, rs_i)
+                    except Exception as exc:
+                        log.debug("drive straight-lock: %s", exc)
+                    if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                        log.debug(
+                            "Aruco track straight-lock: err=%.3f area=%.3f ratio=%.3f "
+                            "arrive=%s/%s cmd=(%s,%s,%s,%s)",
+                            err_x,
+                            area_frac,
+                            ratio,
+                            self._arrive_streak,
+                            _ARRIVE_CONFIRM_TICKS,
+                            ld,
+                            ls_i,
+                            rd,
+                            rs_i,
+                        )
+                    return
+
+                # If marker drifts hard to a side, rotate first to reacquire heading
+                # instead of continuing forward on a curved wheel path.
+                if abs(err_x) >= _TURN_ONLY_ERR:
+                    try:
+                        turn_sp = max(_SPEED_CRUISE_PCT, int(round(_SPEED_APPROACH_PCT * 0.9)))
+                        if err_x > 0:
+                            self._drive.drive_wheels("forward", turn_sp, "back", turn_sp)
+                        else:
+                            self._drive.drive_wheels("back", turn_sp, "forward", turn_sp)
+                    except Exception as exc:
+                        log.debug("drive turn-only: %s", exc)
+                    if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                        log.debug(
+                            "Aruco track turn-only: err=%.3f area=%.3f ratio=%.3f",
+                            err_x,
+                            area_frac,
+                            ratio,
+                        )
                     return
                 if ratio <= _area_blend_far:
                     cruise_sp = float(_SPEED_APPROACH_PCT)
@@ -442,10 +572,32 @@ class ArucoFollowController(QObject):
                     self._drive.drive_wheels(ld, ls_i, rd, rs_i)
                 except Exception as exc:
                     log.debug("drive approach: %s", exc)
+                if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                    log.debug(
+                        "Aruco track approach: err=%.3f area=%.3f ratio=%.3f "
+                        "arrive=%s/%s cmd=(%s,%s,%s,%s)",
+                        err_x,
+                        area_frac,
+                        ratio,
+                        self._arrive_streak,
+                        _ARRIVE_CONFIRM_TICKS,
+                        ld,
+                        ls_i,
+                        rd,
+                        rs_i,
+                    )
                 return
 
             if abs(err_x) <= eff_dead:
-                self._finish_arrived()
+                self._drive_stop_safe()
+                if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                    log.debug(
+                        "Aruco hold-stop: err=%.3f <= dead=%.3f area=%.3f ratio=%.3f",
+                        err_x,
+                        eff_dead,
+                        area_frac,
+                        ratio,
+                    )
                 return
             ld, ls_i, rd, rs_i = _follow_steering_aruco(
                 float(_SPEED_CRUISE_PCT),
@@ -465,15 +617,27 @@ class ArucoFollowController(QObject):
                 self._drive.drive_wheels(ld, ls_i, rd, rs_i)
             except Exception as exc:
                 log.debug("drive hold steer: %s", exc)
+            if self._debug_tick % _DEBUG_EVERY_TICKS == 0:
+                log.debug(
+                    "Aruco hold-steer: err=%.3f area=%.3f ratio=%.3f cmd=(%s,%s,%s,%s)",
+                    err_x,
+                    area_frac,
+                    ratio,
+                    ld,
+                    ls_i,
+                    rd,
+                    rs_i,
+                )
         except Exception as exc:
             log.debug("track: %s", exc)
 
-    def _finish_arrived(self) -> None:
+    def _finish_arrived(self, reason: str = "arrived") -> None:
         self._drive_stop_safe()
         self._active = False
         self._searching = False
         self._timer.stop()
         self._search_step_timer.stop()
         self._latest = []
+        log.info("Aruco arrived: reason=%s", reason)
         self.status_message.emit("ArUco: arrived")
         self.arrived.emit()
