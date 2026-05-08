@@ -35,7 +35,7 @@ _TICK_MS = max(16, int(os.environ.get("NINA_ARUCO_TICK_MS", "50")))
 _SPEED_APPROACH_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_APPROACH_PCT", "11"))))
 _SPEED_CRUISE_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_CRUISE_PCT", "9"))))
 _SPEED_BACK_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_BACK_PCT", "9"))))
-_SEARCH_SPEED_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_SEARCH_PCT", "28"))))
+_SEARCH_SPEED_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_SEARCH_PCT", "16"))))
 try:
     _LOST_SEC = float(os.environ.get("NINA_ARUCO_LOST_SEC", "5"))
 except ValueError:
@@ -43,11 +43,11 @@ except ValueError:
 _LOST_SEC = max(0.5, min(60.0, _LOST_SEC))
 _SEARCH_STEP_DEG = max(5, int(os.environ.get("NINA_ARUCO_SEARCH_STEP_DEG", "60")))
 _SEARCH_STEP_MS = max(50, int(os.environ.get("NINA_ARUCO_SEARCH_STEP_MS", "1400")))
-_YAW_GAIN = float(os.environ.get("NINA_ARUCO_YAW_GAIN", "5.5"))
+_YAW_GAIN = float(os.environ.get("NINA_ARUCO_YAW_GAIN", "3.6"))
 try:
-    _YAW_ERR_BOOST = float(os.environ.get("NINA_ARUCO_YAW_ERR_BOOST", "0.85"))
+    _YAW_ERR_BOOST = float(os.environ.get("NINA_ARUCO_YAW_ERR_BOOST", "0.45"))
 except ValueError:
-    _YAW_ERR_BOOST = 0.85
+    _YAW_ERR_BOOST = 0.45
 _YAW_ERR_BOOST = max(0.0, min(3.0, _YAW_ERR_BOOST))
 try:
     _ERR_FWD_SCALE_MIN = float(os.environ.get("NINA_ARUCO_ERR_FWD_SCALE_MIN", "0.22"))
@@ -79,17 +79,21 @@ except ValueError:
 _ARRIVE_CENTER_MAX_ERR = max(0.02, min(0.4, _ARRIVE_CENTER_MAX_ERR))
 _ARRIVE_CONFIRM_TICKS = max(1, int(os.environ.get("NINA_ARUCO_ARRIVE_CONFIRM_TICKS", "4")))
 try:
-    _TURN_ONLY_ERR = float(os.environ.get("NINA_ARUCO_TURN_ONLY_ERR", "0.28"))
+    _TURN_ONLY_ERR = float(os.environ.get("NINA_ARUCO_TURN_ONLY_ERR", "0.95"))
 except ValueError:
-    _TURN_ONLY_ERR = 0.28
+    _TURN_ONLY_ERR = 0.95
 _TURN_ONLY_ERR = max(0.05, min(0.9, _TURN_ONLY_ERR))
-_LOST_RECENTER_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_LOST_RECENTER_PCT", "8"))))
+_LOST_RECENTER_PCT = max(1, min(100, int(os.environ.get("NINA_ARUCO_LOST_RECENTER_PCT", "4"))))
 try:
     _STRAIGHT_LOCK_ERR = float(os.environ.get("NINA_ARUCO_STRAIGHT_LOCK_ERR", "0.05"))
 except ValueError:
     _STRAIGHT_LOCK_ERR = 0.05
 _STRAIGHT_LOCK_ERR = max(0.01, min(0.25, _STRAIGHT_LOCK_ERR))
 _DEBUG_EVERY_TICKS = max(1, int(os.environ.get("NINA_ARUCO_DEBUG_EVERY_TICKS", "4")))
+_SAFE_FORWARD_ONLY = (
+    os.environ.get("NINA_ARUCO_SAFE_FORWARD_ONLY", "1").strip().lower()
+    in ("1", "true", "yes", "on", "y")
+)
 try:
     _FOLLOW_CLOSE_RATIO = float(os.environ.get("NINA_ARUCO_CLOSE_RATIO", "1.25"))
 except ValueError:
@@ -133,6 +137,17 @@ def _follow_steering_aruco(
     rs = base - yaw
 
     if ls <= -0.05 or rs <= -0.05:
+        if _SAFE_FORWARD_ONLY:
+            # Clamp to forward-forward in safe mode to avoid spin bursts.
+            ls = max(1.0, ls)
+            rs = max(1.0, rs)
+            ls_i = max(1, min(max_w, int(round(ls))))
+            rs_i = max(1, min(max_w, int(round(rs))))
+            from sirena_ui.workers.face_follow_controller import RIGHT_WHEEL_EXTRA_RUN_PP
+
+            r_cap = max(1, max_w - RIGHT_WHEEL_EXTRA_RUN_PP)
+            rs_cmd = max(1, min(r_cap, rs_i - RIGHT_WHEEL_EXTRA_RUN_PP))
+            return ("forward", ls_i, "forward", rs_cmd)
         sp = int(max(1.0, min(float(max_w), round(max(abs(ls), abs(rs))))))
         if err_clamped > 0:
             return ("forward", sp, "back", sp)
@@ -239,13 +254,14 @@ class ArucoFollowController(QObject):
         self.status_message.emit("ArUco: seeking marker…")
         log.info(
             "Aruco start: tick=%sms straight_lock=%.3f turn_only=%.3f "
-            "arrive_area=%.3f stop_area=%.3f arrive_ticks=%s",
+            "arrive_area=%.3f stop_area=%.3f arrive_ticks=%s safe_fwd_only=%s",
             _TICK_MS,
             _STRAIGHT_LOCK_ERR,
             _TURN_ONLY_ERR,
             _ARRIVE_MIN_AREA_FRAC,
             _STOP_AREA_FRAC,
             _ARRIVE_CONFIRM_TICKS,
+            _SAFE_FORWARD_ONLY,
         )
         try:
             self._drive.ensure_hardware()
@@ -526,7 +542,7 @@ class ArucoFollowController(QObject):
 
                 # If marker drifts hard to a side, rotate first to reacquire heading
                 # instead of continuing forward on a curved wheel path.
-                if abs(err_x) >= _TURN_ONLY_ERR:
+                if (not _SAFE_FORWARD_ONLY) and abs(err_x) >= _TURN_ONLY_ERR:
                     try:
                         turn_sp = max(_SPEED_CRUISE_PCT, int(round(_SPEED_APPROACH_PCT * 0.9)))
                         if err_x > 0:
